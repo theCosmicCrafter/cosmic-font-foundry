@@ -5,15 +5,25 @@ on:
     branches: ["main", "master"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  foss-hygiene:
+  reuse:
+    name: SPDX License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: SPDX License Compliance (REUSE)
+        uses: fsfe/reuse-action@v5
+
+  secret-scan:
+    name: Secret Scan (Gitleaks)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: SPDX License Compliance (REUSE)
-        uses: fsfe/reuse-action@v5
       - name: Secret Scan (Gitleaks)
         uses: gitleaks/gitleaks-action@v2
         env:
