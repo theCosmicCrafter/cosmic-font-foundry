@@ -47,13 +47,22 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 12px;
-    border-radius: 8px;
-    box-shadow: inset 0 0 0 1px var(--line);
-    transition: background-color 0.12s, box-shadow 0.12s;
+    padding: 13px;
+    border-radius: 12px;
+    background: var(--field);
+    box-shadow: inset 0 0 0 1px var(--line), var(--card-shadow);
+    transition: transform 0.16s ease, background-color 0.15s, box-shadow 0.16s ease;
   }
-  .card:hover { background: var(--hov); }
-  .card.selected, .card.selected:hover { background: var(--sel); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .card:hover {
+    background: var(--elevated);
+    transform: translateY(-2px);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--line2)), var(--glow);
+  }
+  .card.selected, .card.selected:hover {
+    background: var(--sel);
+    transform: none;
+    box-shadow: inset 0 0 0 1.5px var(--accent), var(--glow);
+  }
   .badges { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; pointer-events: none; }
   .pill { font: 700 9px var(--mono); padding: 1px 4px; border-radius: 4px; }
   .pill.vf { background: var(--accent-soft); color: var(--accent); }

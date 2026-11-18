@@ -1067,18 +1067,33 @@
 <style>
   .window { position: relative; height: 100vh; overflow: hidden; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
   main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  header { flex: none; height: 52px; display: flex; align-items: center; gap: 10px; padding-left: 24px; }
+  header {
+    flex: none;
+    height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-left: 24px;
+    background: color-mix(in srgb, var(--win) 78%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
   .spacer { flex: 1; align-self: stretch; }
   .field {
-    height: 28px;
+    height: 30px;
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 0 9px;
-    border-radius: 6px;
+    padding: 0 10px;
+    border-radius: 8px;
     background: var(--field);
     box-shadow: 0 0 0 1px var(--line);
     color: var(--ink3);
+    transition: box-shadow 0.15s, background-color 0.15s;
+  }
+  .field:focus-within {
+    box-shadow: 0 0 0 1.5px var(--accent), var(--glow);
+    color: var(--accent);
   }
   .search { flex: 0 1 175px; min-width: 120px; }
   .sample-box { flex: 1 1 180px; min-width: 110px; max-width: 280px; }

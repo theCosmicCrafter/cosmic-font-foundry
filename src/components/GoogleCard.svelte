@@ -42,12 +42,19 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 12px;
-    border-radius: 8px;
+    padding: 13px;
+    border-radius: 12px;
+    background: var(--field);
     border: 1px dashed var(--line2);
-    transition: background-color 0.12s;
+    box-shadow: var(--card-shadow);
+    transition: transform 0.16s ease, background-color 0.15s, border-color 0.16s ease, box-shadow 0.16s ease;
   }
-  .card:hover { background-color: var(--hov); }
+  .card:hover {
+    background: var(--elevated);
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--line2));
+    transform: translateY(-2px);
+    box-shadow: var(--glow);
+  }
   .pill.vf { position: absolute; top: 8px; right: 8px; font: 700 9px var(--mono); padding: 1px 4px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); }
   .pill.src { position: absolute; top: 8px; left: 8px; font: 600 9px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--chip); color: var(--ink2); }
   .pill.src.fontshare { background: var(--cyan-soft); color: var(--accent-2); }

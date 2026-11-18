@@ -82,9 +82,11 @@
     align-items: center;
     gap: 0 10px;
     padding: 8px 18px 10px 60px;
-    transition: background-color 0.12s;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+    transition: background-color 0.14s;
   }
   .row:hover { background: var(--hov); }
+  .row:hover .inspect { transform: translateX(2px); opacity: 1; }
   .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; cursor: pointer; }
   .name { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill.vf { font: 700 9px var(--mono); padding: 1px 4px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); flex: none; }
@@ -110,13 +112,13 @@
     height: 26px;
     padding: 0 12px;
     border-radius: 999px;
-    border: 0;
-    background: var(--chip);
+    border: 1px solid var(--line2);
+    background: var(--field);
     color: var(--ink);
     font: 600 12px var(--sans);
-    transition: background-color 0.15s, color 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
   }
-  .install:hover { background: var(--accent); color: #fff; }
+  .install:hover { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: var(--glow); }
   .pct { font-size: 12px; font-weight: 600; color: var(--ink2); }
   .done { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: var(--ok); }
   .bar { position: absolute; left: 60px; right: 24px; bottom: 0; height: 2px; background: var(--line); }

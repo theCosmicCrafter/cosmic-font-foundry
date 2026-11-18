@@ -1,32 +1,34 @@
 /* Cosmic Font Foundry design tokens: Starlight Alabaster light + Deep Void & Nebula Violet/Cyber Cyan dark */
 :root {
-  --win: #f5f6fc;
-  --side: #ebedf8;
+  --win: #f4f5fb;
+  --side: #eaecf7;
   --field: #ffffff;
-  --ink: #111428;
-  --ink2: rgba(17, 20, 40, 0.70);
-  --ink3: rgba(17, 20, 40, 0.46);
-  --line: rgba(24, 30, 66, 0.09);
-  --line2: rgba(24, 30, 66, 0.18);
-  --hov: rgba(99, 68, 245, 0.06);
-  --chip: rgba(24, 30, 66, 0.06);
-  --sel: rgba(99, 68, 245, 0.10);
-  --off: rgba(17, 20, 40, 0.24);
-  --accent: #6344f5;
+  --elevated: #ffffff;
+  --ink: #101326;
+  --ink2: rgba(16, 19, 38, 0.72);
+  --ink3: rgba(16, 19, 38, 0.48);
+  --line: rgba(24, 30, 66, 0.08);
+  --line2: rgba(24, 30, 66, 0.16);
+  --hov: rgba(91, 61, 245, 0.065);
+  --chip: rgba(24, 30, 66, 0.055);
+  --sel: rgba(91, 61, 245, 0.11);
+  --off: rgba(16, 19, 38, 0.24);
+  --accent: #5b3df5;
   --accent-2: #0891b2;
-  --accent-soft: rgba(99, 68, 245, 0.12);
-  --cyan-soft: rgba(8, 145, 178, 0.12);
-  --glow: 0 0 18px rgba(99, 68, 245, 0.22);
+  --accent-soft: rgba(91, 61, 245, 0.12);
+  --cyan-soft: rgba(8, 145, 178, 0.11);
+  --glow: 0 4px 18px rgba(91, 61, 245, 0.22);
+  --card-shadow: 0 2px 8px rgba(16, 19, 38, 0.04);
   --win-glow:
-    radial-gradient(64% 48% at 18% 0%, rgba(99, 68, 245, 0.08), transparent 68%),
+    radial-gradient(64% 48% at 18% 0%, rgba(91, 61, 245, 0.08), transparent 68%),
     radial-gradient(50% 42% at 92% 100%, rgba(8, 145, 178, 0.06), transparent 72%);
   --ok: #0d9488;
   --warn: #d97706;
   --danger: #e11d48;
-  --velo: rgba(9, 11, 18, 0.42);
+  --velo: rgba(7, 9, 16, 0.46);
 
-  --pill-shadow: 0 1px 2px rgba(14, 16, 30, 0.12);
-  --float-shadow: 0 16px 40px rgba(14, 16, 30, 0.20), 0 0 0 1px var(--line2);
+  --pill-shadow: 0 1px 3px rgba(14, 16, 30, 0.12);
+  --float-shadow: 0 18px 44px rgba(14, 16, 30, 0.20), 0 0 0 1px var(--line2);
   --slide: left 0.26s cubic-bezier(0.3, 1.25, 0.5, 1);
 
   --sans: Archivo, "Segoe UI", sans-serif;
@@ -35,31 +37,33 @@
 }
 
 :root[data-theme="dark"] {
-  --win: #090b12;
-  --side: #0e111d;
-  --field: #15192b;
-  --ink: #f4f6ff;
-  --ink2: rgba(212, 220, 248, 0.72);
-  --ink3: rgba(164, 177, 218, 0.48);
-  --line: rgba(160, 178, 240, 0.10);
-  --line2: rgba(160, 178, 240, 0.19);
-  --hov: rgba(155, 109, 255, 0.09);
-  --chip: rgba(188, 200, 248, 0.08);
-  --sel: rgba(155, 109, 255, 0.16);
+  --win: #070910;
+  --side: #0b0e19;
+  --field: #121626;
+  --elevated: #171c30;
+  --ink: #f5f7ff;
+  --ink2: rgba(214, 222, 250, 0.74);
+  --ink3: rgba(160, 174, 218, 0.50);
+  --line: rgba(156, 176, 245, 0.09);
+  --line2: rgba(156, 176, 245, 0.18);
+  --hov: rgba(167, 123, 255, 0.095);
+  --chip: rgba(188, 200, 248, 0.075);
+  --sel: rgba(167, 123, 255, 0.16);
   --off: rgba(196, 208, 246, 0.24);
-  --accent: #9b6dff;
+  --accent: #a77bff;
   --accent-2: #22d3ee;
-  --accent-soft: rgba(155, 109, 255, 0.16);
+  --accent-soft: rgba(167, 123, 255, 0.16);
   --cyan-soft: rgba(34, 211, 238, 0.14);
-  --glow: 0 0 22px rgba(155, 109, 255, 0.34);
+  --glow: 0 4px 24px rgba(167, 123, 255, 0.36);
+  --card-shadow: 0 4px 16px rgba(2, 4, 10, 0.35);
   --win-glow:
-    radial-gradient(62% 52% at 22% -4%, rgba(155, 109, 255, 0.11), transparent 68%),
-    radial-gradient(48% 44% at 94% 98%, rgba(34, 211, 238, 0.07), transparent 72%);
+    radial-gradient(62% 52% at 22% -4%, rgba(167, 123, 255, 0.13), transparent 68%),
+    radial-gradient(48% 44% at 94% 98%, rgba(34, 211, 238, 0.08), transparent 72%);
   --ok: #2dd4bf;
   --warn: #f59e0b;
   --danger: #fb7185;
-  --pill-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  --float-shadow: 0 20px 52px rgba(3, 5, 12, 0.65), 0 0 0 1px var(--line2), 0 0 28px rgba(155, 109, 255, 0.14);
+  --pill-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --float-shadow: 0 24px 56px rgba(2, 4, 10, 0.72), 0 0 0 1px var(--line2), 0 0 32px rgba(167, 123, 255, 0.16);
   color-scheme: dark;
 }
 

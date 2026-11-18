@@ -76,10 +76,11 @@
     align-items: center;
     gap: 0 12px;
     padding: 8px 18px 8px 24px;
-    transition: background-color 0.12s;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+    transition: background-color 0.14s, border-color 0.14s;
   }
   .row:hover { background: var(--hov); }
-  .row.selected, .row.selected:hover { background: var(--sel); }
+  .row.selected, .row.selected:hover { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
   .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .name { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill { font: 700 9px var(--mono); padding: 1px 4px; border-radius: 4px; letter-spacing: 0.04em; flex: none; }
@@ -112,7 +113,8 @@
     transition: background-color 0.15s, opacity 0.15s, color 0.15s;
   }
   .ico:hover { opacity: 1; background: var(--hov); }
-  .open { opacity: 0.7; }
+  .open { opacity: 0.7; transition: transform 0.14s, opacity 0.14s, color 0.14s; }
+  .row:hover .open { transform: translateX(2px); opacity: 1; }
   .open:hover { color: var(--ink); }
   .heart.fav { color: var(--accent); opacity: 1; }
 </style>

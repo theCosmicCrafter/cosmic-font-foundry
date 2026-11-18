@@ -1,5 +1,26 @@
 <script>
-  import { SlidersHorizontal, Sun, Moon, Plus, Pin } from "@lucide/svelte";
+  import {
+    SlidersHorizontal,
+    Sun,
+    Moon,
+    Plus,
+    Pin,
+    Layers,
+    Compass,
+    PenTool,
+    Heart,
+    ShieldAlert,
+    Bookmark,
+    ScanSearch,
+    FolderOpen,
+    Type,
+    BookOpen,
+    Feather,
+    Sparkles,
+    Terminal,
+    Globe,
+    Languages,
+  } from "@lucide/svelte";
   import SegmentedControl from "./SegmentedControl.svelte";
   import UpdateNotice from "./UpdateNotice.svelte";
   import { currentTheme, setTheme, version } from "../lib/settings.svelte.js";
@@ -30,6 +51,14 @@
     onabout,
   } = $props();
 
+  const CAT_ICONS = {
+    sans: Type,
+    serif: BookOpen,
+    script: Feather,
+    display: Sparkles,
+    mono: Terminal,
+    other: Globe,
+  };
   const CATEGORIES = ["sans", "serif", "script", "display", "mono", "other"];
   const visibleCategories = $derived(CATEGORIES.filter((c) => (catCounts[c] ?? 0) > 0 || cat === c));
   const visibleScripts = $derived(
@@ -74,18 +103,27 @@
 </script>
 
 {#snippet item(text, active, go, count, extra = {})}
+  {@const Icon = extra.icon}
   <button
     type="button"
     class="item"
     class:active
     class:target={extra.target}
+    class:accent-row={extra.accent}
+    class:warn-row={extra.warn}
     onclick={go}
     ondblclick={extra.dbl}
     title={extra.title}
     data-collection={extra.collection}
     aria-current={active ? "page" : undefined}
   >
-    <span class="dot" class:accent={extra.accent} class:warn={extra.warn}></span>
+    {#if Icon}
+      <span class="ico-wrap" class:accent={extra.accent} class:warn={extra.warn}>
+        <Icon size={14} strokeWidth={active ? 2.2 : 1.85} />
+      </span>
+    {:else}
+      <span class="dot" class:accent={extra.accent} class:warn={extra.warn}></span>
+    {/if}
     <span class="text">{text}</span>
     {#if extra.badge}<span class="mini-badge">{extra.badge}</span>{/if}
     {#if extra.pinned}<span class="pin" aria-hidden="true"><Pin size={11} strokeWidth={2} /></span>{/if}
@@ -114,14 +152,14 @@
   <nav>
     <div class="group">
       <span class="group-title">{t("group.library")}</span>
-      {@render item(t("sec.installed"), section === "installed", () => onsection("installed"), counts.installed)}
-      {@render item(t("sec.discover"), section === "discover", () => onsection("discover"), counts.discover)}
-      {@render item(t("sec.forge"), section === "forge", () => onsection("forge"), null, { badge: "NEW", accent: true })}
+      {@render item(t("sec.installed"), section === "installed", () => onsection("installed"), counts.installed, { icon: Layers })}
+      {@render item(t("sec.discover"), section === "discover", () => onsection("discover"), counts.discover, { icon: Compass })}
+      {@render item(t("sec.forge"), section === "forge", () => onsection("forge"), null, { icon: PenTool, badge: "NEW", accent: true })}
       {#if counts.favorites || section === "favorites"}
-        {@render item(t("sec.favorites"), section === "favorites", () => onsection("favorites"), counts.favorites, { accent: true })}
+        {@render item(t("sec.favorites"), section === "favorites", () => onsection("favorites"), counts.favorites, { icon: Heart, accent: true })}
       {/if}
       {#if counts.diagnostics > 0 || section === "diagnostics"}
-        {@render item(t("sec.diagnostics"), section === "diagnostics", () => onsection("diagnostics"), counts.diagnostics, { warn: true })}
+        {@render item(t("sec.diagnostics"), section === "diagnostics", () => onsection("diagnostics"), counts.diagnostics, { icon: ShieldAlert, warn: true })}
       {/if}
     </div>
 
@@ -141,6 +179,7 @@
           />
         {:else}
           {@render item(c.name, section === "col:" + c.id, () => onsection("col:" + c.id), c.fonts.length, {
+            icon: Bookmark,
             dbl: () => (renaming = c.id),
             collection: c.id,
             target: drag.active && drag.over === c.id,
@@ -167,9 +206,10 @@
 
     <div class="group">
       {@render header(t("group.folders"), t("folder.add"), onaddFolder)}
-      {@render item(t("scan.sidebarBtn"), false, onscan, null, { accent: true })}
+      {@render item(t("scan.sidebarBtn"), false, onscan, null, { icon: ScanSearch, accent: true })}
       {#each folders as f (f.path)}
         {@render item(f.name, section === "dir:" + f.path, () => onsection("dir:" + f.path), f.count, {
+          icon: FolderOpen,
           title: f.path,
           badge: projectFolders.has(f.path.toLowerCase()) ? "PROJ" : "",
         })}
@@ -180,7 +220,7 @@
       <div class="group">
         <span class="group-title">{t("group.categories")}</span>
         {#each visibleCategories as c (c)}
-          {@render item(t("cat." + c), cat === c, () => oncat(cat === c ? null : c), catCounts[c] ?? 0)}
+          {@render item(t("cat." + c), cat === c, () => oncat(cat === c ? null : c), catCounts[c] ?? 0, { icon: CAT_ICONS[c] })}
         {/each}
       </div>
     {/if}
@@ -189,7 +229,7 @@
       <div class="group">
         <span class="group-title">{t("group.scripts")}</span>
         {#each visibleScripts as s (s)}
-          {@render item(s, script === s, () => onscript(script === s ? null : s), scriptCounts[s] ?? 0)}
+          {@render item(s, script === s, () => onscript(script === s ? null : s), scriptCounts[s] ?? 0, { icon: Languages })}
         {/each}
       </div>
     {/if}
@@ -241,19 +281,30 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    height: 30px;
+    height: 31px;
     padding: 0 10px;
     border: 0;
-    border-radius: 6px;
+    border-radius: 8px;
     background: transparent;
     color: var(--ink2);
     font: 500 13px var(--sans);
     text-align: left;
-    transition: background-color 0.15s, color 0.15s, box-shadow 0.15s;
+    transition: background-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.12s;
   }
-  .item:hover { background: var(--hov); }
-  .item.active { background: var(--chip); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); }
+  .item:hover { background: var(--hov); color: var(--ink); transform: translateX(1px); }
+  .item.active {
+    background: linear-gradient(90deg, var(--accent-soft), var(--cyan-soft));
+    color: var(--ink);
+    font-weight: 600;
+    box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
   .item.target { box-shadow: inset 0 0 0 1.5px var(--accent); background: var(--accent-soft); }
+  .ico-wrap { display: grid; place-items: center; color: var(--ink3); transition: color 0.15s; flex: none; }
+  .item:hover .ico-wrap { color: var(--ink2); }
+  .item.active .ico-wrap { color: var(--accent-2); }
+  .ico-wrap.accent { color: var(--accent); }
+  .item.active .ico-wrap.accent { color: var(--accent); }
+  .ico-wrap.warn { color: var(--warn); }
   .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line2); }
   .active .dot { background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
   .dot.accent { box-shadow: inset 0 0 0 1.5px var(--accent); }
