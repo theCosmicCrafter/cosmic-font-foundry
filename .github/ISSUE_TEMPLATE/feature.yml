@@ -1,0 +1,23 @@
+name: Feature Request
+description: Propose a new capability, font source, or workflow improvement
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem or Goal
+      description: What workflow or typography task are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How should this work in Cosmic Font Foundry?
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Lightweight & FOSS Alignment
+      options:
+        - label: Works locally without requiring accounts, cloud lock-in, or heavy ML runtimes

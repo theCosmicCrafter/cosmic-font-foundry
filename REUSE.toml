@@ -1,0 +1,36 @@
+version = 1
+SPDX-PackageName = "Cosmic Font Foundry"
+SPDX-PackageSupplier = "theCosmicCrafter <https://github.com/theCosmicCrafter/cosmic-font-foundry>"
+SPDX-PackageDownloadLocation = "https://github.com/theCosmicCrafter/cosmic-font-foundry"
+
+[[annotations]]
+path = [
+  "src/**",
+  "src-tauri/**",
+  "public/**",
+  "design/**",
+  "docs/**",
+  "winget/**",
+  ".github/**",
+  "*.md",
+  "*.js",
+  "*.json",
+  "*.html",
+  ".gitignore",
+  ".pre-commit-config.yaml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = [
+  "2026 atunfrito",
+  "2026 theCosmicCrafter (Cosmic Font Foundry)",
+]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+  "src-tauri/tests/fixtures/**",
+  "licenses/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Font & upstream fixture authors (see THIRD-PARTY-NOTICES.md)"
+SPDX-License-Identifier = "OFL-1.1"
