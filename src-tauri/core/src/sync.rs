@@ -2,12 +2,12 @@
 //! and client handoff ZIP packager (with generated `LICENSES.txt`).
 
 use crc32fast::Hasher;
-use flate2::{write::DeflateEncoder, Compression};
+use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -584,4 +584,107 @@ pub fn package_collection_zip(
         families_included,
         missing_families,
     })
+}
+
+fn le16(b: &[u8], off: usize) -> Option<u16> {
+    let s = b.get(off..off + 2)?;
+    Some(u16::from_le_bytes([s[0], s[1]]))
+}
+
+fn le32(b: &[u8], off: usize) -> Option<u32> {
+    let s = b.get(off..off + 4)?;
+    Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+}
+
+fn decompress_zip_entry(method: u16, comp: &[u8]) -> Result<Vec<u8>, String> {
+    match method {
+        0 => Ok(comp.to_vec()),
+        8 => {
+            let mut dec = DeflateDecoder::new(comp);
+            let mut out = Vec::new();
+            dec.read_to_end(&mut out).map_err(|e| e.to_string())?;
+            Ok(out)
+        }
+        other => Err(format!("unsupported zip compression method {other}")),
+    }
+}
+
+/// Extracts `.ttf` and `.otf` font binaries from an in-memory PKZIP archive.
+pub fn extract_zip_fonts(zip_bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    // Locate End of Central Directory (PK\x05\x06) to handle archives with data descriptors reliably.
+    if let Some(eocd) = zip_bytes
+        .windows(4)
+        .rposition(|w| w == b"PK\x05\x06")
+        .filter(|&p| p + 22 <= zip_bytes.len())
+    {
+        let total = le16(zip_bytes, eocd + 10).unwrap_or(0) as usize;
+        let cd_off = le32(zip_bytes, eocd + 16).unwrap_or(0) as usize;
+        let mut pos = cd_off;
+        for _ in 0..total {
+            if zip_bytes.get(pos..pos + 4) != Some(b"PK\x01\x02") || pos + 46 > zip_bytes.len() {
+                break;
+            }
+            let method = le16(zip_bytes, pos + 10).unwrap_or(0);
+            let comp_size = le32(zip_bytes, pos + 20).unwrap_or(0) as usize;
+            let name_len = le16(zip_bytes, pos + 28).unwrap_or(0) as usize;
+            let extra_len = le16(zip_bytes, pos + 30).unwrap_or(0) as usize;
+            let comment_len = le16(zip_bytes, pos + 32).unwrap_or(0) as usize;
+            let local_off = le32(zip_bytes, pos + 42).unwrap_or(0) as usize;
+            let name_slice = zip_bytes.get(pos + 46..pos + 46 + name_len).unwrap_or(&[]);
+            let raw_name = String::from_utf8_lossy(name_slice).into_owned();
+            pos += 46 + name_len + extra_len + comment_len;
+
+            let lower = raw_name.to_ascii_lowercase();
+            if !(lower.ends_with(".ttf") || lower.ends_with(".otf"))
+                || raw_name.contains("__MACOSX")
+            {
+                continue;
+            }
+            if zip_bytes.get(local_off..local_off + 4) != Some(b"PK\x03\x04") {
+                continue;
+            }
+            let l_name_len = le16(zip_bytes, local_off + 26).unwrap_or(0) as usize;
+            let l_extra_len = le16(zip_bytes, local_off + 28).unwrap_or(0) as usize;
+            let data_start = local_off + 30 + l_name_len + l_extra_len;
+            let Some(comp_slice) = zip_bytes.get(data_start..data_start + comp_size) else {
+                continue;
+            };
+            if let Ok(bytes) = decompress_zip_entry(method, comp_slice) {
+                let fname = Path::new(&raw_name)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or(raw_name);
+                out.push((fname, bytes));
+            }
+        }
+        return Ok(out);
+    }
+
+    // Fallback: scan local file headers sequentially.
+    let mut pos = 0usize;
+    while pos + 30 <= zip_bytes.len() && zip_bytes.get(pos..pos + 4) == Some(b"PK\x03\x04") {
+        let method = le16(zip_bytes, pos + 8).unwrap_or(0);
+        let comp_size = le32(zip_bytes, pos + 18).unwrap_or(0) as usize;
+        let name_len = le16(zip_bytes, pos + 26).unwrap_or(0) as usize;
+        let extra_len = le16(zip_bytes, pos + 28).unwrap_or(0) as usize;
+        let name_slice = zip_bytes.get(pos + 30..pos + 30 + name_len).unwrap_or(&[]);
+        let raw_name = String::from_utf8_lossy(name_slice).into_owned();
+        let data_start = pos + 30 + name_len + extra_len;
+        let Some(comp_slice) = zip_bytes.get(data_start..data_start + comp_size) else {
+            break;
+        };
+        let lower = raw_name.to_ascii_lowercase();
+        if (lower.ends_with(".ttf") || lower.ends_with(".otf")) && !raw_name.contains("__MACOSX") {
+            if let Ok(bytes) = decompress_zip_entry(method, comp_slice) {
+                let fname = Path::new(&raw_name)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or(raw_name);
+                out.push((fname, bytes));
+            }
+        }
+        pos = data_start + comp_size;
+    }
+    Ok(out)
 }

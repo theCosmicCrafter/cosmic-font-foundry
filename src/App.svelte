@@ -21,6 +21,7 @@
   import Settings from "./views/Settings.svelte";
   import Specimen from "./views/Specimen.svelte";
   import Compare from "./views/Compare.svelte";
+  import Forge from "./views/Forge.svelte";
 
   import { initUpdater } from "./lib/updater.svelte.js";
   import { settings, inTauri, currentTheme } from "./lib/settings.svelte.js";
@@ -70,6 +71,7 @@
   const size = $derived(settings.size);
 
   const inDiscover = $derived(section === "discover");
+  const inForge = $derived(section === "forge");
   const inDiagnostics = $derived(section === "diagnostics");
   const activeCollection = $derived(section.startsWith("col:") ? library.collections.find((c) => "col:" + c.id === section) : null);
   const activeFolder = $derived(section.startsWith("dir:") ? section.slice(4) : null);
@@ -202,17 +204,19 @@
           ? t("cat." + cat)
           : inDiscover
             ? t("discoverCatalog")
-            : inDiagnostics
-              ? t("sec.diagnostics")
-              : section === "favorites"
-                ? t("sec.favorites")
-                : activeCollection
-                  ? activeCollection.name
-                  : activeFolder
-                    ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
-                    : t("sec.installed"),
+            : inForge
+              ? t("sec.forge")
+              : inDiagnostics
+                ? t("sec.diagnostics")
+                : section === "favorites"
+                  ? t("sec.favorites")
+                  : activeCollection
+                    ? activeCollection.name
+                    : activeFolder
+                      ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
+                      : t("sec.installed"),
   );
-  const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length);
+  const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length && !inForge);
 
   // ---- Discover font preview requests ----
   let visibleGoogle = [];
@@ -663,22 +667,22 @@
         {:else if isNormalView && inDiscover}
           <SegmentedControl
             label={t("src.all")}
-            options={["all", "google", "fontshare", "fontsource"].map((v) => ({ value: v, label: t("src." + v) }))}
+            options={["all", "google", "fontshare", "fontsource", "adobe_dev", "fontsquirrel"].map((v) => ({ value: v, label: t("src." + v) }))}
             value={discoverSource}
             onselect={(v) => (discoverSource = v)}
-            width={92}
+            width={84}
             height={22}
-            paddingX={8}
-            font="600 11px"
+            paddingX={6}
+            font="600 10.5px"
           />
           <SegmentedControl
             label={t("sort.popularity")}
             options={["popularity", "recent", "alpha"].map((v) => ({ value: v, label: t("sort." + v) }))}
             value={sort}
             onselect={(v) => (sort = v)}
-            width={76}
+            width={68}
             height={22}
-            font="600 11.5px"
+            font="600 11px"
           />
         {/if}
 
@@ -767,6 +771,8 @@
         onback={() => (compareNames = [])}
         onremove={(n) => (compareNames = compareNames.length <= 2 ? [] : compareNames.filter((x) => x !== n))}
       />
+    {:else if inForge}
+      <Forge {sample} onInstalled={() => goTo("installed")} />
     {:else if inDiscover}
       {#if discover.list.length && googleList.length}
         <VirtualList items={googleList} height={Math.ceil(34 + size * 1.58)} getKey={(g) => g.name} row={googleRowSnippet} onVisible={onVisibleGoogle} padBottom={60} />
@@ -911,7 +917,7 @@
   .range::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 0; cursor: pointer; }
   .view-mode { margin-right: 12px; display: flex; }
 
-  .title-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 24px 8px; min-height: 46px; }
+  .title-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 24px 8px; min-height: 46px; }
   .count { font-size: 10.5px; color: var(--ink3); }
   .right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
   .sep { width: 1px; height: 16px; background: var(--line2); margin: 0 4px; }

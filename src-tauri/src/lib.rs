@@ -549,6 +549,52 @@ async fn google_install(app: AppHandle, family: String) -> Result<ToggleResponse
     Ok(resp)
 }
 
+#[tauri::command]
+async fn install_forged_font(
+    app: AppHandle,
+    file_name: String,
+    bytes: Vec<u8>,
+    install_for_all: bool,
+) -> Result<ToggleResponse, String> {
+    let data_dir = app.state::<AppState>().env.data_dir.clone();
+    let stem: String = file_name
+        .trim_end_matches(".ttf")
+        .trim_end_matches(".TTF")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let safe_stem = if stem.trim_matches('-').is_empty() {
+        "ForgedFont".to_string()
+    } else {
+        stem
+    };
+    let dest_dir = data_dir.join("forged");
+    let dest_file = dest_dir.join(format!("{safe_stem}.ttf"));
+    let app_bg = app.clone();
+    let resp = bg(move || {
+        fs::create_dir_all(&dest_dir).map_err(err)?;
+        fs::write(&dest_file, &bytes).map_err(err)?;
+        let state = app_bg.state::<AppState>();
+        let outcome = install_files(&state, std::slice::from_ref(&dest_file), install_for_all);
+        let _ = fs::remove_file(&dest_file);
+        let (families, _, diagnostics, _) = state.refresh();
+        Ok(ToggleResponse {
+            families,
+            outcome,
+            diagnostics,
+        })
+    })
+    .await?;
+    let _ = app.emit("inventory-updated", &resp.families);
+    Ok(resp)
+}
+
 // ---- BYO-Sync, Portability, Collection ZIP & Migration ----
 
 fn device_name() -> String {
@@ -845,6 +891,7 @@ pub fn run() {
             project_manifests,
             google_catalog,
             google_install,
+            install_forged_font,
             sync_choose_folder,
             sync_manifest_now,
             export_profile_bundle,

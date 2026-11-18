@@ -9,37 +9,54 @@ export const discover = $state({
   downloads: {},
 });
 
+const ADOBE_DEV_SET = new Set([
+  "source sans 3",
+  "source sans pro",
+  "source serif 4",
+  "source serif pro",
+  "source code pro",
+  "monaspace neon",
+  "monaspace argon",
+  "monaspace krypton",
+  "monaspace xenon",
+  "monaspace radon",
+  "iosevka",
+  "iosevka aile",
+  "iosevka etoile",
+  "iosevka curly",
+  "iosevka curly slab",
+  "iosevka charon",
+  "iosevka charon mono",
+  "commit mono",
+  "geist",
+  "geist mono",
+  "geist pixel",
+  "geist sans",
+  "cascadia code",
+  "cascadia mono",
+  "fira code",
+  "fira mono",
+  "jetbrains mono",
+  "victor mono",
+  "hack",
+  "league mono",
+]);
+
+const isAdobeOrDev = (name) => ADOBE_DEV_SET.has(String(name || "").trim().toLowerCase());
+
 const WEB_GOOGLE_CURATED = [
-  ["Space Grotesk", "sans", 5, true, [{ tag: "wght", min: 300, max: 700, default: 400 }], ["Google Font Foundry"]],
+  ["Space Grotesk", "sans", 5, true, [{ tag: "wght", min: 300, max: 700, default: 400 }], ["Florian Karsten"]],
   ["Inter", "sans", 18, true, [{ tag: "wght", min: 100, max: 900, default: 400 }], ["Rasmus Andersson"]],
-  ["Syne", "display", 5, true, [{ tag: "wght", min: 400, max: 800, default: 400 }], ["Bonjour Monde"]],
-  ["Plus Jakarta Sans", "sans", 7, true, [{ tag: "wght", min: 200, max: 800, default: 400 }], ["Tokotype"]],
-  ["Outfit", "sans", 9, true, [{ tag: "wght", min: 100, max: 900, default: 400 }], ["Rodrigo Fuenzalida"]],
-  ["Orbitron", "display", 6, true, [{ tag: "wght", min: 400, max: 900, default: 400 }], ["Matt McInerney"]],
-  ["Fraunces", "serif", 8, true, [{ tag: "wght", min: 100, max: 900, default: 400 }], ["Undercase Type"]],
-  ["Instrument Serif", "serif", 2, false, [], ["Rodrigo Fuenzalida"]],
-  ["Playfair Display", "serif", 6, true, [{ tag: "wght", min: 400, max: 900, default: 400 }], ["Claus Eggers Sørensen"]],
-  ["Cormorant Garamond", "serif", 10, false, [], ["Christian Thalmann"]],
+  ["Source Sans 3", "sans", 12, true, [{ tag: "wght", min: 200, max: 900, default: 400 }], ["Adobe"]],
+  ["Source Serif 4", "serif", 12, true, [{ tag: "wght", min: 200, max: 900, default: 400 }], ["Adobe"]],
+  ["Source Code Pro", "mono", 14, true, [{ tag: "wght", min: 200, max: 900, default: 400 }], ["Adobe"]],
+  ["JetBrains Mono", "mono", 16, true, [{ tag: "wght", min: 100, max: 800, default: 400 }], ["JetBrains"]],
   ["Fira Code", "mono", 5, true, [{ tag: "wght", min: 300, max: 700, default: 400 }], ["Nikita Prokopov"]],
-  ["IBM Plex Mono", "mono", 14, false, [], ["Mike Abbink"]],
-  ["Space Mono", "mono", 4, false, [], ["Colophon Foundry"]],
-  ["Manrope", "sans", 7, true, [{ tag: "wght", min: 200, max: 800, default: 400 }], ["Mikhail Sharanda"]],
-  ["DM Sans", "sans", 12, true, [{ tag: "wght", min: 100, max: 1000, default: 400 }], ["Colophon Foundry"]],
-  ["Bricolage Grotesque", "sans", 7, true, [{ tag: "wght", min: 200, max: 800, default: 400 }], ["Mathieu Triay"]],
-  ["Unbounded", "display", 8, true, [{ tag: "wght", min: 200, max: 900, default: 400 }], ["Studio Koto"]],
-  ["Caveat", "script", 4, true, [{ tag: "wght", min: 400, max: 700, default: 400 }], ["Impallari Type"]],
-  ["Pacifico", "script", 1, false, [], ["Vernon Adams"]],
-  ["Dancing Script", "script", 4, true, [{ tag: "wght", min: 400, max: 700, default: 400 }], ["Impallari Type"]],
-  ["Sora", "sans", 8, true, [{ tag: "wght", min: 100, max: 800, default: 400 }], ["Jonathan Barnbrook"]],
-  ["Urbanist", "sans", 18, true, [{ tag: "wght", min: 100, max: 900, default: 400 }], ["Corey Hu"]],
-  ["Newsreader", "serif", 12, true, [{ tag: "wght", min: 200, max: 800, default: 400 }], ["Production Type"]],
   ["Geist", "sans", 9, true, [{ tag: "wght", min: 100, max: 900, default: 400 }], ["Vercel"]],
   ["Geist Mono", "mono", 9, true, [{ tag: "wght", min: 100, max: 900, default: 400 }], ["Vercel"]],
-  ["Oxanium", "display", 7, false, [], ["Severin Meyer"]],
-  ["Audiowide", "display", 1, false, [], ["Brian J. Bonislawsky"]],
-  ["Chakra Petch", "sans", 10, false, [], ["Cadson Demak"]],
-  ["Silkscreen", "display", 2, false, [], ["Jason Kottke"]],
-  ["Bodoni Moda", "serif", 12, true, [{ tag: "wght", min: 400, max: 900, default: 400 }], ["Indestructible Type"]],
+  ["Syne", "display", 5, true, [{ tag: "wght", min: 400, max: 800, default: 400 }], ["Bonjour Monde"]],
+  ["Outfit", "sans", 9, true, [{ tag: "wght", min: 100, max: 900, default: 400 }], ["Rodrigo Fuenzalida"]],
+  ["Orbitron", "display", 6, true, [{ tag: "wght", min: 400, max: 900, default: 400 }], ["Matt McInerney"]],
 ].map(([name, category, styles, is_variable, axes, designers], idx) => ({
   name,
   category,
@@ -51,7 +68,7 @@ const WEB_GOOGLE_CURATED = [
   is_variable,
   axes,
   variants: ["400", "700"],
-  source: "google",
+  source: isAdobeOrDev(name) ? "adobe_dev" : "google",
   source_id: name,
   preview_url: null,
   download_urls: [],
@@ -59,10 +76,10 @@ const WEB_GOOGLE_CURATED = [
 
 function mapCategory(raw = "") {
   const s = String(raw).toLowerCase();
-  if (s === "sans" || s === "sans-serif") return "sans";
-  if (s === "serif" || s === "slab") return "serif";
-  if (s === "handwritten" || s === "handwriting" || s === "script") return "script";
-  if (s === "mono" || s === "monospace") return "mono";
+  if (s.includes("sans")) return "sans";
+  if (s.includes("serif") || s.includes("slab")) return "serif";
+  if (s.includes("hand") || s.includes("script") || s.includes("calligraph")) return "script";
+  if (s.includes("mono") || s.includes("typewriter")) return "mono";
   return "display";
 }
 
@@ -71,9 +88,10 @@ function normalizeUrl(raw) {
 }
 
 async function fetchWebCatalog() {
-  const [fsRes, srcRes] = await Promise.allSettled([
+  const [fsRes, srcRes, sqRes] = await Promise.allSettled([
     fetch("https://api.fontshare.com/v2/fonts?offset=0&limit=100").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
-    fetch("https://api.fontsource.org/v1/fonts?type=other").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
+    fetch("https://api.fontsource.org/v1/fonts").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
+    fetch("https://www.fontsquirrel.com/api/fontlist/all").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
   ]);
 
   const fontshareEntries =
@@ -110,38 +128,62 @@ async function fetchWebCatalog() {
 
   const fontsourceEntries =
     srcRes.status === "fulfilled" && Array.isArray(srcRes.value)
-      ? srcRes.value
-          .filter((f) => f.type === "other")
-          .map((f, idx) => {
-            const weights = f.weights?.length ? f.weights : [400];
-            const styles = f.styles?.length ? f.styles : ["normal"];
-            const defSubset = f.defSubset || "latin";
-            const defW = weights.includes(400) ? 400 : weights[0];
-            const defSt = styles.includes("normal") ? "normal" : styles[0];
-            return {
-              name: f.family,
-              category: mapCategory(f.category),
-              styles: Math.max(1, weights.length * styles.length),
-              popularity: 50 + idx,
-              date: f.lastModified ?? "",
-              scripts: ["Latin"],
-              designers: [],
-              is_variable: Boolean(f.variable),
-              axes: [],
-              variants: weights.map(String),
-              source: "fontsource",
-              source_id: f.id,
-              preview_url: `https://cdn.jsdelivr.net/fontsource/fonts/${f.id}@latest/${defSubset}-${defW}-${defSt}.woff2`,
-              download_urls: weights.map(
-                (w) => `https://cdn.jsdelivr.net/fontsource/fonts/${f.id}@latest/${defSubset}-${w}-${defSt}.ttf`,
-              ),
-            };
-          })
+      ? srcRes.value.map((f, idx) => {
+          const weights = f.weights?.length ? f.weights : [400];
+          const styles = f.styles?.length ? f.styles : ["normal"];
+          const defSubset = f.defSubset || "latin";
+          const defW = weights.includes(400) ? 400 : weights[0];
+          const defSt = styles.includes("normal") ? "normal" : styles[0];
+          const isGoogleType = f.type === "google";
+          const source = isAdobeOrDev(f.family) ? "adobe_dev" : isGoogleType ? "google" : "fontsource";
+          return {
+            name: f.family,
+            category: mapCategory(f.category),
+            styles: Math.max(1, weights.length * styles.length),
+            popularity: source === "adobe_dev" ? 10 + idx : isGoogleType ? 30 + idx : 50 + idx,
+            date: f.lastModified ?? "",
+            scripts: ["Latin"],
+            designers: [],
+            is_variable: Boolean(f.variable),
+            axes: [],
+            variants: weights.map(String),
+            source,
+            source_id: isGoogleType ? f.family : f.id,
+            preview_url: isGoogleType
+              ? null
+              : `https://cdn.jsdelivr.net/fontsource/fonts/${f.id}@latest/${defSubset}-${defW}-${defSt}.woff2`,
+            download_urls: weights.map(
+              (w) => `https://cdn.jsdelivr.net/fontsource/fonts/${f.id}@latest/${defSubset}-${w}-${defSt}.ttf`,
+            ),
+          };
+        })
+      : WEB_GOOGLE_CURATED;
+
+  const fontsquirrelEntries =
+    sqRes.status === "fulfilled" && Array.isArray(sqRes.value)
+      ? sqRes.value
+          .filter((f) => f.family_name && f.family_urlname)
+          .map((f, idx) => ({
+            name: f.family_name.trim(),
+            category: mapCategory(f.classification),
+            styles: Math.max(1, Number.parseInt(f.family_count, 10) || 1),
+            popularity: 120 + idx,
+            date: "",
+            scripts: ["Latin"],
+            designers: f.foundry_name ? [f.foundry_name] : [],
+            is_variable: false,
+            axes: [],
+            variants: ["400"],
+            source: isAdobeOrDev(f.family_name) ? "adobe_dev" : "fontsquirrel",
+            source_id: f.family_urlname.trim(),
+            preview_url: null,
+            download_urls: [`https://www.fontsquirrel.com/fonts/download/${f.family_urlname.trim()}`],
+          }))
       : [];
 
   const seen = new Set();
   const combined = [];
-  for (const entry of [...WEB_GOOGLE_CURATED, ...fontshareEntries, ...fontsourceEntries]) {
+  for (const entry of [...fontshareEntries, ...fontsourceEntries, ...fontsquirrelEntries]) {
     const key = entry.name.toLowerCase();
     if (!seen.has(key)) {
       seen.add(key);
@@ -207,6 +249,7 @@ export function requestGooglePreviews(items, text) {
         ensureDirectFace(item);
         continue;
       }
+      if (item.source === "fontsquirrel") continue;
       const fam = item.name;
       const prev = requestedChars.get(fam) ?? new Set();
       if ([...chars].some((c) => !prev.has(c))) googleNames.push(fam);
@@ -249,6 +292,7 @@ export function loadGoogleFullSpecimen(entry) {
     ensureDirectFace(entry);
     return;
   }
+  if (entry.source === "fontsquirrel") return;
   let familyQuery = encodeURIComponent(entry.name).replace(/%20/g, "+");
   if (entry.is_variable && entry.axes?.length) {
     const sorted = [...entry.axes].sort((a, b) => a.tag.localeCompare(b.tag));

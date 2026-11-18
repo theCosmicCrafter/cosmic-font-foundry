@@ -181,6 +181,74 @@ export const backedUpCount = () => invokeCmd("backed_up_count");
 export const fontCharacters = (path) => invokeCmd("font_characters", { path });
 export const revealInExplorer = (path) => invokeCmd("show_in_explorer", { path }).catch(() => {});
 
+export async function installForgedFont(familyName, styleName, bytes, installForAll = false) {
+  const cleanName = String(familyName || "Cosmic Forge").trim() || "Cosmic Forge";
+  const fileName = `${cleanName.replace(/[^A-Za-z0-9-_]+/g, "-")}-${styleName}.ttf`;
+  if (!inTauri) {
+    try {
+      const face = new FontFace(cleanName, bytes);
+      await face.load();
+      document.fonts.add(face);
+    } catch {}
+    const existingIdx = fonts.list.findIndex((f) => f.name.toLowerCase() === cleanName.toLowerCase());
+    const entry = {
+      name: cleanName,
+      category: "display",
+      origin: "usr",
+      active: true,
+      essential: false,
+      styles: [
+        {
+          name: styleName,
+          weight: styleName === "Bold" ? 700 : 400,
+          italic: styleName === "Oblique",
+          file: cleanName,
+          win_family: cleanName,
+          full_name: `${cleanName} ${styleName}`,
+          postscript_name: fileName.replace(".ttf", ""),
+          axes: [],
+          opentype_features: [],
+        },
+      ],
+      file: cleanName,
+      files: [cleanName],
+      error: null,
+      scripts: ["Latin"],
+      is_variable: false,
+      axes: [],
+      opentype_features: [],
+      foundry: "Cosmic Font Foundry",
+      designer: "Forge Studio",
+      license: "CC0 1.0 Universal (Public Domain)",
+      license_url: null,
+      sha256: "forged-" + Date.now(),
+      postscript_name: fileName.replace(".ttf", ""),
+      duplicates: [],
+      has_conflicts: false,
+    };
+    const next = [...fonts.list];
+    if (existingIdx >= 0) next[existingIdx] = entry;
+    else next.unshift(entry);
+    setFonts(next);
+    return { changed: 1, errors: [], cancelled: false };
+  }
+  fonts.busy = true;
+  try {
+    const res = await invokeCmd("install_forged_font", {
+      fileName,
+      bytes: Array.from(bytes),
+      installForAll,
+    });
+    setFonts(res.families, res.diagnostics);
+    return reportOutcome(res);
+  } catch (e) {
+    notify("err", t("err.install"), String(e));
+    return null;
+  } finally {
+    fonts.busy = false;
+  }
+}
+
 function demoResponse(cmd) {
   const mk = (name, category, origin, active, extra = {}) => ({
     name,

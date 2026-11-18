@@ -11,7 +11,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="card" ondblclick={() => oninspect?.(g)}>
-  <span class="pill src" class:fontshare={srcKey === "fontshare"} class:fontsource={srcKey === "fontsource"}>{t("src." + srcKey)}</span>
+  <span class="pill src" class:fontshare={srcKey === "fontshare"} class:fontsource={srcKey === "fontsource"} class:adobe={srcKey === "adobe_dev"} class:squirrel={srcKey === "fontsquirrel"}>{t("src." + srcKey)}</span>
   {#if g.is_variable}<span class="pill vf">VF</span>{/if}
   <div class="aa" style:font-family={family} onclick={() => oninspect?.(g)}>
     <span use:fitText={{ text: aa, family, base: 64, margin: 12 }}>{aa}</span>
@@ -52,6 +52,8 @@
   .pill.src { position: absolute; top: 8px; left: 8px; font: 600 9px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--chip); color: var(--ink2); }
   .pill.src.fontshare { background: var(--cyan-soft); color: var(--accent-2); }
   .pill.src.fontsource { background: rgba(45, 212, 191, 0.14); color: var(--ok); }
+  .pill.src.adobe { background: rgba(251, 113, 133, 0.16); color: var(--danger); }
+  .pill.src.squirrel { background: rgba(245, 158, 11, 0.16); color: var(--warn); }
   .aa {
     height: 92px;
     display: flex;

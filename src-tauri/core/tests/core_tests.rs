@@ -241,6 +241,11 @@ fn sync_manifest_resolves_and_packages_collection_zip() {
     assert!(zip_bytes
         .windows(27)
         .any(|w| w == b"fonts/GochiHand-Regular.ttf"));
+    let extracted =
+        cosmic_core::sync::extract_zip_fonts(&zip_bytes).expect("extract_zip_fonts should succeed");
+    assert_eq!(extracted.len(), 1);
+    assert_eq!(extracted[0].0, "GochiHand-Regular.ttf");
+    assert!(!extracted[0].1.is_empty());
 
     // Verify ZIP round-trip decompression on a minimal synthetic ZipBuilder payload.
     let mut zb = ZipBuilder::new();
