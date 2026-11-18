@@ -56,7 +56,7 @@
       <div class="head">
         <img src="/icon.svg" width="26" height="26" alt="" draggable="false" />
         <div class="texts">
-          <span class="brand">Cosmic Font Foundry<i>.</i></span>
+          <span class="brand">Font Foundry<i>.</i></span>
           <span class="status num"><span class="dot" class:live={status.folders > 0}></span>{status.status || "Cosmic Font Foundry"}</span>
         </div>
       </div>

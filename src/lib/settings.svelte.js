@@ -72,6 +72,6 @@ export function setTheme(theme) {
   settings.theme = theme;
   if (!inTauri) return;
   import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
-    getCurrentWindow().setBackgroundColor(theme === "dark" ? [0x0f, 0x11, 0x1a, 255] : [0xf6, 0xf7, 0xfb, 255]),
+    getCurrentWindow().setBackgroundColor(theme === "dark" ? [0x09, 0x0b, 0x12, 255] : [0xf5, 0xf6, 0xfc, 255]),
   );
 }

@@ -24,8 +24,8 @@ const SETTINGS_FILE: &str = "settings.json";
 const LIBRARY_FILE: &str = "library.json";
 
 /// Cosmic Font Foundry window backgrounds (matched to `--win` in `src/app.css` to eliminate startup flash).
-const BG_LIGHT: (u8, u8, u8, u8) = (0xf6, 0xf7, 0xfb, 255);
-const BG_DARK: (u8, u8, u8, u8) = (0x0f, 0x11, 0x1a, 255);
+const BG_LIGHT: (u8, u8, u8, u8) = (0xf5, 0xf6, 0xfc, 255);
+const BG_DARK: (u8, u8, u8, u8) = (0x09, 0x0b, 0x12, 255);
 
 fn err(e: impl ToString) -> String {
     e.to_string()
@@ -514,7 +514,7 @@ async fn google_install(app: AppHandle, family: String) -> Result<ToggleResponse
     let app_prog = app.clone();
     let fam_prog = family.clone();
     let mut last_pct = -1.0;
-    let downloaded = google::download_family(&family, &dest, move |pct| {
+    let downloaded = google::download_family(&data_dir, &family, &dest, move |pct| {
         if pct - last_pct >= 2.0 {
             last_pct = pct;
             let _ = app_prog.emit("download", json!({ "family": fam_prog, "pct": pct }));

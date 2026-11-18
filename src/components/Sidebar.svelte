@@ -104,7 +104,10 @@
 <aside>
   <div class="head" data-tauri-drag-region>
     <img src="/icon.svg" width="24" height="24" alt="" draggable="false" />
-    <span class="brand" data-tauri-drag-region>Cosmic<i>.</i></span>
+    <div class="brand-wrap" data-tauri-drag-region>
+      <span class="brand-kicker" data-tauri-drag-region>COSMIC</span>
+      <span class="brand" data-tauri-drag-region>Font Foundry<i>.</i></span>
+    </div>
   </div>
 
   <nav>
@@ -222,9 +225,11 @@
     padding: 0 10px 14px;
     transition: background-color 0.3s;
   }
-  .head { flex: none; height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 8px; }
-  .head img { display: block; flex: none; }
-  .head .brand { display: flex; align-items: center; height: 24px; font-size: 18px; transform: translateY(1px); }
+  .head { flex: none; height: 52px; display: flex; align-items: center; gap: 9px; padding: 0 8px; }
+  .head img { display: block; flex: none; filter: drop-shadow(0 0 8px rgba(155, 109, 255, 0.32)); }
+  .brand-wrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .brand-kicker { font: 700 8.5px/1 var(--mono); letter-spacing: 0.16em; color: var(--accent-2); }
+  .head .brand { display: flex; align-items: center; font-size: 15.5px; white-space: nowrap; }
   nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 -6px; padding: 0 6px 6px; }
   .group { display: flex; flex-direction: column; gap: 1px; margin-top: 14px; }
   .group:first-child { margin-top: 2px; }
@@ -244,10 +249,10 @@
     transition: background-color 0.15s, color 0.15s, box-shadow 0.15s;
   }
   .item:hover { background: var(--hov); }
-  .item.active { background: var(--chip); color: var(--ink); font-weight: 600; }
+  .item.active { background: var(--chip); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); }
   .item.target { box-shadow: inset 0 0 0 1.5px var(--accent); background: var(--accent-soft); }
   .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line2); }
-  .active .dot { background: var(--ink); box-shadow: none; }
+  .active .dot { background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
   .dot.accent { box-shadow: inset 0 0 0 1.5px var(--accent); }
   .active .dot.accent { background: var(--accent); box-shadow: none; }
   .dot.warn { box-shadow: inset 0 0 0 1.5px var(--warn); }

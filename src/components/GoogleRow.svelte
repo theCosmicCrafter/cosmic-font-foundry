@@ -4,6 +4,7 @@
   import { t } from "../lib/i18n.svelte.js";
 
   let { g, sample, size, installed, pct, fav, onfav, oninstall, oninspect = null, notInstalled = false } = $props();
+  const srcKey = $derived(g.source ?? "google");
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -11,6 +12,7 @@
   <div class="txt" onclick={() => oninspect?.(g)}>
     <span class="name">
       <span>{g.name} · {g.styles} {g.styles === 1 ? t("style") : t("styles")}</span>
+      <span class="pill src" class:fontshare={srcKey === "fontshare"} class:fontsource={srcKey === "fontsource"}>{t("src." + srcKey)}</span>
       {#if g.is_variable}<span class="pill vf">VF</span>{/if}
       {#if notInstalled}<span class="missing"> · {t("g.notInstalled")}</span>{/if}
     </span>
@@ -59,6 +61,9 @@
   .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; cursor: pointer; }
   .name { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pill.vf { font: 700 9px var(--mono); padding: 1px 4px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); flex: none; }
+  .pill.src { font: 600 9px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--chip); color: var(--ink2); flex: none; }
+  .pill.src.fontshare { background: var(--cyan-soft); color: var(--accent-2); }
+  .pill.src.fontsource { background: rgba(45, 212, 191, 0.14); color: var(--ok); }
   .sample { line-height: 1.38; padding-top: 0.2em; white-space: nowrap; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; }
   .missing { color: var(--ink2); font-weight: 600; }
   .action { justify-self: end; }

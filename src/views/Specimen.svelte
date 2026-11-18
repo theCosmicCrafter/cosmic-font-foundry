@@ -43,7 +43,7 @@
 
   const metaLine = $derived(
     isGoogle
-      ? `${styleCount} ${styleCount === 1 ? t("style") : t("styles")} · ${t("google")}${installed ? ` · ${t("g.installed")}` : ""}`
+      ? `${styleCount} ${styleCount === 1 ? t("style") : t("styles")} · ${t("src." + (googleFont?.source ?? "google"))}${installed ? ` · ${t("g.installed")}` : ""}`
       : `${styleCount} ${styleCount === 1 ? t("style") : t("styles")} · ${t("origin." + f.origin)}`,
   );
 

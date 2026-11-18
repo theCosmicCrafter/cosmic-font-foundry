@@ -47,6 +47,7 @@
   let customSample = $state("");
   let filter = $state("all"); // all | active | inactive | variable
   let sort = $state("popularity");
+  let discoverSource = $state("all"); // all | google | fontshare | fontsource
   const sel = new SvelteSet();
   let detailName = $state(null);
   let googleDetailName = $state(null);
@@ -145,6 +146,7 @@
   const googleList = $derived.by(() => {
     const l = discover.list.filter(
       (g) =>
+        (discoverSource === "all" || (g.source ?? "google") === discoverSource) &&
         (!cat || g.category === cat) &&
         (!script || (g.scripts ?? []).includes(script)) &&
         (!ql || g.name.toLowerCase().includes(ql)),
@@ -199,7 +201,7 @@
         : cat
           ? t("cat." + cat)
           : inDiscover
-            ? t("google")
+            ? t("discoverCatalog")
             : inDiagnostics
               ? t("sec.diagnostics")
               : section === "favorites"
@@ -212,19 +214,19 @@
   );
   const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length);
 
-  // ---- Google preview font requests ----
+  // ---- Discover font preview requests ----
   let visibleGoogle = [];
   function onVisibleGoogle(items) {
     visibleGoogle = items;
-    requestGooglePreviews(items.map((g) => g.name), sample);
+    requestGooglePreviews(items, sample);
   }
   function onVisibleFav(items) {
     visibleGoogle = items.filter((it) => it.google).map((it) => it.google);
-    if (visibleGoogle.length) requestGooglePreviews(visibleGoogle.map((g) => g.name), sample);
+    if (visibleGoogle.length) requestGooglePreviews(visibleGoogle, sample);
   }
   $effect(() => {
     const m = sample;
-    if (inDiscover || section === "favorites") requestGooglePreviews(visibleGoogle.map((g) => g.name), m);
+    if (inDiscover || section === "favorites") requestGooglePreviews(visibleGoogle, m);
   });
 
   // ---- Actions ----
@@ -660,11 +662,21 @@
           />
         {:else if isNormalView && inDiscover}
           <SegmentedControl
+            label={t("src.all")}
+            options={["all", "google", "fontshare", "fontsource"].map((v) => ({ value: v, label: t("src." + v) }))}
+            value={discoverSource}
+            onselect={(v) => (discoverSource = v)}
+            width={92}
+            height={22}
+            paddingX={8}
+            font="600 11px"
+          />
+          <SegmentedControl
             label={t("sort.popularity")}
             options={["popularity", "recent", "alpha"].map((v) => ({ value: v, label: t("sort." + v) }))}
             value={sort}
             onselect={(v) => (sort = v)}
-            width={84}
+            width={76}
             height={22}
             font="600 11.5px"
           />
@@ -742,7 +754,7 @@
         {sample}
         fav={favSet.has(googleDetail.name)}
         installed={installedNamesLower.has(googleDetail.name.toLowerCase())}
-        backLabel={inDiscover ? t("google") : t("favorites")}
+        backLabel={inDiscover ? t("discoverCatalog") : t("favorites")}
         onback={() => (googleDetailName = null)}
         onfav={() => toggleFavorite(googleDetail.name)}
         onInstallGoogle={(name) => installGoogleFont(name, applyExternalList)}
@@ -862,7 +874,10 @@
   {#if splash}
     <div class="splash">
       <img src="/icon.svg" width="136" height="136" alt="" draggable="false" />
-      <span class="brand">Cosmic Font Foundry<i>.</i></span>
+      <div class="splash-brand">
+        <span class="brand-kicker">COSMIC</span>
+        <span class="brand">Font Foundry<i>.</i></span>
+      </div>
     </div>
   {/if}
 </div>
@@ -963,7 +978,9 @@
     white-space: nowrap;
   }
 
-  .splash { position: absolute; inset: 0; z-index: 40; background: var(--win); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
-  .splash img { display: block; animation: cf-key 0.55s cubic-bezier(0.3, 1.2, 0.5, 1) both; filter: drop-shadow(0 18px 30px rgba(91, 77, 247, 0.25)); }
-  .splash .brand { font-size: 28px; animation: cf-fade 0.3s ease-out 0.35s both; }
+  .splash { position: absolute; inset: 0; z-index: 40; background-color: var(--win); background-image: var(--win-glow); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+  .splash img { display: block; animation: cf-key 0.55s cubic-bezier(0.3, 1.2, 0.5, 1) both; filter: drop-shadow(0 18px 34px rgba(155, 109, 255, 0.34)); }
+  .splash-brand { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: cf-fade 0.3s ease-out 0.35s both; }
+  .splash .brand-kicker { font: 700 10.5px/1 var(--mono); letter-spacing: 0.24em; color: var(--accent-2); }
+  .splash .brand { font-size: 28px; }
 </style>

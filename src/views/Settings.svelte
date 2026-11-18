@@ -229,7 +229,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="modal" role="dialog" aria-modal="true" aria-label={t("settings")} tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <div class="side">
-      <span class="brand">Cosmic<i>.</i></span>
+      <span class="brand">Font Foundry<i>.</i></span>
       {#each TABS as tb (tb.id)}
         <button type="button" class="tab" class:active={tab === tb.id} onclick={() => ((tab = tb.id), (recording = null))}>
           <tb.icon size={14} strokeWidth={1.9} />{tb.label()}
@@ -420,7 +420,7 @@
   .veil { position: fixed; inset: 0; z-index: 20; background: var(--velo); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; animation: cf-fade 0.16s ease-out; }
   .modal { width: 700px; height: 550px; border-radius: 14px; background: var(--win); color: var(--ink); box-shadow: var(--float-shadow); overflow: hidden; display: grid; grid-template-columns: 192px minmax(0, 1fr); }
   .side { background: var(--side); border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 4px; }
-  .brand { font-size: 17px; padding: 0 10px 14px; }
+  .brand { font-size: 15.5px; padding: 0 10px 14px; white-space: nowrap; }
   .tab { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink2); font: 500 13px var(--sans); display: flex; align-items: center; gap: 9px; text-align: left; }
   .tab:hover { background: var(--hov); color: var(--ink); }
   .tab.active { background: var(--chip); color: var(--ink); font-weight: 600; }
