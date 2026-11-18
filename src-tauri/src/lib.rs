@@ -925,7 +925,7 @@ pub fn run() {
                 "systemLanguage": windows_language(),
             });
 
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            let main_win = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Cosmic Font Foundry")
                 .visible(!hidden)
                 .inner_size(1280.0, 820.0)
@@ -937,6 +937,9 @@ pub fn run() {
                 .background_color(if dark { BG_DARK } else { BG_LIGHT }.into())
                 .initialization_script(init_script(&boot))
                 .build()?;
+            if !hidden {
+                let _ = main_win.set_focus();
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
