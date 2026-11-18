@@ -195,7 +195,36 @@ export const backedUpCount = () => invokeCmd("backed_up_count");
 export const fontCharacters = (path) => invokeCmd("font_characters", { path });
 export const revealInExplorer = (path) => invokeCmd("show_in_explorer", { path }).catch(() => {});
 export const scanComputerFonts = (customDir = null) => invokeCmd("scan_computer_fonts", { customDir });
+export const cancelComputerScan = () => invokeCmd("cancel_computer_scan");
 export const watchFolderByPath = (path) => invokeCmd("watch_folder_path", { path });
+
+export async function copyFamiliesToVault(families) {
+  fonts.busy = true;
+  try {
+    const res = await invokeCmd("copy_families_to_vault", { families });
+    if (res?.families) setFonts(res.families, res.diagnostics);
+    return res;
+  } catch (e) {
+    notify("err", t("err.one"), String(e));
+    return null;
+  } finally {
+    fonts.busy = false;
+  }
+}
+
+export async function installFamiliesToWindows(families, installForAll = false) {
+  fonts.busy = true;
+  try {
+    const res = await invokeCmd("install_families_to_windows", { families, installForAll });
+    setFonts(res.families, res.diagnostics);
+    return reportOutcome(res);
+  } catch (e) {
+    notify("err", t("err.install"), String(e));
+    return null;
+  } finally {
+    fonts.busy = false;
+  }
+}
 export const agentGetState = () => invokeCmd("agent_get_state");
 export const agentSetConfig = (config) => invokeCmd("agent_set_config", { config });
 export const agentRunCommand = (prompt) => invokeCmd("agent_run_command", { prompt });

@@ -163,8 +163,36 @@
   });
 
   // ---- Local glyph map ----
+  const BLOCK_ORDER = [
+    "All",
+    "Basic Latin",
+    "Latin Extended",
+    "Punctuation & Symbols",
+    "Arrows & Math",
+    "Greek & Cyrillic",
+    "Arabic & Hebrew",
+    "Other & CJK",
+  ];
+
+  function classifyBlock(cp) {
+    if (cp <= 0x007f) return "Basic Latin";
+    if (cp <= 0x024f) return "Latin Extended";
+    if (cp >= 0x0370 && cp <= 0x052f) return "Greek & Cyrillic";
+    if (cp >= 0x0590 && cp <= 0x06ff) return "Arabic & Hebrew";
+    if ((cp >= 0x2000 && cp <= 0x20cf) || (cp >= 0x2400 && cp <= 0x27bf)) return "Punctuation & Symbols";
+    if (cp >= 0x2190 && cp <= 0x23ff) return "Arrows & Math";
+    return "Other & CJK";
+  }
+
   let glyphs = $state([]);
+  let glyphBlock = $state("All");
+  let glyphQuery = $state("");
+  let glyphLimit = $state(240);
+
   $effect(() => {
+    glyphBlock = "All";
+    glyphQuery = "";
+    glyphLimit = 240;
     if (!f?.file) {
       glyphs = [];
       return;
@@ -173,10 +201,34 @@
     glyphs = [];
     fontCharacters(path)
       .then((codes) => {
-        if (f?.file === path) glyphs = codes.map((c) => String.fromCodePoint(c));
+        if (f?.file === path) {
+          glyphs = codes.map((code) => ({
+            char: String.fromCodePoint(code),
+            code,
+            hex: code.toString(16).toUpperCase().padStart(4, "0"),
+            block: classifyBlock(code),
+          }));
+        }
       })
       .catch(() => {});
   });
+
+  const glyphBlocks = $derived.by(() => {
+    const counts = { All: glyphs.length };
+    for (const g of glyphs) counts[g.block] = (counts[g.block] ?? 0) + 1;
+    return BLOCK_ORDER.filter((b) => (counts[b] ?? 0) > 0).map((name) => ({ name, count: counts[name] }));
+  });
+
+  const filteredGlyphs = $derived.by(() => {
+    const q = glyphQuery.trim().toUpperCase().replace(/^U\+/, "");
+    return glyphs.filter((g) => {
+      if (glyphBlock !== "All" && g.block !== glyphBlock) return false;
+      if (!q) return true;
+      return g.char.toUpperCase() === q || g.hex.includes(q);
+    });
+  });
+
+  const shownGlyphs = $derived(filteredGlyphs.slice(0, glyphLimit));
 
   // ---- Tags ----
   let newTag = $state("");
@@ -539,22 +591,54 @@
   <!-- Glyph Map -->
   {#if glyphs.length}
     <div class="block">
-      <span class="label">{t("allChars")} · {glyphs.length}</span>
+      <div class="glyph-head">
+        <span class="label">{t("allChars")} · {filteredGlyphs.length}</span>
+        <input
+          class="glyph-search"
+          bind:value={glyphQuery}
+          placeholder={t("spec.glyphSearch")}
+          spellcheck="false"
+        />
+      </div>
+      {#if glyphBlocks.length > 2}
+        <div class="glyph-blocks">
+          {#each glyphBlocks as blk (blk.name)}
+            <button
+              type="button"
+              class="blk-pill"
+              class:active={glyphBlock === blk.name}
+              onclick={() => ((glyphBlock = blk.name), (glyphLimit = 240))}
+            >
+              {blk.name} <span class="num">{blk.count}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
       <div class="glyphs">
-        {#each glyphs as c, i (i)}
+        {#each shownGlyphs as g (g.code)}
           <button
             type="button"
             class="glyph"
-            title={t("copy") + " U+" + c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}
+            title={`${t("copy")} U+${g.hex}`}
             style:font-family={previewStyle.family}
             style:font-weight={axisValues.wght ?? previewStyle.weight}
             style:font-style={previewStyle.italic ? "italic" : "normal"}
             style:font-variation-settings={variationCss}
             style:font-feature-settings={featureCss}
-            onclick={() => copyText(c)}>{c}</button
+            onclick={() => copyText(g.char)}>{g.char}</button
           >
         {/each}
       </div>
+      {#if filteredGlyphs.length > shownGlyphs.length}
+        <div class="glyph-more">
+          <button type="button" class="blk-pill" onclick={() => (glyphLimit += 240)}>
+            {t("spec.showMore", { n: Math.min(240, filteredGlyphs.length - shownGlyphs.length) })}
+          </button>
+          <button type="button" class="blk-pill" onclick={() => (glyphLimit = filteredGlyphs.length)}>
+            {t("spec.showAll", { n: filteredGlyphs.length })}
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -721,6 +805,19 @@
   .set { display: flex; flex-direction: column; gap: 4px; }
   .chars { font-size: 30px; line-height: 1.5; letter-spacing: 0.02em; word-break: break-all; }
   .block { display: flex; flex-direction: column; gap: 8px; }
+  .glyph-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .glyph-search {
+    height: 26px; width: 210px; padding: 0 9px; border: 1px solid var(--line2); border-radius: 7px;
+    background: var(--field); color: var(--ink); font: 500 11.5px var(--sans);
+  }
+  .glyph-blocks, .glyph-more { display: flex; flex-wrap: wrap; gap: 5px; }
+  .blk-pill {
+    height: 24px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px;
+    background: var(--field); color: var(--ink2); font: 600 11px var(--sans);
+    display: inline-flex; align-items: center; gap: 5px; transition: all 0.12s;
+  }
+  .blk-pill:hover { border-color: var(--line2); color: var(--ink); }
+  .blk-pill.active { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
   .glyphs { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 4px; }
   .glyph {
     height: 56px;

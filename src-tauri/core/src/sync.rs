@@ -691,19 +691,44 @@ pub fn export_design_kit_zip(
                     }
                 }
             }
+            let mut has_woff = false;
+            let raw_stem = Path::new(&archive_name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "font".into());
+            let lower_arc = archive_name.to_ascii_lowercase();
+            if lower_arc.ends_with(".ttf") || lower_arc.ends_with(".otf") {
+                if let Ok(woff_bytes) = crate::woff::sfnt_to_woff(&bytes) {
+                    let woff_name = format!("{raw_stem}.woff");
+                    if used_names.insert(woff_name.to_lowercase())
+                        && zip
+                            .add_file(&format!("fonts/{woff_name}"), &woff_bytes)
+                            .is_ok()
+                    {
+                        has_woff = true;
+                    }
+                }
+            }
+
             zip.add_file(&format!("fonts/{archive_name}"), &bytes)?;
             font_files += 1;
 
-            let fmt = if archive_name.to_lowercase().ends_with(".otf") {
+            let fmt = if lower_arc.ends_with(".otf") {
                 "opentype"
             } else {
                 "truetype"
             };
+            let src_rule = if has_woff {
+                format!(
+                    "url(\"./fonts/{raw_stem}.woff\") format(\"woff\"),\n       url(\"./fonts/{archive_name}\") format(\"{fmt}\")"
+                )
+            } else {
+                format!("url(\"./fonts/{archive_name}\") format(\"{fmt}\")")
+            };
             css.push_str(&format!(
-                "@font-face {{\n  font-family: \"{}\";\n  src: url(\"./fonts/{}\") format(\"{}\");\n  font-weight: {};\n  font-style: {};\n  font-display: swap;\n}}\n\n",
+                "@font-face {{\n  font-family: \"{}\";\n  src: {};\n  font-weight: {};\n  font-style: {};\n  font-display: swap;\n}}\n\n",
                 fam.name,
-                archive_name,
-                fmt,
+                src_rule,
                 st.weight,
                 if st.italic { "italic" } else { "normal" }
             ));
@@ -769,22 +794,58 @@ fn le32(b: &[u8], off: usize) -> Option<u32> {
     Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
 }
 
+const MAX_ZIP_ENTRY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES: usize = 256 * 1024 * 1024;
+
 fn decompress_zip_entry(method: u16, comp: &[u8]) -> Result<Vec<u8>, String> {
     match method {
-        0 => Ok(comp.to_vec()),
+        0 => {
+            if comp.len() > MAX_ZIP_ENTRY_BYTES {
+                return Err("zip entry exceeds maximum allowed size".into());
+            }
+            Ok(comp.to_vec())
+        }
         8 => {
-            let mut dec = DeflateDecoder::new(comp);
+            let mut dec = DeflateDecoder::new(comp).take((MAX_ZIP_ENTRY_BYTES + 1) as u64);
             let mut out = Vec::new();
             dec.read_to_end(&mut out).map_err(|e| e.to_string())?;
+            if out.len() > MAX_ZIP_ENTRY_BYTES {
+                return Err("zip entry exceeds maximum allowed decompressed size".into());
+            }
             Ok(out)
         }
         other => Err(format!("unsupported zip compression method {other}")),
     }
 }
 
-/// Extracts `.ttf` and `.otf` font binaries from an in-memory PKZIP archive.
+fn sanitize_zip_font_name(raw_name: &str) -> Option<String> {
+    if raw_name.contains("__MACOSX") || raw_name.ends_with('/') || raw_name.ends_with('\\') {
+        return None;
+    }
+    let fname = raw_name
+        .rsplit(['/', '\\'])
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    if fname.starts_with("._") {
+        return None;
+    }
+    let lower = fname.to_ascii_lowercase();
+    if lower.ends_with(".ttf")
+        || lower.ends_with(".otf")
+        || lower.ends_with(".ttc")
+        || lower.ends_with(".otc")
+    {
+        Some(fname.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extracts `.ttf`, `.otf`, `.ttc`, and `.otc` font binaries from an in-memory PKZIP archive.
 pub fn extract_zip_fonts(zip_bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut out = Vec::new();
+    let mut total_extracted = 0usize;
     // Locate End of Central Directory (PK\x05\x06) to handle archives with data descriptors reliably.
     if let Some(eocd) = zip_bytes
         .windows(4)
@@ -808,12 +869,9 @@ pub fn extract_zip_fonts(zip_bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, Str
             let raw_name = String::from_utf8_lossy(name_slice).into_owned();
             pos += 46 + name_len + extra_len + comment_len;
 
-            let lower = raw_name.to_ascii_lowercase();
-            if !(lower.ends_with(".ttf") || lower.ends_with(".otf"))
-                || raw_name.contains("__MACOSX")
-            {
+            let Some(fname) = sanitize_zip_font_name(&raw_name) else {
                 continue;
-            }
+            };
             if zip_bytes.get(local_off..local_off + 4) != Some(b"PK\x03\x04") {
                 continue;
             }
@@ -824,10 +882,10 @@ pub fn extract_zip_fonts(zip_bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, Str
                 continue;
             };
             if let Ok(bytes) = decompress_zip_entry(method, comp_slice) {
-                let fname = Path::new(&raw_name)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or(raw_name);
+                total_extracted = total_extracted.saturating_add(bytes.len());
+                if total_extracted > MAX_ZIP_TOTAL_BYTES {
+                    return Err("zip archive exceeds maximum extracted size".into());
+                }
                 out.push((fname, bytes));
             }
         }
@@ -847,13 +905,12 @@ pub fn extract_zip_fonts(zip_bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, Str
         let Some(comp_slice) = zip_bytes.get(data_start..data_start + comp_size) else {
             break;
         };
-        let lower = raw_name.to_ascii_lowercase();
-        if (lower.ends_with(".ttf") || lower.ends_with(".otf")) && !raw_name.contains("__MACOSX") {
+        if let Some(fname) = sanitize_zip_font_name(&raw_name) {
             if let Ok(bytes) = decompress_zip_entry(method, comp_slice) {
-                let fname = Path::new(&raw_name)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or(raw_name);
+                total_extracted = total_extracted.saturating_add(bytes.len());
+                if total_extracted > MAX_ZIP_TOTAL_BYTES {
+                    return Err("zip archive exceeds maximum extracted size".into());
+                }
                 out.push((fname, bytes));
             }
         }

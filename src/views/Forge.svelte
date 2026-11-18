@@ -1,6 +1,9 @@
 <script>
   import { onDestroy } from "svelte";
-  import { Download, Sparkles, RotateCcw, FlipHorizontal2, Eraser, Check, Contrast } from "@lucide/svelte";
+  import {
+    Download, Sparkles, RotateCcw, FlipHorizontal2, Eraser, Check, Contrast,
+    Undo2, Redo2, Save, FolderUp,
+  } from "@lucide/svelte";
   import {
     MATRIX_COLS,
     MATRIX_ROWS,
@@ -11,6 +14,7 @@
     cloneGrid,
     resizeGlyphsResolution,
     compileTrueTypeFont,
+    compileWoffFont,
   } from "../lib/forge.js";
   import { installForgedFont } from "../lib/fonts.svelte.js";
   import { settings } from "../lib/settings.svelte.js";
@@ -34,6 +38,11 @@
   const rows = $derived(MATRIX_ROWS * gridScale);
 
   let glyphs = $state(buildPresetGlyphs("cosmic"));
+  let glyphWidths = $state({});
+  let undoStack = $state([]);
+  let redoStack = $state([]);
+  let projectInput = $state();
+  let strokeSnapshotTaken = false;
   let activeChar = $state("A");
   let testPhrase = $state("");
   let testSize = $state(38);
@@ -48,6 +57,7 @@
   let compiledBytes = $state(new Uint8Array(0));
 
   const currentGrid = $derived(glyphs[activeChar] ?? Array.from({ length: rows }, () => new Array(cols).fill(0)));
+  const currentGlyphWidth = $derived(glyphWidths[activeChar] ?? 0);
   const effectivePhrase = $derived(testPhrase.trim() || sample || "COSMIC FONT FOUNDRY 0123456789");
 
   let activeFontFace = null;
@@ -64,6 +74,7 @@
       corner,
       shape,
       glyphs,
+      glyphWidths,
       cols,
       rows,
     };
@@ -95,8 +106,50 @@
     if (activeFontFace) document.fonts.delete(activeFontFace);
   });
 
+  function cloneGlyphMap(map) {
+    const out = {};
+    for (const [k, v] of Object.entries(map)) out[k] = cloneGrid(v);
+    return out;
+  }
+
+  function makeSnapshot() {
+    return {
+      glyphs: cloneGlyphMap(glyphs),
+      glyphWidths: { ...glyphWidths },
+      gridScale,
+    };
+  }
+
+  function pushUndo() {
+    undoStack = [...undoStack.slice(-59), makeSnapshot()];
+    redoStack = [];
+  }
+
+  function applySnapshot(snap) {
+    glyphs = cloneGlyphMap(snap.glyphs);
+    glyphWidths = { ...(snap.glyphWidths ?? {}) };
+    gridScale = snap.gridScale ?? 1;
+  }
+
+  function undoForge() {
+    if (!undoStack.length) return;
+    const prev = undoStack[undoStack.length - 1];
+    redoStack = [...redoStack.slice(-59), makeSnapshot()];
+    undoStack = undoStack.slice(0, -1);
+    applySnapshot(prev);
+  }
+
+  function redoForge() {
+    if (!redoStack.length) return;
+    const next = redoStack[redoStack.length - 1];
+    undoStack = [...undoStack.slice(-59), makeSnapshot()];
+    redoStack = redoStack.slice(0, -1);
+    applySnapshot(next);
+  }
+
   function setGridScale(nextScale) {
     if (nextScale === gridScale) return;
+    pushUndo();
     const targetCols = MATRIX_COLS * nextScale;
     const targetRows = MATRIX_ROWS * nextScale;
     glyphs = resizeGlyphsResolution(glyphs, targetCols, targetRows);
@@ -104,6 +157,7 @@
   }
 
   function applyPreset(p) {
+    pushUndo();
     activePreset = p.id;
     shape = p.shape;
     weight = p.weight;
@@ -123,6 +177,8 @@
   }
 
   function startPaint(r, c) {
+    pushUndo();
+    strokeSnapshotTaken = true;
     const next = currentGrid[r][c] ? 0 : 1;
     painting = next;
     setCell(r, c, next);
@@ -134,16 +190,19 @@
   }
 
   function clearGlyph() {
+    pushUndo();
     const empty = Array.from({ length: rows }, () => new Array(cols).fill(0));
     glyphs = { ...glyphs, [activeChar]: empty };
   }
 
   function invertGlyph() {
+    pushUndo();
     const inv = currentGrid.map((row) => row.map((v) => (v ? 0 : 1)));
     glyphs = { ...glyphs, [activeChar]: inv };
   }
 
   function mirrorGlyph() {
+    pushUndo();
     const mir = currentGrid.map((row) => [...row].reverse());
     glyphs = { ...glyphs, [activeChar]: mir };
   }
@@ -151,22 +210,116 @@
   function resetCurrentGlyph() {
     const fresh = buildPresetGlyphs(activePreset);
     if (fresh[activeChar]) {
+      pushUndo();
       const next = gridScale === 2 ? resizeGlyphsResolution({ [activeChar]: fresh[activeChar] }, cols, rows)[activeChar] : fresh[activeChar];
       glyphs = { ...glyphs, [activeChar]: next };
     }
   }
 
-  function exportTtf() {
-    if (!compiledBytes.length) return;
-    const slug = `${familyName.trim() || "cosmic-forge"}-${styleName}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const blob = new Blob([compiledBytes], { type: "font/ttf" });
+  function setActiveGlyphWidth(val) {
+    const num = Number(val) || 0;
+    if (!strokeSnapshotTaken) {
+      pushUndo();
+      strokeSnapshotTaken = true;
+    }
+    if (num === 0) {
+      const next = { ...glyphWidths };
+      delete next[activeChar];
+      glyphWidths = next;
+    } else {
+      glyphWidths = { ...glyphWidths, [activeChar]: num };
+    }
+  }
+
+  function fontSlug() {
+    return `${familyName.trim() || "cosmic-forge"}-${styleName}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  }
+
+  function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${slug}.ttf`;
+    a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify("ok", t("forge.exported"), `${slug}.ttf`);
+  }
+
+  function exportTtf() {
+    if (!compiledBytes.length) return;
+    const file = `${fontSlug()}.ttf`;
+    downloadBlob(new Blob([compiledBytes], { type: "font/ttf" }), file);
+    notify("ok", t("forge.exported"), file);
+  }
+
+  async function exportWoff() {
+    if (!compiledBytes.length) return;
+    try {
+      const woff = await compileWoffFont(compiledBytes);
+      const file = `${fontSlug()}.woff`;
+      downloadBlob(new Blob([woff], { type: "font/woff" }), file);
+      notify("ok", t("forge.woffExported"), file);
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    }
+  }
+
+  function saveProject() {
+    const project = {
+      version: 1,
+      familyName,
+      styleName,
+      activePreset,
+      shape,
+      weight,
+      contrast,
+      slant,
+      tracking,
+      corner,
+      gridScale,
+      glyphs,
+      glyphWidths,
+    };
+    const file = `${fontSlug()}.cosmicforge.json`;
+    downloadBlob(new Blob([JSON.stringify(project, null, 2)], { type: "application/json" }), file);
+    notify("ok", t("forge.projSaved"), file);
+  }
+
+  async function onLoadProjectFile(e) {
+    const file = e.currentTarget?.files?.[0];
+    e.currentTarget.value = "";
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!data || typeof data.glyphs !== "object") throw new Error("Invalid project");
+      pushUndo();
+      if (typeof data.familyName === "string") familyName = data.familyName;
+      if (typeof data.styleName === "string") styleName = data.styleName;
+      if (typeof data.activePreset === "string") activePreset = data.activePreset;
+      if (typeof data.shape === "string") shape = data.shape;
+      if (typeof data.weight === "number") weight = data.weight;
+      if (typeof data.contrast === "number") contrast = data.contrast;
+      if (typeof data.slant === "number") slant = data.slant;
+      if (typeof data.tracking === "number") tracking = data.tracking;
+      if (typeof data.corner === "number") corner = data.corner;
+      gridScale = data.gridScale === 2 ? 2 : 1;
+      glyphs = cloneGlyphMap(data.glyphs);
+      glyphWidths = data.glyphWidths && typeof data.glyphWidths === "object" ? { ...data.glyphWidths } : {};
+      notify("ok", t("forge.projLoaded"), file.name);
+    } catch {
+      notify("err", t("forge.projInvalid"), file.name);
+    }
+  }
+
+  function onForgeKeyDown(e) {
+    if (e.target.closest("input, textarea, [contenteditable]")) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (e.shiftKey) redoForge();
+      else undoForge();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      redoForge();
+    }
   }
 
   async function installForged() {
@@ -184,7 +337,15 @@
   }
 </script>
 
-<svelte:window onmouseup={() => (painting = null)} />
+<svelte:window onmouseup={() => ((painting = null), (strokeSnapshotTaken = false))} onkeydown={onForgeKeyDown} />
+
+<input
+  bind:this={projectInput}
+  type="file"
+  accept=".cosmicforge.json,.json"
+  style="display:none"
+  onchange={onLoadProjectFile}
+/>
 
 <div class="forge">
   <div class="forge-bar">
@@ -201,8 +362,17 @@
 
     <div class="bar-actions">
       <span class="size-badge num">{Math.max(1, Math.round(compiledBytes.length / 1024))} KB · {Object.keys(glyphs).length + 2} glyphs</span>
+      <button type="button" class="btn" title={t("forge.loadProj")} onclick={() => projectInput?.click()}>
+        <FolderUp size={13} strokeWidth={2} />{t("forge.loadProj")}
+      </button>
+      <button type="button" class="btn" title={t("forge.saveProj")} onclick={saveProject}>
+        <Save size={13} strokeWidth={2} />{t("forge.saveProj")}
+      </button>
       <button type="button" class="btn" onclick={exportTtf} disabled={!compiledBytes.length}>
         <Download size={13} strokeWidth={2} />{t("forge.export")}
+      </button>
+      <button type="button" class="btn" onclick={exportWoff} disabled={!compiledBytes.length}>
+        <Download size={13} strokeWidth={2} />{t("forge.exportWoff")}
       </button>
       <button type="button" class="btn primary" onclick={installForged} disabled={installing || !compiledBytes.length}>
         <Check size={13} strokeWidth={2.2} />{installing ? t("forge.installing") : t("forge.install")}
@@ -216,6 +386,8 @@
       <div class="panel-head">
         <span class="label">{t("forge.matrix")} · “{activeChar}”</span>
         <div class="tool-btns">
+          <button type="button" class="mini" title={t("forge.undo")} onclick={undoForge} disabled={!undoStack.length}><Undo2 size={12} /></button>
+          <button type="button" class="mini" title={t("forge.redo")} onclick={redoForge} disabled={!redoStack.length}><Redo2 size={12} /></button>
           <button
             type="button"
             class="res-pill"
@@ -269,6 +441,22 @@
           <span>{cols}×{rows} EM GRID</span>
           <span>1000 UPM · TTF</span>
         </div>
+        <label class="glyph-width-row">
+          <span class="s-lbl">{t("forge.glyphWidth")} (“{activeChar}”)</span>
+          <input
+            type="range"
+            min="-160"
+            max="240"
+            step="10"
+            value={currentGlyphWidth}
+            oninput={(e) => setActiveGlyphWidth(e.currentTarget.value)}
+            onchange={() => (strokeSnapshotTaken = false)}
+          />
+          <span class="s-val num">{currentGlyphWidth > 0 ? `+${currentGlyphWidth}` : currentGlyphWidth}</span>
+          {#if currentGlyphWidth !== 0}
+            <button type="button" class="mini" title={t("forge.resetWidth")} onclick={() => setActiveGlyphWidth(0)}><RotateCcw size={10} /></button>
+          {/if}
+        </label>
       </div>
 
       <div class="char-groups">
@@ -472,7 +660,14 @@
     width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--field); color: var(--ink2); display: grid; place-items: center;
   }
-  .mini:hover { color: var(--ink); border-color: var(--line2); }
+  .mini:hover:not(:disabled) { color: var(--ink); border-color: var(--line2); }
+  .mini:disabled { opacity: 0.4; cursor: default; }
+  .glyph-width-row {
+    width: 100%; display: flex; align-items: center; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line);
+  }
+  .glyph-width-row .s-lbl { flex: none; font-size: 11px; color: var(--ink2); }
+  .glyph-width-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  .glyph-width-row .s-val { width: 38px; text-align: right; font: 500 11px var(--mono); color: var(--ink3); }
 
   .matrix-stage {
     padding: 12px;

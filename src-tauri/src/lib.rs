@@ -17,7 +17,10 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
-    sync::{mpsc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
@@ -40,6 +43,7 @@ pub(crate) struct AppState {
     loaded_folder_fonts: Mutex<HashSet<String>>,
     pub(crate) disabled_folder_fonts: Mutex<HashSet<String>>,
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    scan_cancel: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -218,7 +222,11 @@ async fn install_fonts(
         move || {
             let state = app.state::<AppState>();
             let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-            let outcome = install_files(&state, &path_bufs, install_for_all);
+            let (expanded, _zip_tmp, mut expand_errors) =
+                vault::expand_font_and_zip_sources(&path_bufs);
+            let expanded_paths: Vec<PathBuf> = expanded.into_iter().map(|(p, _)| p).collect();
+            let mut outcome = install_files(&state, &expanded_paths, install_for_all);
+            outcome.errors.append(&mut expand_errors);
             let (families, _, diagnostics, _) = state.refresh();
             Ok(ToggleResponse {
                 families,
@@ -379,33 +387,88 @@ async fn recycle_vault_duplicates(
     .await
 }
 
+fn collect_family_paths(state: &AppState, families: &[String]) -> Vec<PathBuf> {
+    let cache = state.cache.lock().unwrap();
+    let mut seen = HashSet::new();
+    let mut paths = Vec::new();
+    for name in families {
+        if let Some(fam) = cache
+            .families
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case(name))
+        {
+            for fpath in &fam.files {
+                let p = PathBuf::from(fpath);
+                if seen.insert(fonts::path_key(&p)) {
+                    paths.push(p);
+                }
+            }
+        }
+    }
+    paths
+}
+
 #[tauri::command]
 async fn install_family_to_windows(
     app: AppHandle,
     family: String,
     install_for_all: bool,
 ) -> Result<ToggleResponse, String> {
+    install_families_to_windows(app, vec![family], install_for_all).await
+}
+
+#[tauri::command]
+async fn install_families_to_windows(
+    app: AppHandle,
+    families: Vec<String>,
+    install_for_all: bool,
+) -> Result<ToggleResponse, String> {
     let resp = bg({
         let app = app.clone();
         move || {
             let state = app.state::<AppState>();
-            let paths: Vec<PathBuf> = {
-                let cache = state.cache.lock().unwrap();
-                cache
-                    .families
-                    .iter()
-                    .find(|f| f.name.eq_ignore_ascii_case(&family))
-                    .map(|f| f.files.iter().map(PathBuf::from).collect())
-                    .unwrap_or_default()
-            };
+            let paths = collect_family_paths(&state, &families);
             if paths.is_empty() {
-                return Err(format!("{family}: no font files found"));
+                return Err("No font files found for the selected families".into());
             }
             let outcome = install_files(&state, &paths, install_for_all);
             let (families, _, diagnostics, _) = state.refresh();
             Ok(ToggleResponse {
                 families,
                 outcome,
+                diagnostics,
+            })
+        }
+    })
+    .await?;
+    let _ = app.emit("inventory-updated", &resp.families);
+    Ok(resp)
+}
+
+#[tauri::command]
+async fn copy_families_to_vault(
+    app: AppHandle,
+    families: Vec<String>,
+) -> Result<VaultImportResponse, String> {
+    let resp = bg({
+        let app = app.clone();
+        move || {
+            let state = app.state::<AppState>();
+            let paths = collect_family_paths(&state, &families);
+            if paths.is_empty() {
+                return Err("No font files found for the selected families".into());
+            }
+            let vault_path = vault::load_vault_path(&state.env.data_dir);
+            let report = vault::import_to_vault(&vault_path, &paths, false)?;
+            ensure_vault_watched(&app, &state, &vault_path);
+            let (families, _, diagnostics, _) = state.refresh();
+            let stats = vault::compute_vault_stats(&vault_path);
+            let folders = folder_list(&state);
+            Ok(VaultImportResponse {
+                report,
+                stats,
+                folders,
+                families,
                 diagnostics,
             })
         }
@@ -703,6 +766,16 @@ pub(crate) struct OsFontReport {
     system_font_count: usize,
     user_font_count: usize,
     discovered_folders: Vec<DiscoveredFontFolder>,
+    scanned_dirs: usize,
+    cancelled: bool,
+}
+
+#[derive(Serialize, Clone)]
+struct ScanProgressEvent {
+    scanned_dirs: usize,
+    current_dir: String,
+    found_folder: Option<DiscoveredFontFolder>,
+    cancelled: bool,
 }
 
 const MAX_SCAN_DIRS: usize = 1500;
@@ -735,19 +808,51 @@ fn should_skip_scan_dir(name: &str) -> bool {
         )
 }
 
+fn should_skip_thorough_dir(name: &str, depth: usize) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "$recycle.bin"
+            | "system volume information"
+            | "$windows.~bt"
+            | "$windows.~ws"
+            | "recovery"
+            | "config.msi"
+            | "msocache"
+            | "winsxs"
+            | ".git"
+    ) || (depth == 0 && lower == "windows")
+}
+
+fn normalize_scan_root(raw: &str) -> PathBuf {
+    let trimmed = raw.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        PathBuf::from(format!("{trimmed}\\"))
+    } else {
+        PathBuf::from(trimmed)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn scan_dir_for_fonts(
     root: &Path,
     origin_kind: &str,
-    max_depth: usize,
+    max_depth: Option<usize>,
+    max_dirs: Option<usize>,
+    thorough: bool,
     excluded_roots: &[String],
     known_families: &std::collections::HashMap<String, String>,
+    cancel: &AtomicBool,
+    scanned_total: &mut usize,
+    on_progress: &mut dyn FnMut(usize, &Path, Option<&DiscoveredFontFolder>),
     out: &mut Vec<DiscoveredFontFolder>,
 ) {
     use std::collections::BTreeSet;
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     let mut visited_dirs = 0usize;
     while let Some((dir, depth)) = stack.pop() {
-        if visited_dirs >= MAX_SCAN_DIRS {
+        if cancel.load(Ordering::Relaxed) || max_dirs.is_some_and(|limit| visited_dirs >= limit) {
             break;
         }
         let dir_key = fonts::path_key(&dir);
@@ -758,20 +863,32 @@ fn scan_dir_for_fonts(
             continue;
         }
         visited_dirs += 1;
+        *scanned_total += 1;
         let Ok(entries) = fs::read_dir(&dir) else {
+            if (*scanned_total).is_multiple_of(40) {
+                on_progress(*scanned_total, &dir, None);
+            }
             continue;
         };
         let mut files = Vec::new();
         let mut families = BTreeSet::new();
         for entry in entries.flatten() {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
             let path = entry.path();
             let Ok(ft) = entry.file_type() else {
                 continue;
             };
             if ft.is_dir() {
-                if depth < max_depth {
+                if max_depth.is_none_or(|limit| depth < limit) {
                     let name = entry.file_name().to_string_lossy().into_owned();
-                    if !should_skip_scan_dir(&name) {
+                    let skip = if thorough {
+                        should_skip_thorough_dir(&name, depth)
+                    } else {
+                        should_skip_scan_dir(&name)
+                    };
+                    if !skip {
                         stack.push((path, depth + 1));
                     }
                 }
@@ -793,19 +910,31 @@ fn scan_dir_for_fonts(
                 .map(|s| s.to_string_lossy().into_owned())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| dir.to_string_lossy().into_owned());
-            out.push(DiscoveredFontFolder {
+            let found = DiscoveredFontFolder {
                 path: dir.to_string_lossy().into_owned(),
                 label,
                 origin_kind: origin_kind.to_string(),
                 font_count: files.len(),
                 families: families.into_iter().collect(),
                 files,
-            });
+            };
+            on_progress(*scanned_total, &dir, Some(&found));
+            out.push(found);
+        } else if (*scanned_total).is_multiple_of(40) || *scanned_total == 1 {
+            on_progress(*scanned_total, &dir, None);
         }
     }
 }
 
 pub(crate) fn run_smart_scan(state: &AppState, custom_dir: Option<&str>) -> OsFontReport {
+    run_smart_scan_with_progress(state, custom_dir, None)
+}
+
+fn run_smart_scan_with_progress(
+    state: &AppState,
+    custom_dir: Option<&str>,
+    app: Option<&AppHandle>,
+) -> OsFontReport {
     let (system_fonts_dir, user_fonts_dir) = (
         state.env.system_fonts.to_string_lossy().into_owned(),
         state.env.user_fonts.to_string_lossy().into_owned(),
@@ -836,16 +965,38 @@ pub(crate) fn run_smart_scan(state: &AppState, custom_dir: Option<&str>) -> OsFo
         (sys, usr, map)
     };
 
+    let cancel = &state.scan_cancel;
+    let mut scanned_total = 0usize;
+    let mut emit_progress =
+        |scanned_dirs: usize, dir: &Path, found: Option<&DiscoveredFontFolder>| {
+            if let Some(handle) = app {
+                let _ = handle.emit(
+                    "scan-progress",
+                    ScanProgressEvent {
+                        scanned_dirs,
+                        current_dir: dir.to_string_lossy().into_owned(),
+                        found_folder: found.cloned(),
+                        cancelled: cancel.load(Ordering::Relaxed),
+                    },
+                );
+            }
+        };
+
     let mut discovered_folders = Vec::new();
     if let Some(dir) = custom_dir.filter(|s| !s.trim().is_empty()) {
-        let p = PathBuf::from(dir);
+        let p = normalize_scan_root(dir);
         if p.is_dir() {
             scan_dir_for_fonts(
                 &p,
                 "Custom Folder",
-                4,
+                None,
+                None,
+                true,
                 &excluded_roots,
                 &known_families,
+                cancel,
+                &mut scanned_total,
+                &mut emit_progress,
                 &mut discovered_folders,
             );
         }
@@ -873,19 +1024,28 @@ pub(crate) fn run_smart_scan(state: &AppState, custom_dir: Option<&str>) -> OsFo
         }
         let mut seen_paths = HashSet::new();
         for (root, kind, depth) in roots {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
             if root.is_dir() && seen_paths.insert(fonts::path_key(&root)) {
                 scan_dir_for_fonts(
                     &root,
                     kind,
-                    depth,
+                    Some(depth),
+                    Some(MAX_SCAN_DIRS),
+                    false,
                     &excluded_roots,
                     &known_families,
+                    cancel,
+                    &mut scanned_total,
+                    &mut emit_progress,
                     &mut discovered_folders,
                 );
             }
         }
     }
     discovered_folders.sort_by_key(|f| std::cmp::Reverse(f.font_count));
+    let cancelled = cancel.load(Ordering::Relaxed);
 
     let os_name = if cfg!(target_os = "windows") {
         "Windows".to_string()
@@ -900,6 +1060,8 @@ pub(crate) fn run_smart_scan(state: &AppState, custom_dir: Option<&str>) -> OsFo
         system_font_count,
         user_font_count,
         discovered_folders,
+        scanned_dirs: scanned_total,
+        cancelled,
     }
 }
 
@@ -910,9 +1072,19 @@ async fn scan_computer_fonts(
 ) -> Result<OsFontReport, String> {
     bg(move || {
         let state = app.state::<AppState>();
-        Ok(run_smart_scan(&state, custom_dir.as_deref()))
+        state.scan_cancel.store(false, Ordering::SeqCst);
+        Ok(run_smart_scan_with_progress(
+            &state,
+            custom_dir.as_deref(),
+            Some(&app),
+        ))
     })
     .await
+}
+
+#[tauri::command]
+fn cancel_computer_scan(state: State<AppState>) {
+    state.scan_cancel.store(true, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -1424,6 +1596,8 @@ pub fn run() {
             toggle_fonts,
             install_fonts,
             install_family_to_windows,
+            install_families_to_windows,
+            copy_families_to_vault,
             vault_stats,
             choose_vault_folder,
             import_folder_to_vault,
@@ -1438,6 +1612,7 @@ pub fn run() {
             remove_watched_folder,
             watch_folder_path,
             scan_computer_fonts,
+            cancel_computer_scan,
             project_manifests,
             google_catalog,
             google_install,
@@ -1506,6 +1681,7 @@ pub fn run() {
                 loaded_folder_fonts: Mutex::default(),
                 disabled_folder_fonts: Mutex::default(),
                 watcher: Mutex::default(),
+                scan_cancel: Arc::new(AtomicBool::new(false)),
             });
             watch_folders(&handle);
             agent::init(&handle);
@@ -1588,14 +1764,22 @@ mod tests {
 
         let excluded_roots = vec![fonts::path_key(&excluded_dir)];
         let known_families = std::collections::HashMap::new();
+        let cancel = AtomicBool::new(false);
+        let mut scanned_total = 0usize;
+        let mut noop = |_: usize, _: &Path, _: Option<&DiscoveredFontFolder>| {};
         let mut out = Vec::new();
 
         scan_dir_for_fonts(
             tmp.path(),
             "Downloads",
-            4,
+            Some(4),
+            Some(MAX_SCAN_DIRS),
+            false,
             &excluded_roots,
             &known_families,
+            &cancel,
+            &mut scanned_total,
+            &mut noop,
             &mut out,
         );
 
@@ -1604,5 +1788,126 @@ mod tests {
         assert_eq!(out[0].origin_kind, "Downloads");
         assert_eq!(out[0].font_count, 1);
         assert_eq!(out[0].families, vec!["Gochi Hand".to_string()]);
+    }
+
+    #[test]
+    fn thorough_custom_scan_finds_deep_and_nonstandard_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("GochiHand-Regular.ttf");
+
+        let deep_dir = tmp
+            .path()
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e")
+            .join("f")
+            .join("DeepFonts");
+        fs::create_dir_all(&deep_dir).unwrap();
+        fs::copy(&fixture, deep_dir.join("GochiHand-Regular.ttf")).unwrap();
+
+        let pkg_dir = tmp.path().join("packages").join("brand-kit");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::copy(&fixture, pkg_dir.join("GochiHand-Regular.ttf")).unwrap();
+
+        let dot_dir = tmp.path().join(".fonts");
+        fs::create_dir_all(&dot_dir).unwrap();
+        fs::copy(&fixture, dot_dir.join("GochiHand-Regular.ttf")).unwrap();
+
+        let git_dir = tmp.path().join(".git").join("objects");
+        fs::create_dir_all(&git_dir).unwrap();
+        fs::copy(&fixture, git_dir.join("GochiHand-Regular.ttf")).unwrap();
+
+        let known_families = std::collections::HashMap::new();
+        let cancel = AtomicBool::new(false);
+        let mut scanned_total = 0usize;
+        let mut noop = |_: usize, _: &Path, _: Option<&DiscoveredFontFolder>| {};
+        let mut out = Vec::new();
+        scan_dir_for_fonts(
+            tmp.path(),
+            "Custom Folder",
+            None,
+            None,
+            true,
+            &[],
+            &known_families,
+            &cancel,
+            &mut scanned_total,
+            &mut noop,
+            &mut out,
+        );
+
+        let labels: Vec<&str> = out.iter().map(|f| f.label.as_str()).collect();
+        assert!(labels.contains(&"DeepFonts"));
+        assert!(labels.contains(&"brand-kit"));
+        assert!(labels.contains(&".fonts"));
+        assert!(!labels.contains(&"objects"));
+        assert_eq!(normalize_scan_root("D:"), PathBuf::from("D:\\"));
+    }
+
+    #[test]
+    fn scanner_stops_immediately_when_cancelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("GochiHand-Regular.ttf");
+        for i in 0..5 {
+            let d = tmp.path().join(format!("pack-{i}"));
+            fs::create_dir_all(&d).unwrap();
+            fs::copy(&fixture, d.join("GochiHand-Regular.ttf")).unwrap();
+        }
+
+        let known_families = std::collections::HashMap::new();
+        let cancel = AtomicBool::new(true);
+        let mut scanned_total = 0usize;
+        let mut noop = |_: usize, _: &Path, _: Option<&DiscoveredFontFolder>| {};
+        let mut out = Vec::new();
+        scan_dir_for_fonts(
+            tmp.path(),
+            "Custom Folder",
+            None,
+            None,
+            true,
+            &[],
+            &known_families,
+            &cancel,
+            &mut scanned_total,
+            &mut noop,
+            &mut out,
+        );
+        assert_eq!(scanned_total, 0);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn expands_zip_archives_without_marking_temp_files_for_recycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("GochiHand-Regular.ttf");
+
+        // Build a minimal ZIP archive containing GochiHand-Regular.ttf
+        let zip_path = tmp.path().join("pack.zip");
+        let font_bytes = fs::read(&fixture).unwrap();
+        let mut zb = cosmic_core::sync::ZipBuilder::new();
+        zb.add_file("nested/GochiHand-Regular.ttf", &font_bytes)
+            .unwrap();
+        fs::write(&zip_path, zb.finish().unwrap()).unwrap();
+
+        let (candidates, _guard, errors) = vault::expand_font_and_zip_sources(&[zip_path]);
+        assert!(errors.is_empty());
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].1); // from_zip == true
+        assert_eq!(
+            candidates[0].0.file_name().unwrap().to_string_lossy(),
+            "GochiHand-Regular.ttf"
+        );
+        assert!(candidates[0].0.is_file());
     }
 }

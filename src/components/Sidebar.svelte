@@ -27,7 +27,7 @@
   import { drag } from "../lib/drag.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
 
-  // section: installed | discover | favorites | diagnostics | col:<id> | dir:<path>
+  // section: all | installed | discover | favorites | diagnostics | smart:<id> | col:all | col:<id> | dir:<path>
   let {
     section,
     cat,
@@ -35,6 +35,9 @@
     counts,
     catCounts,
     scriptCounts = {},
+    collectionCounts = {},
+    smartCollections = [],
+    smartCounts = {},
     collections,
     folders,
     projectFolders = new Set(),
@@ -64,8 +67,7 @@
   const visibleScripts = $derived(
     Object.entries(scriptCounts)
       .filter(([name, count]) => count > 0 || script === name)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([name]) => name),
   );
 
@@ -152,6 +154,7 @@
   <nav>
     <div class="group">
       <span class="group-title">{t("group.library")}</span>
+      {@render item(t("sec.all"), section === "all", () => onsection("all"), counts.all, { icon: Globe })}
       {@render item(t("sec.installed"), section === "installed", () => onsection("installed"), counts.installed, { icon: Layers })}
       {@render item(t("sec.discover"), section === "discover", () => onsection("discover"), counts.discover, { icon: Compass })}
       {@render item(t("sec.forge"), section === "forge", () => onsection("forge"), null, { icon: PenTool, badge: "NEW", accent: true })}
@@ -163,8 +166,23 @@
       {/if}
     </div>
 
+    {#if smartCollections.length}
+      <div class="group">
+        <span class="group-title">{t("group.smart")}</span>
+        {#each smartCollections as sc (sc.id)}
+          {@render item(sc.name, section === "smart:" + sc.id, () => onsection("smart:" + sc.id), smartCounts[sc.id] ?? 0, {
+            icon: Sparkles,
+            accent: true,
+          })}
+        {/each}
+      </div>
+    {/if}
+
     <div class="group">
       {@render header(t("group.collections"), t("col.new"), startNew)}
+      {#if collections.length > 0}
+        {@render item(t("col.all"), section === "col:all", () => onsection("col:all"), counts.allCollections, { icon: Layers })}
+      {/if}
       {#each collections as c (c.id)}
         {#if renaming === c.id}
           <input
@@ -178,7 +196,7 @@
             onblur={() => finishRename(true)}
           />
         {:else}
-          {@render item(c.name, section === "col:" + c.id, () => onsection("col:" + c.id), c.fonts.length, {
+          {@render item(c.name, section === "col:" + c.id, () => onsection("col:" + c.id), collectionCounts[c.id] ?? c.fonts.length, {
             icon: Bookmark,
             dbl: () => (renaming = c.id),
             collection: c.id,

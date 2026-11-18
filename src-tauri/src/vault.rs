@@ -2,6 +2,7 @@
 //! and family-organized archival outside the Windows Fonts folder.
 
 use crate::fonts::{self, is_font_file, list_fonts, path_key, reader, Environment};
+use cosmic_core::sync::extract_zip_fonts;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -275,6 +276,101 @@ pub fn default_cleanup_roots() -> Vec<PathBuf> {
     roots
 }
 
+pub fn is_zip_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+}
+
+fn list_zips(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(it) = fs::read_dir(&d) else { continue };
+        for entry in it.flatten() {
+            let p = entry.path();
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => stack.push(p),
+                Ok(t) if t.is_file() && is_zip_file(&p) => out.push(p),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Expands folders, `.zip` archives, and loose font files into `(path, from_zip)` pairs.
+/// The returned `TempDir` must be kept alive until callers finish reading extracted files.
+pub fn expand_font_and_zip_sources(
+    sources: &[PathBuf],
+) -> (Vec<(PathBuf, bool)>, Option<tempfile::TempDir>, Vec<String>) {
+    let mut candidates: Vec<(PathBuf, bool)> = Vec::new();
+    let mut zip_paths: Vec<PathBuf> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    for src in sources {
+        if src.is_dir() {
+            candidates.extend(list_fonts(src, true).into_iter().map(|p| (p, false)));
+            zip_paths.extend(list_zips(src));
+        } else if src.is_file() && is_zip_file(src) {
+            zip_paths.push(src.clone());
+        } else if src.is_file() && is_font_file(src) {
+            candidates.push((src.clone(), false));
+        }
+    }
+
+    let mut temp_guard: Option<tempfile::TempDir> = None;
+    for (zip_idx, zpath) in zip_paths.iter().enumerate() {
+        let zname = zpath
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "archive.zip".into());
+        let bytes = match fs::read(zpath) {
+            Ok(b) => b,
+            Err(e) => {
+                errors.push(format!("{zname}: {e}"));
+                continue;
+            }
+        };
+        let extracted = match extract_zip_fonts(&bytes) {
+            Ok(list) => list,
+            Err(e) => {
+                errors.push(format!("{zname}: {e}"));
+                continue;
+            }
+        };
+        if extracted.is_empty() {
+            continue;
+        }
+        if temp_guard.is_none() {
+            match tempfile::tempdir() {
+                Ok(dir) => temp_guard = Some(dir),
+                Err(e) => {
+                    errors.push(format!("{zname}: {e}"));
+                    break;
+                }
+            }
+        }
+        let Some(root) = temp_guard.as_ref().map(|d| d.path()) else {
+            continue;
+        };
+        for (entry_idx, (fname, font_bytes)) in extracted.into_iter().enumerate() {
+            let entry_dir = root.join(format!("z{zip_idx}_{entry_idx}"));
+            if let Err(e) = fs::create_dir_all(&entry_dir) {
+                errors.push(format!("{zname}/{fname}: {e}"));
+                continue;
+            }
+            let out_path = entry_dir.join(&fname);
+            match fs::write(&out_path, &font_bytes) {
+                Ok(()) => candidates.push((out_path, true)),
+                Err(e) => errors.push(format!("{zname}/{fname}: {e}")),
+            }
+        }
+    }
+
+    (candidates, temp_guard, errors)
+}
+
 pub fn import_to_vault_with_options(
     vault_dir: &Path,
     sources: &[PathBuf],
@@ -292,21 +388,15 @@ pub fn import_to_vault_with_options(
         }
     }
 
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    for src in sources {
-        if src.is_dir() {
-            candidates.extend(list_fonts(src, true));
-        } else if src.is_file() && is_font_file(src) {
-            candidates.push(src.clone());
-        }
-    }
+    let (candidates, _zip_tmp, mut expand_errors) = expand_font_and_zip_sources(sources);
 
     let mut report = VaultImportReport {
         vault_path: vault_dir.to_string_lossy().into_owned(),
         ..Default::default()
     };
+    report.errors.append(&mut expand_errors);
 
-    for src in candidates {
+    for (src, from_zip) in candidates {
         let name = src
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
@@ -320,7 +410,7 @@ pub fn import_to_vault_with_options(
         };
         if existing_hashes.contains(&sha) {
             report.skipped_duplicates += 1;
-            if recycle_originals && !is_protected_path(&src, vault_dir, env) {
+            if recycle_originals && !from_zip && !is_protected_path(&src, vault_dir, env) {
                 match recycle_fn(&src) {
                     Ok(()) => report.recycled += 1,
                     Err(e) => report.errors.push(format!("{name}: {e}")),
@@ -342,7 +432,7 @@ pub fn import_to_vault_with_options(
         }
         let dest = unique_dest(&family_dir, &name);
         let size = fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
-        let transfer = if move_files {
+        let transfer = if move_files && !from_zip {
             fonts::changes::move_file(&src, &dest)
         } else {
             fs::copy(&src, &dest).map(|_| ()).map_err(|e| e.to_string())
@@ -352,7 +442,11 @@ pub fn import_to_vault_with_options(
                 existing_hashes.insert(sha.clone());
                 report.imported += 1;
                 report.bytes_copied = report.bytes_copied.saturating_add(size);
-                if recycle_originals && !move_files && !is_protected_path(&src, vault_dir, env) {
+                if recycle_originals
+                    && !from_zip
+                    && !move_files
+                    && !is_protected_path(&src, vault_dir, env)
+                {
                     // Verify Vault copy hash matches before sending original to Recycle Bin.
                     match reader::sha256_file(&dest) {
                         Ok(dest_sha) if dest_sha == sha => match recycle_fn(&src) {

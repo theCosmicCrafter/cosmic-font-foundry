@@ -505,6 +505,7 @@ export function compileTrueTypeFont({
   corner = 26,
   shape = "chamfer",
   glyphs = {},
+  glyphWidths = {},
   cols = MATRIX_COLS,
   rows = MATRIX_ROWS,
 }) {
@@ -570,9 +571,10 @@ export function compileTrueTypeFont({
     const encoded = encodeSimpleGlyph(contours);
     const activeCols = maxCol >= minCol ? maxCol - minCol + 1 : 3;
     const lsb = encoded.points ? encoded.xMin : 0;
-    const adv = encoded.points
+    const baseAdv = encoded.points
       ? Math.max(encoded.xMax + sidePad, originX + activeCols * cellSize + sidePad)
       : spaceAdv;
+    const adv = Math.max(180, Math.round(baseAdv + Number(glyphWidths?.[ch] || 0)));
 
     const gid = glyphRecords.length;
     glyphRecords.push({ ...encoded, advanceWidth: adv, lsb });
@@ -853,4 +855,80 @@ export function compileTrueTypeFont({
   finalBytes[headOffset + 10] = (adj >>> 8) & 0xff;
   finalBytes[headOffset + 11] = adj & 0xff;
   return finalBytes;
+}
+
+async function compressZlibIfSmaller(raw) {
+  if (typeof CompressionStream === "undefined") return raw;
+  try {
+    const cs = new CompressionStream("deflate");
+    const writer = cs.writable.getWriter();
+    await writer.write(raw);
+    await writer.close();
+    const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    const validZlib =
+      buf.length >= 6 &&
+      (buf[0] & 0x0f) === 8 &&
+      (((buf[0] << 8) | buf[1]) % 31) === 0;
+    return validZlib && buf.length < raw.length ? buf : raw;
+  } catch {
+    return raw;
+  }
+}
+
+export async function compileWoffFont(ttfBytes) {
+  const bytes = ttfBytes instanceof Uint8Array ? ttfBytes : new Uint8Array(ttfBytes);
+  if (bytes.length < 12) throw new Error("Invalid TrueType binary");
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const flavor = dv.getUint32(0, false);
+  const numTables = dv.getUint16(4, false);
+  const dirEnd = 12 + numTables * 16;
+  if (bytes.length < dirEnd) throw new Error("Truncated SFNT directory");
+
+  let totalSfntSize = dirEnd;
+  const prepared = [];
+  for (let i = 0; i < numTables; i++) {
+    const off = 12 + i * 16;
+    const tag = bytes.subarray(off, off + 4);
+    const checksum = dv.getUint32(off + 4, false);
+    const tableOff = dv.getUint32(off + 8, false);
+    const origLength = dv.getUint32(off + 12, false);
+    const raw = bytes.subarray(tableOff, tableOff + origLength);
+    totalSfntSize += Math.ceil(origLength / 4) * 4;
+    const data = await compressZlibIfSmaller(raw);
+    prepared.push({ tag, checksum, origLength, data });
+  }
+
+  let dataOffset = 44 + numTables * 20;
+  for (const t of prepared) {
+    t.woffOffset = dataOffset;
+    dataOffset += Math.ceil(t.data.length / 4) * 4;
+  }
+
+  const out = new ByteWriter(dataOffset);
+  out.tag("wOFF");
+  out.u32(flavor);
+  out.u32(dataOffset);
+  out.u16(numTables);
+  out.u16(0);
+  out.u32(totalSfntSize);
+  out.u16(1);
+  out.u16(0);
+  out.u32(0);
+  out.u32(0);
+  out.u32(0);
+  out.u32(0);
+  out.u32(0);
+
+  for (const t of prepared) {
+    out.bytes(t.tag);
+    out.u32(t.woffOffset);
+    out.u32(t.data.length);
+    out.u32(t.origLength);
+    out.u32(t.checksum);
+  }
+  for (const t of prepared) {
+    out.bytes(t.data);
+    out.pad4();
+  }
+  return out.toUint8Array();
 }

@@ -1,11 +1,12 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import { X, RefreshCw, Sparkles, Folder, Layers, Check, Search } from "@lucide/svelte";
+  import { X, RefreshCw, Sparkles, Folder, Layers, Check, Search, Square } from "@lucide/svelte";
   import {
     fonts,
     installFontFiles,
     scanComputerFonts,
+    cancelComputerScan,
     watchFolderByPath,
     invokeCmd,
   } from "../lib/fonts.svelte.js";
@@ -20,24 +21,64 @@
   let busyAll = $state(false);
   let report = $state(null);
   let error = $state("");
+  let activeDir = $state(null);
+  let liveDirs = $state(0);
+  let liveCurrentDir = $state("");
+  let liveFolders = $state([]);
+  let cancelling = $state(false);
   const importedPaths = new SvelteSet();
   const watchedPaths = new SvelteSet();
+  const liveSeenPaths = new Set();
+  const displayFolders = $derived(scanning ? liveFolders : (report?.discovered_folders ?? []));
 
-  async function runScan(customDir = null) {
+  let unlistenProgress = null;
+
+  async function runScan(customDir = activeDir) {
+    activeDir = customDir || null;
     scanning = true;
+    cancelling = false;
+    liveDirs = 0;
+    liveCurrentDir = activeDir ?? "";
+    liveFolders = [];
+    liveSeenPaths.clear();
     error = "";
     try {
-      report = await scanComputerFonts(customDir);
+      report = await scanComputerFonts(activeDir);
     } catch (e) {
       error = String(e);
     } finally {
       scanning = false;
+      cancelling = false;
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
+    if (inTauri) {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlistenProgress = await listen("scan-progress", ({ payload }) => {
+          if (!payload) return;
+          liveDirs = payload.scanned_dirs ?? liveDirs;
+          if (payload.current_dir) liveCurrentDir = payload.current_dir;
+          if (payload.found_folder && !liveSeenPaths.has(payload.found_folder.path)) {
+            liveSeenPaths.add(payload.found_folder.path);
+            liveFolders = [...liveFolders, payload.found_folder];
+          }
+        });
+      } catch {}
+    }
     runScan();
   });
+
+  onDestroy(() => {
+    unlistenProgress?.();
+  });
+
+  function requestCancelScan() {
+    if (!scanning || cancelling) return;
+    cancelling = true;
+    if (inTauri) cancelComputerScan().catch(() => {});
+  }
 
   function organizeOsCollections() {
     const count = autoCreateOsCollections(fonts.list);
@@ -146,15 +187,30 @@
       <!-- PC Discovered Folders -->
       <section class="scan-section">
         <div class="scan-head">
-          <span class="label">{t("scan.pcFolders")} {#if report}· {report.discovered_folders.length}{/if}</span>
+          <div class="scan-title-col">
+            <span class="label">{t("scan.pcFolders")} · {displayFolders.length}</span>
+            {#if activeDir}
+              <span class="active-dir num" title={activeDir}>{activeDir}</span>
+            {/if}
+          </div>
           <div class="scan-actions">
-            <button type="button" class="btn" onclick={() => runScan()} disabled={scanning}>
-              <RefreshCw size={12} class={scanning ? "spin" : ""} />{t("scan.rescan")}
+            {#if activeDir}
+              <button type="button" class="btn" onclick={() => runScan(null)} disabled={scanning}>
+                {t("scan.rescan")}
+              </button>
+            {/if}
+            <button type="button" class="btn" onclick={() => runScan(activeDir)} disabled={scanning}>
+              <RefreshCw size={12} class={scanning ? "spin" : ""} />{activeDir ? "Rescan Folder" : t("scan.rescan")}
             </button>
             <button type="button" class="btn" onclick={pickAndScanFolder} disabled={scanning}>
               <Folder size={12} />{t("scan.pickDir")}
             </button>
-            {#if report?.discovered_folders?.length}
+            {#if scanning && inTauri}
+              <button type="button" class="btn danger" onclick={requestCancelScan} disabled={cancelling}>
+                <Square size={11} />{cancelling ? t("scan.cancelling") : t("scan.cancel")}
+              </button>
+            {/if}
+            {#if report?.discovered_folders?.length && !scanning}
               <button type="button" class="btn accent" onclick={importAllFolders} disabled={busyAll || scanning}>
                 <Layers size={12} />{t("scan.importAll")}
               </button>
@@ -162,15 +218,30 @@
           </div>
         </div>
 
+        {#if scanning}
+          <div class="scan-live">
+            <span class="live-count num">{t("scan.scannedDirs", { n: liveDirs })}</span>
+            <span class="live-path num" title={liveCurrentDir}>
+              {liveCurrentDir || (activeDir ? `Scanning ${activeDir}…` : t("scan.scanning"))}
+            </span>
+          </div>
+        {:else if report?.cancelled}
+          <div class="scan-live warn">{t("scan.cancelledNote", { n: report.scanned_dirs ?? liveDirs })}</div>
+        {/if}
+
         {#if error}
           <div class="err-box">{error}</div>
-        {:else if scanning}
-          <div class="empty-scan">{t("scan.scanning")}</div>
-        {:else if !report?.discovered_folders?.length}
-          <div class="empty-scan">{t("scan.noneFound")}</div>
+        {:else if !displayFolders.length}
+          <div class="empty-scan">
+            {#if scanning}
+              {activeDir ? `Scanning ${activeDir} for font files…` : t("scan.scanning")}
+            {:else}
+              {activeDir ? `No font files found in ${activeDir}.` : t("scan.noneFound")}
+            {/if}
+          </div>
         {:else}
           <div class="folder-list">
-            {#each report.discovered_folders as folder (folder.path)}
+            {#each displayFolders as folder (folder.path)}
               {@const isImported = importedPaths.has(folder.path)}
               {@const isWatched = watchedPaths.has(folder.path)}
               <div class="folder-row">
@@ -240,6 +311,8 @@
 
   .scan-section { display: flex; flex-direction: column; gap: 10px; }
   .scan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .scan-title-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .active-dir { font: 500 11px var(--mono); color: var(--accent-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 340px; }
   .scan-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
   .btn {
@@ -251,8 +324,17 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: var(--glow); }
   .btn.accent { background: var(--cyan-soft); border-color: var(--accent-2); color: var(--accent-2); }
   .btn.ok { background: rgba(45, 212, 191, 0.14); border-color: var(--ok); color: var(--ok); }
+  .btn.danger { background: rgba(251, 113, 133, 0.14); border-color: rgba(251, 113, 133, 0.45); color: var(--danger); }
   .btn.sm { height: 26px; padding: 0 10px; font-size: 11px; }
   .btn:disabled { opacity: 0.6; cursor: default; }
+
+  .scan-live {
+    padding: 8px 12px; border-radius: 9px; background: var(--field); border: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--ink2);
+  }
+  .scan-live.warn { border-color: rgba(251, 191, 36, 0.4); color: var(--ink); }
+  .live-count { font-weight: 700; color: var(--accent-2); flex: none; }
+  .live-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink3); font-size: 11px; }
 
   .folder-list { display: flex; flex-direction: column; gap: 8px; }
   .folder-row {

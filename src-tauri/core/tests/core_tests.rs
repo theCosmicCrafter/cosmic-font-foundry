@@ -514,9 +514,40 @@ fn license_similarity_pairing_and_design_kit() {
     assert_eq!(pkg.families_included, 2);
     assert!(pkg.font_files >= 2);
     let zip_bytes = std::fs::read(&kit_zip).unwrap();
+    let woff_entry = b"fonts/GochiHand-Regular.woff";
     assert!(zip_bytes.windows(9).any(|w| w == b"fonts.css"));
+    assert!(zip_bytes.windows(woff_entry.len()).any(|w| w == woff_entry));
     assert!(zip_bytes
         .windows(23)
         .any(|w| w == b"tailwind-typography.css"));
     assert!(zip_bytes.windows(16).any(|w| w == b"FONTS-NOTICE.txt"));
+    let extracted_css = {
+        // Verify WOFF format declaration is emitted inside fonts.css
+        let mut idx = 0usize;
+        let mut found = false;
+        while idx + 30 <= zip_bytes.len() && &zip_bytes[idx..idx + 4] == b"PK\x03\x04" {
+            let method = u16::from_le_bytes([zip_bytes[idx + 8], zip_bytes[idx + 9]]);
+            let comp_len = u32::from_le_bytes([
+                zip_bytes[idx + 18],
+                zip_bytes[idx + 19],
+                zip_bytes[idx + 20],
+                zip_bytes[idx + 21],
+            ]) as usize;
+            let nlen = u16::from_le_bytes([zip_bytes[idx + 26], zip_bytes[idx + 27]]) as usize;
+            let elen = u16::from_le_bytes([zip_bytes[idx + 28], zip_bytes[idx + 29]]) as usize;
+            let name = String::from_utf8_lossy(&zip_bytes[idx + 30..idx + 30 + nlen]);
+            let dstart = idx + 30 + nlen + elen;
+            if name == "fonts.css" && method == 8 {
+                let mut dec = DeflateDecoder::new(&zip_bytes[dstart..dstart + comp_len]);
+                let mut css = String::new();
+                dec.read_to_string(&mut css).unwrap();
+                assert!(css.contains("format(\"woff\")"));
+                found = true;
+                break;
+            }
+            idx = dstart + comp_len;
+        }
+        found
+    };
+    assert!(extracted_css);
 }

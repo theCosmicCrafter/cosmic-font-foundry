@@ -32,11 +32,13 @@
   import {
     fonts, initFonts, refreshFonts, toggleFamilies, installFontFiles,
     fontStyle, applyExternalList, invokeCmd, quarantineCorruptFont,
+    copyFamiliesToVault, installFamiliesToWindows,
   } from "./lib/fonts.svelte.js";
   import {
     library, initLibrary, toggleFavorite, addToFavorites, createCollection,
     renameCollection, togglePinCollection, deleteCollection, addFontsToCollection,
-    tagsForFamily, autoCreateOsCollections, upsertCollectionWithFonts,
+    tagsForFamily, addTagToFamily, autoCreateOsCollections, upsertCollectionWithFonts,
+    createSmartCollection, deleteSmartCollection, matchesSmartCollection,
   } from "./lib/library.svelte.js";
   import { discover, loadCatalog, requestGooglePreviews, preloadDiscover, installGoogleFont } from "./lib/discover.svelte.js";
   import { drag, startDrag } from "./lib/drag.svelte.js";
@@ -64,6 +66,7 @@
   let customSourcesOpen = $state(false);
   let fmt = $state({ bold: false, italic: false, underline: false, strike: false, uppercase: false });
   let colOpen = $state(false);
+  let tagOpen = $state(false);
   let renaming = $state(null);
   let confirmingDelete = $state(null);
   let dropping = $state(false);
@@ -82,7 +85,17 @@
   const inDiscover = $derived(section === "discover");
   const inForge = $derived(section === "forge");
   const inDiagnostics = $derived(section === "diagnostics");
-  const activeCollection = $derived(section.startsWith("col:") ? library.collections.find((c) => "col:" + c.id === section) : null);
+  const inAllCollections = $derived(section === "col:all");
+  const activeSmartCollection = $derived(
+    section.startsWith("smart:")
+      ? library.smartCollections.find((sc) => "smart:" + sc.id === section)
+      : null,
+  );
+  const activeCollection = $derived(
+    section.startsWith("col:") && !inAllCollections
+      ? library.collections.find((c) => "col:" + c.id === section)
+      : null,
+  );
   const activeFolder = $derived(section.startsWith("dir:") ? section.slice(4) : null);
   const detailFamily = $derived(detailName ? fonts.list.find((f) => f.name === detailName) : null);
   const googleDetail = $derived(
@@ -96,14 +109,24 @@
   const inFolder = (f, folderPath) =>
     f.files.some((p) => p.toLowerCase().startsWith(folderPath.toLowerCase() + "\\"));
   const favSet = $derived(new Set(library.favorites));
+  const allCollectionFontsSet = $derived.by(() => {
+    const set = new Set();
+    for (const c of library.collections) {
+      for (const n of c.fonts) set.add(n.toLowerCase());
+    }
+    return set;
+  });
   const activeColSet = $derived(activeCollection ? new Set(activeCollection.fonts.map((n) => n.toLowerCase())) : null);
   const activeStateMap = $derived(new Map(fonts.list.map((f) => [f.name.toLowerCase(), f.active])));
 
   // ---- Filtered lists ----
   const baseList = $derived.by(() => {
     const l = fonts.list;
+    if (section === "all") return l;
     if (section === "favorites") return l.filter((f) => favSet.has(f.name));
     if (section === "diagnostics") return l.filter((f) => f.error || f.has_conflicts || (f.duplicates?.length ?? 0) > 0);
+    if (activeSmartCollection) return l.filter((f) => matchesSmartCollection(f, activeSmartCollection.rules, tagsForFamily));
+    if (inAllCollections) return l.filter((f) => allCollectionFontsSet.has(f.name.toLowerCase()));
     if (activeColSet) return l.filter((f) => activeColSet.has(f.name.toLowerCase()));
     if (activeFolder) return l.filter((f) => inFolder(f, activeFolder));
     return l.filter((f) => f.origin !== "dir" && isVisible(f));
@@ -237,11 +260,34 @@
         : discover.list.length
       : "",
   );
+  const collectionCounts = $derived.by(() => {
+    const out = {};
+    for (const c of library.collections) {
+      const set = new Set(c.fonts.map((n) => n.toLowerCase()));
+      out[c.id] = fonts.list.filter((f) => set.has(f.name.toLowerCase())).length;
+    }
+    return out;
+  });
+  const smartCounts = $derived.by(() => {
+    const out = {};
+    for (const sc of library.smartCollections) {
+      out[sc.id] = fonts.list.filter((f) => matchesSmartCollection(f, sc.rules, tagsForFamily)).length;
+    }
+    return out;
+  });
+  const canInstallSelectionToWindows = $derived(
+    [...sel].some((name) => fonts.list.find((f) => f.name === name)?.origin === "dir"),
+  );
+  const allCollectionsCount = $derived(
+    fonts.list.filter((f) => allCollectionFontsSet.has(f.name.toLowerCase())).length,
+  );
   const counts = $derived({
+    all: fonts.list.length,
     installed: installedFonts.length,
     discover: googleCountLabel,
     favorites: library.favorites.length,
     diagnostics: diagCount,
+    allCollections: allCollectionsCount,
   });
   const folderCounts = $derived(folders.map((c) => ({ ...c, count: fonts.list.filter((f) => inFolder(f, c.path)).length })));
   const projectFolders = $derived(new Set((fonts.projects ?? []).map((p) => p.folder.toLowerCase())));
@@ -264,11 +310,17 @@
                 ? t("sec.diagnostics")
                 : section === "favorites"
                   ? t("sec.favorites")
-                  : activeCollection
-                    ? activeCollection.name
-                    : activeFolder
-                      ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
-                      : t("sec.installed"),
+                  : section === "all"
+                    ? t("sec.all")
+                    : activeSmartCollection
+                      ? activeSmartCollection.name
+                      : inAllCollections
+                        ? t("col.all")
+                      : activeCollection
+                        ? activeCollection.name
+                        : activeFolder
+                          ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
+                          : t("sec.installed"),
   );
   const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length && !inForge);
 
@@ -297,6 +349,7 @@
     cat = null;
     script = null;
     colOpen = false;
+    tagOpen = false;
     if (s === "discover") loadCatalog();
   }
 
@@ -339,18 +392,62 @@
   }
 
   let deleteTimer;
-  function onDeleteCollection() {
-    if (!activeCollection) return;
-    if (confirmingDelete !== activeCollection.id) {
-      confirmingDelete = activeCollection.id;
+  function confirmAction(id, onConfirm) {
+    if (confirmingDelete !== id) {
+      confirmingDelete = id;
       clearTimeout(deleteTimer);
       deleteTimer = setTimeout(() => (confirmingDelete = null), 3000);
       return;
     }
-    deleteCollection(activeCollection.id);
     confirmingDelete = null;
-    goTo("installed");
-    notify("ok", t("ok.colDeleted"), t("ok.fontsUntouched"));
+    onConfirm();
+  }
+
+  function onDeleteCollection() {
+    if (!activeCollection) return;
+    confirmAction(activeCollection.id, () => {
+      deleteCollection(activeCollection.id);
+      goTo("installed");
+      notify("ok", t("ok.colDeleted"), t("ok.fontsUntouched"));
+    });
+  }
+
+  function onDeleteSmartCollection() {
+    if (!activeSmartCollection) return;
+    confirmAction(activeSmartCollection.id, () => {
+      deleteSmartCollection(activeSmartCollection.id);
+      goTo("installed");
+      notify("ok", t("smart.deleted"), "");
+    });
+  }
+
+  const hasActiveSmartRules = $derived(
+    isNormalView && !inDiscover && !inDiagnostics && !activeSmartCollection &&
+    Boolean(cat || script || commercialOnly || installedOnly || filter !== "all" || ql),
+  );
+
+  function saveCurrentAsSmartView() {
+    const parts = [];
+    if (commercialOnly) parts.push("Commercial");
+    if (filter !== "all") parts.push(t("filter." + filter));
+    if (cat) parts.push(t("cat." + cat));
+    if (script) parts.push(script);
+    if (ql) parts.push(`“${q.trim()}”`);
+    if (installedOnly) parts.push(t("filter.installedOnly"));
+    const rules = {
+      ...(cat ? { category: cat } : {}),
+      ...(script ? { script } : {}),
+      ...(commercialOnly ? { commercialOnly: true } : {}),
+      ...(installedOnly ? { installedOnly: true } : {}),
+      ...(filter !== "all" ? { filter } : {}),
+      ...(ql ? { query: q.trim() } : {}),
+      ...(activeFolder ? { origin: "dir" } : {}),
+    };
+    const id = createSmartCollection(parts.join(" · ") || "Smart View", rules);
+    if (id) {
+      notify("ok", t("smart.saved"), parts.join(" · "));
+      goTo("smart:" + id);
+    }
   }
 
   async function toggleCollectionFonts(activate) {
@@ -595,11 +692,15 @@
         else if (p.type === "leave") dropping = false;
         else if (p.type === "drop") {
           dropping = false;
-          const paths = (p.paths ?? []).filter((r) => /\.(ttf|otf|ttc|otc)$/i.test(r));
-          if (!paths.length) return notify("err", t("err.notFont"), t("err.notFontText"));
+          const paths = (p.paths ?? []).filter(Boolean);
+          if (!paths.length) return;
           const allUsers = settings.installFor === "all";
           const o = await installFontFiles(paths, allUsers);
-          if (!o || !o.installed.length) return;
+          if (!o) return;
+          if (!o.installed.length && !o.errors?.length) {
+            return notify("err", t("err.notFont"), t("err.notFontText"));
+          }
+          if (!o.installed.length) return;
           const title = o.installed.length === 1 ? t("ok.installed", { n: o.installed[0] }) : t("ok.installedMany", { n: o.installed.length });
           notify("ok", title, allUsers ? t("ok.forAll") : t("ok.forUser"));
         }
@@ -710,6 +811,9 @@
     {counts}
     {catCounts}
     {scriptCounts}
+    {collectionCounts}
+    smartCollections={library.smartCollections}
+    {smartCounts}
     collections={library.collections}
     folders={folderCounts}
     {projectFolders}
@@ -883,6 +987,23 @@
           />
         {/if}
 
+        {#if hasActiveSmartRules}
+          <button type="button" class="pill scan-btn" onclick={saveCurrentAsSmartView}>
+            <Sparkles size={11} strokeWidth={2} />{t("smart.save")}
+          </button>
+        {/if}
+
+        {#if activeSmartCollection && isNormalView}
+          <button
+            type="button"
+            class="pill del"
+            class:confirm={confirmingDelete === activeSmartCollection.id}
+            onclick={onDeleteSmartCollection}
+          >
+            <Trash2 size={12} strokeWidth={2} />{confirmingDelete === activeSmartCollection.id ? t("col.confirmDelete") : t("smart.delete")}
+          </button>
+        {/if}
+
         {#if activeCollection && isNormalView}
           <span class="sep"></span>
           <button type="button" class="pill primary" onclick={() => toggleCollectionFonts(true)}>{t("activateAll")}</button>
@@ -974,7 +1095,7 @@
         {fmt}
         fav={favSet.has(detailFamily.name)}
         locked={isLocked(detailFamily)}
-        backLabel={section === "favorites" ? t("favorites") : activeCollection ? activeCollection.name : inDiagnostics ? t("sec.diagnostics") : t("sec.installed")}
+        backLabel={section === "favorites" ? t("favorites") : section === "all" ? t("sec.all") : activeSmartCollection ? activeSmartCollection.name : inAllCollections ? t("col.all") : activeCollection ? activeCollection.name : inDiagnostics ? t("sec.diagnostics") : t("sec.installed")}
         onback={() => (detailName = null)}
         ontoggle={() => toggleOne(detailFamily)}
         onfav={() => toggleFavorite(detailFamily.name)}
@@ -1054,6 +1175,8 @@
         n={sel.size}
         collections={library.collections}
         bind:open={colOpen}
+        bind:tagOpen={tagOpen}
+        canInstallToWindows={canInstallSelectionToWindows}
         onactivate={() => toggleMany([...sel], true)}
         ondeactivate={() => toggleMany([...sel], false)}
         onfavorites={() => {
@@ -1066,6 +1189,31 @@
           addToCol(id, [...sel]);
           sel.clear();
           colOpen = false;
+        }}
+        ontag={(tagStr) => {
+          const names = [...sel];
+          for (const n of names) addTagToFamily(n, tagStr);
+          sel.clear();
+          tagOpen = false;
+          notify("ok", t("sel.tagged", { n: names.length, t: tagStr }), "");
+        }}
+        onvault={async () => {
+          const names = [...sel];
+          sel.clear();
+          const res = await copyFamiliesToVault(names);
+          if (res?.report) {
+            notify("ok", t("sel.vaultDone", { n: res.report.imported, dup: res.report.skipped_duplicates }), "");
+          }
+        }}
+        oninstall={async () => {
+          const names = [...sel];
+          sel.clear();
+          const allUsers = settings.installFor === "all";
+          const o = await installFamiliesToWindows(names, allUsers);
+          if (o?.installed?.length) {
+            const title = o.installed.length === 1 ? t("ok.installed", { n: o.installed[0] }) : t("ok.installedMany", { n: o.installed.length });
+            notify("ok", title, allUsers ? t("ok.forAll") : t("ok.forUser"));
+          }
         }}
         oncompare={() => {
           if (sel.size < 2 || sel.size > 4) return;
