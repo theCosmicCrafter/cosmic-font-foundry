@@ -1,3 +1,4 @@
+mod agent;
 pub mod fonts;
 mod google;
 mod startup;
@@ -31,12 +32,12 @@ fn err(e: impl ToString) -> String {
     e.to_string()
 }
 
-pub struct AppState {
-    env: Environment,
-    cache: Mutex<Cache>,
-    folders: Mutex<Vec<PathBuf>>,
+pub(crate) struct AppState {
+    pub(crate) env: Environment,
+    pub(crate) cache: Mutex<Cache>,
+    pub(crate) folders: Mutex<Vec<PathBuf>>,
     loaded_folder_fonts: Mutex<HashSet<String>>,
-    disabled_folder_fonts: Mutex<HashSet<String>>,
+    pub(crate) disabled_folder_fonts: Mutex<HashSet<String>>,
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
 }
 
@@ -127,10 +128,10 @@ async fn bg<T: Send + 'static>(
 }
 
 #[derive(Serialize)]
-struct ToggleResponse {
-    families: Vec<FontFamily>,
-    outcome: changes::ToggleOutcome,
-    diagnostics: InventoryDiagnostics,
+pub(crate) struct ToggleResponse {
+    pub(crate) families: Vec<FontFamily>,
+    pub(crate) outcome: changes::ToggleOutcome,
+    pub(crate) diagnostics: InventoryDiagnostics,
 }
 
 #[tauri::command]
@@ -163,6 +164,38 @@ async fn refresh_fonts(app: AppHandle) -> Result<Value, String> {
     .await
 }
 
+pub(crate) fn toggle_families_sync(
+    app: &AppHandle,
+    families: Vec<String>,
+    activate: bool,
+    system_unlocked: bool,
+) -> Result<ToggleResponse, String> {
+    let state = app.state::<AppState>();
+    let entries = state.collect_entries();
+    let outcome = {
+        let mut cache = state.cache.lock().unwrap();
+        cache.update(&entries);
+        let mut disabled = state.disabled_folder_fonts.lock().unwrap();
+        changes::toggle_families(
+            &state.env,
+            &entries,
+            &cache,
+            &families,
+            activate,
+            system_unlocked,
+            &mut disabled,
+        )
+    };
+    let (updated_families, _, diagnostics, _) = state.refresh();
+    let resp = ToggleResponse {
+        families: updated_families,
+        outcome,
+        diagnostics,
+    };
+    let _ = app.emit("inventory-updated", &resp.families);
+    Ok(resp)
+}
+
 #[tauri::command]
 async fn toggle_fonts(
     app: AppHandle,
@@ -170,36 +203,7 @@ async fn toggle_fonts(
     activate: bool,
     system_unlocked: bool,
 ) -> Result<ToggleResponse, String> {
-    let resp = bg({
-        let app = app.clone();
-        move || {
-            let state = app.state::<AppState>();
-            let entries = state.collect_entries();
-            let outcome = {
-                let mut cache = state.cache.lock().unwrap();
-                cache.update(&entries);
-                let mut disabled = state.disabled_folder_fonts.lock().unwrap();
-                changes::toggle_families(
-                    &state.env,
-                    &entries,
-                    &cache,
-                    &families,
-                    activate,
-                    system_unlocked,
-                    &mut disabled,
-                )
-            };
-            let (updated_families, _, diagnostics, _) = state.refresh();
-            Ok(ToggleResponse {
-                families: updated_families,
-                outcome,
-                diagnostics,
-            })
-        }
-    })
-    .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
-    Ok(resp)
+    bg(move || toggle_families_sync(&app, families, activate, system_unlocked)).await
 }
 
 #[tauri::command]
@@ -497,7 +501,7 @@ fn project_manifests(state: State<AppState>) -> Vec<sync::DetectedProject> {
 }
 
 #[derive(Serialize, Clone)]
-struct DiscoveredFontFolder {
+pub(crate) struct DiscoveredFontFolder {
     path: String,
     label: String,
     origin_kind: String,
@@ -507,7 +511,7 @@ struct DiscoveredFontFolder {
 }
 
 #[derive(Serialize)]
-struct OsFontReport {
+pub(crate) struct OsFontReport {
     os_name: String,
     arch: String,
     system_fonts_dir: String,
@@ -617,6 +621,104 @@ fn scan_dir_for_fonts(
     }
 }
 
+pub(crate) fn run_smart_scan(state: &AppState, custom_dir: Option<&str>) -> OsFontReport {
+    let (system_fonts_dir, user_fonts_dir) = (
+        state.env.system_fonts.to_string_lossy().into_owned(),
+        state.env.user_fonts.to_string_lossy().into_owned(),
+    );
+    let excluded_roots = vec![
+        fonts::path_key(&state.env.system_fonts),
+        fonts::path_key(&state.env.user_fonts),
+        fonts::path_key(&state.env.data_dir),
+    ];
+    let (system_font_count, user_font_count, known_families) = {
+        let cache = state.cache.lock().unwrap();
+        let sys = cache
+            .families
+            .iter()
+            .filter(|f| f.origin == Origin::System)
+            .count();
+        let usr = cache
+            .families
+            .iter()
+            .filter(|f| f.origin == Origin::User || f.origin == Origin::Library)
+            .count();
+        let mut map = std::collections::HashMap::new();
+        for fam in &cache.families {
+            for fpath in &fam.files {
+                map.insert(fonts::path_key(Path::new(fpath)), fam.name.clone());
+            }
+        }
+        (sys, usr, map)
+    };
+
+    let mut discovered_folders = Vec::new();
+    if let Some(dir) = custom_dir.filter(|s| !s.trim().is_empty()) {
+        let p = PathBuf::from(dir);
+        if p.is_dir() {
+            scan_dir_for_fonts(
+                &p,
+                "Custom Folder",
+                4,
+                &excluded_roots,
+                &known_families,
+                &mut discovered_folders,
+            );
+        }
+    } else {
+        let mut roots: Vec<(PathBuf, &str, usize)> = Vec::new();
+        if let Some(profile) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+            roots.push((profile.join("Downloads"), "Downloads", 3));
+            roots.push((profile.join("Desktop"), "Desktop", 3));
+            roots.push((profile.join("Documents"), "Documents", 3));
+            roots.push((profile.join("OneDrive"), "OneDrive", 3));
+        }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            roots.push((local.join("Adobe"), "Adobe", 3));
+        }
+        if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
+            roots.push((
+                roaming
+                    .join("Adobe")
+                    .join("CoreSync")
+                    .join("plugins")
+                    .join("livetype"),
+                "Adobe Fonts",
+                3,
+            ));
+        }
+        let mut seen_paths = HashSet::new();
+        for (root, kind, depth) in roots {
+            if root.is_dir() && seen_paths.insert(fonts::path_key(&root)) {
+                scan_dir_for_fonts(
+                    &root,
+                    kind,
+                    depth,
+                    &excluded_roots,
+                    &known_families,
+                    &mut discovered_folders,
+                );
+            }
+        }
+    }
+    discovered_folders.sort_by_key(|f| std::cmp::Reverse(f.font_count));
+
+    let os_name = if cfg!(target_os = "windows") {
+        "Windows".to_string()
+    } else {
+        std::env::consts::OS.to_string()
+    };
+    OsFontReport {
+        os_name,
+        arch: std::env::consts::ARCH.to_string(),
+        system_fonts_dir,
+        user_fonts_dir,
+        system_font_count,
+        user_font_count,
+        discovered_folders,
+    }
+}
+
 #[tauri::command]
 async fn scan_computer_fonts(
     app: AppHandle,
@@ -624,101 +726,7 @@ async fn scan_computer_fonts(
 ) -> Result<OsFontReport, String> {
     bg(move || {
         let state = app.state::<AppState>();
-        let (system_fonts_dir, user_fonts_dir) = (
-            state.env.system_fonts.to_string_lossy().into_owned(),
-            state.env.user_fonts.to_string_lossy().into_owned(),
-        );
-        let excluded_roots = vec![
-            fonts::path_key(&state.env.system_fonts),
-            fonts::path_key(&state.env.user_fonts),
-            fonts::path_key(&state.env.data_dir),
-        ];
-        let (system_font_count, user_font_count, known_families) = {
-            let cache = state.cache.lock().unwrap();
-            let sys = cache
-                .families
-                .iter()
-                .filter(|f| f.origin == Origin::System)
-                .count();
-            let usr = cache
-                .families
-                .iter()
-                .filter(|f| f.origin == Origin::User || f.origin == Origin::Library)
-                .count();
-            let mut map = std::collections::HashMap::new();
-            for fam in &cache.families {
-                for fpath in &fam.files {
-                    map.insert(fonts::path_key(Path::new(fpath)), fam.name.clone());
-                }
-            }
-            (sys, usr, map)
-        };
-
-        let mut discovered_folders = Vec::new();
-        if let Some(dir) = custom_dir.filter(|s| !s.trim().is_empty()) {
-            let p = PathBuf::from(dir);
-            if p.is_dir() {
-                scan_dir_for_fonts(
-                    &p,
-                    "Custom Folder",
-                    4,
-                    &excluded_roots,
-                    &known_families,
-                    &mut discovered_folders,
-                );
-            }
-        } else {
-            let mut roots: Vec<(PathBuf, &str, usize)> = Vec::new();
-            if let Some(profile) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
-                roots.push((profile.join("Downloads"), "Downloads", 3));
-                roots.push((profile.join("Desktop"), "Desktop", 3));
-                roots.push((profile.join("Documents"), "Documents", 3));
-                roots.push((profile.join("OneDrive"), "OneDrive", 3));
-            }
-            if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
-                roots.push((local.join("Adobe"), "Adobe", 3));
-            }
-            if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
-                roots.push((
-                    roaming
-                        .join("Adobe")
-                        .join("CoreSync")
-                        .join("plugins")
-                        .join("livetype"),
-                    "Adobe Fonts",
-                    3,
-                ));
-            }
-            let mut seen_paths = HashSet::new();
-            for (root, kind, depth) in roots {
-                if root.is_dir() && seen_paths.insert(fonts::path_key(&root)) {
-                    scan_dir_for_fonts(
-                        &root,
-                        kind,
-                        depth,
-                        &excluded_roots,
-                        &known_families,
-                        &mut discovered_folders,
-                    );
-                }
-            }
-        }
-        discovered_folders.sort_by_key(|f| std::cmp::Reverse(f.font_count));
-
-        let os_name = if cfg!(target_os = "windows") {
-            "Windows".to_string()
-        } else {
-            std::env::consts::OS.to_string()
-        };
-        Ok(OsFontReport {
-            os_name,
-            arch: std::env::consts::ARCH.to_string(),
-            system_fonts_dir,
-            user_fonts_dir,
-            system_font_count,
-            user_font_count,
-            discovered_folders,
-        })
+        Ok(run_smart_scan(&state, custom_dir.as_deref()))
     })
     .await
 }
@@ -1164,6 +1172,9 @@ pub fn run() {
             startup::windows_startup,
             startup::set_windows_startup,
             startup::mark_show_on_open,
+            agent::agent_get_state,
+            agent::agent_set_config,
+            agent::agent_run_command,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -1202,6 +1213,7 @@ pub fn run() {
                 watcher: Mutex::default(),
             });
             watch_folders(&handle);
+            agent::init(&handle);
 
             let settings = read_settings(&handle);
             let dark = match settings["theme"].as_str() {

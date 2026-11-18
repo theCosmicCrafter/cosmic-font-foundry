@@ -23,6 +23,7 @@
   import Specimen from "./views/Specimen.svelte";
   import Compare from "./views/Compare.svelte";
   import Forge from "./views/Forge.svelte";
+  import AgentHub from "./views/AgentHub.svelte";
 
   import { initUpdater } from "./lib/updater.svelte.js";
   import { settings, inTauri, currentTheme } from "./lib/settings.svelte.js";
@@ -35,7 +36,7 @@
   import {
     library, initLibrary, toggleFavorite, addToFavorites, createCollection,
     renameCollection, togglePinCollection, deleteCollection, addFontsToCollection,
-    tagsForFamily, autoCreateOsCollections,
+    tagsForFamily, autoCreateOsCollections, upsertCollectionWithFonts,
   } from "./lib/library.svelte.js";
   import { discover, loadCatalog, requestGooglePreviews, preloadDiscover, installGoogleFont } from "./lib/discover.svelte.js";
   import { drag, startDrag } from "./lib/drag.svelte.js";
@@ -75,6 +76,7 @@
 
   const inDiscover = $derived(section === "discover");
   const inForge = $derived(section === "forge");
+  const inAgent = $derived(section === "agent");
   const inDiagnostics = $derived(section === "diagnostics");
   const activeCollection = $derived(section.startsWith("col:") ? library.collections.find((c) => "col:" + c.id === section) : null);
   const activeFolder = $derived(section.startsWith("dir:") ? section.slice(4) : null);
@@ -211,17 +213,19 @@
             ? t("discoverCatalog")
             : inForge
               ? t("sec.forge")
-              : inDiagnostics
-                ? t("sec.diagnostics")
-                : section === "favorites"
-                  ? t("sec.favorites")
-                  : activeCollection
-                    ? activeCollection.name
-                    : activeFolder
-                      ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
-                      : t("sec.installed"),
+              : inAgent
+                ? t("sec.agent")
+                : inDiagnostics
+                  ? t("sec.diagnostics")
+                  : section === "favorites"
+                    ? t("sec.favorites")
+                    : activeCollection
+                      ? activeCollection.name
+                      : activeFolder
+                        ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
+                        : t("sec.installed"),
   );
-  const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length && !inForge);
+  const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length && !inForge && !inAgent);
 
   // ---- Discover font preview requests ----
   let visibleGoogle = [];
@@ -477,11 +481,45 @@
     initUpdater();
     initFonts();
     preloadDiscover(sample);
-    if (!inTauri) return;
+
+    const handleAgentUiCommand = (payload) => {
+      if (!payload) return;
+      if (payload.action === "navigate") {
+        settingsTab = null;
+        if (payload.section) goTo(payload.section);
+        if (typeof payload.query === "string") q = payload.query;
+        if (typeof payload.category === "string") {
+          cat = payload.category === "all" ? null : payload.category;
+        }
+        if (typeof payload.sample === "string") customSample = payload.sample;
+      } else if (payload.action === "auto_organize") {
+        if (payload.mode === "os") {
+          const count = autoCreateOsCollections(fonts.list);
+          notify("ok", t("scan.osOrganized", { n: count }), t("scan.osOrganizedDesc"));
+        } else if (payload.mode === "smart_collections" && payload.collection_name) {
+          const names = payload.families ?? [];
+          upsertCollectionWithFonts(payload.collection_name, names);
+          notify(
+            "ok",
+            payload.collection_name,
+            t("scan.collected", { n: names.length, c: payload.collection_name }),
+          );
+        }
+      } else if (payload.action === "scan_report") {
+        scanOpen = true;
+      }
+    };
+    const onDemoAgentUi = (e) => handleAgentUiCommand(e.detail);
+    window.addEventListener("cosmic-demo-agent-ui", onDemoAgentUi);
+
+    if (!inTauri) {
+      return () => window.removeEventListener("cosmic-demo-agent-ui", onDemoAgentUi);
+    }
 
     invokeCmd("watched_folders").then((l) => (folders = l)).catch(() => {});
 
     let unlistenTray;
+    let unlistenAgentUi;
     import("@tauri-apps/api/event").then(async ({ listen }) => {
       unlistenTray = await listen("tray-command", ({ payload }) => {
         if (payload === "search") {
@@ -494,6 +532,9 @@
         } else if (payload === "settings") {
           settingsTab = "settings";
         }
+      });
+      unlistenAgentUi = await listen("agent-ui-command", ({ payload }) => {
+        handleAgentUiCommand(payload);
       });
     });
 
@@ -518,6 +559,8 @@
     return () => {
       unlistenDrop?.();
       unlistenTray?.();
+      unlistenAgentUi?.();
+      window.removeEventListener("cosmic-demo-agent-ui", onDemoAgentUi);
     };
   });
 </script>
@@ -808,6 +851,8 @@
       />
     {:else if inForge}
       <Forge {sample} onInstalled={() => goTo("installed")} />
+    {:else if inAgent}
+      <AgentHub {notify} />
     {:else if inDiscover}
       {#if discover.list.length && googleList.length}
         <VirtualList items={googleList} height={Math.ceil(34 + size * 1.58)} getKey={(g) => g.name} row={googleRowSnippet} onVisible={onVisibleGoogle} padBottom={60} />
