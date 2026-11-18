@@ -122,6 +122,8 @@ pub struct GoogleFontEntry {
     pub source_id: String,
     #[serde(default)]
     pub source_label: Option<String>,
+    #[serde(default)]
+    pub version_tag: Option<String>,
     pub preview_url: Option<String>,
     pub download_urls: Vec<String>,
 }
@@ -269,6 +271,7 @@ fn compact_google_catalog(v: &Value) -> Vec<GoogleFontEntry> {
                         source: source.into(),
                         source_id: name.clone(),
                         source_label: None,
+                        version_tag: None,
                         name,
                         category: map_google_category(f),
                         styles: f["fonts"].as_object().map_or(1, |o| o.len()),
@@ -383,6 +386,7 @@ fn parse_fontshare_catalog(v: &Value) -> Vec<GoogleFontEntry> {
                     source: "fontshare".into(),
                     source_id: slug,
                     source_label: None,
+                    version_tag: None,
                     preview_url,
                     download_urls,
                 },
@@ -467,6 +471,7 @@ fn parse_fontsource_other_catalog(v: &Value) -> Vec<GoogleFontEntry> {
                 source: source.into(),
                 source_id: id,
                 source_label: None,
+                version_tag: None,
                 preview_url,
                 download_urls,
             })
@@ -516,6 +521,7 @@ fn parse_fontsquirrel_catalog(v: &Value) -> Vec<GoogleFontEntry> {
                 source: source.into(),
                 source_id: slug.clone(),
                 source_label: None,
+                version_tag: None,
                 preview_url: None,
                 download_urls: vec![format!(
                     "https://www.fontsquirrel.com/fonts/download/{slug}"
@@ -1362,6 +1368,20 @@ fn clean_release_title(raw_title: &str, fallback_source_name: &str) -> String {
     }
 }
 
+fn extract_version_tag(raw: &str) -> Option<String> {
+    for tok in raw.split_whitespace() {
+        let cleaned = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.');
+        let digits = cleaned
+            .strip_prefix('v')
+            .or_else(|| cleaned.strip_prefix('V'))
+            .unwrap_or(cleaned);
+        if digits.contains('.') && digits.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            return Some(cleaned.to_string());
+        }
+    }
+    None
+}
+
 pub fn parse_rss_or_atom_feed(xml: &str, src_tag: &str, source_name: &str) -> Vec<GoogleFontEntry> {
     let use_entry = !xml.contains("<item") && xml.contains("<entry");
     let (open_a, open_b, close) = if use_entry {
@@ -1433,6 +1453,7 @@ pub fn parse_rss_or_atom_feed(xml: &str, src_tag: &str, source_name: &str) -> Ve
             source: src_tag.to_string(),
             source_id: name,
             source_label: Some(source_name.to_string()),
+            version_tag: extract_version_tag(&raw_title),
             preview_url,
             download_urls,
         });
@@ -1508,6 +1529,10 @@ pub fn parse_custom_json_catalog(
                 source: src_tag.to_string(),
                 source_id: name.clone(),
                 source_label: Some(source_name.to_string()),
+                version_tag: item["tag_name"]
+                    .as_str()
+                    .or_else(|| item["version"].as_str())
+                    .map(ToString::to_string),
                 name,
                 preview_url,
                 download_urls,
@@ -1603,6 +1628,10 @@ pub fn parse_custom_json_catalog(
             source: src_tag.to_string(),
             source_id: name.clone(),
             source_label: Some(source_name.to_string()),
+            version_tag: item["version"]
+                .as_str()
+                .or_else(|| item["tag_name"].as_str())
+                .map(ToString::to_string),
             name,
             preview_url,
             download_urls,
@@ -1754,6 +1783,7 @@ fn resolve_preset_entries(
                 source: src_tag.clone(),
                 source_id: name.to_string(),
                 source_label: Some(source_name.to_string()),
+                version_tag: None,
                 preview_url: Some(woff2.to_string()),
                 download_urls: vec![ttf.to_string()],
             },
@@ -1816,6 +1846,7 @@ mod tests {
             parse_custom_json_catalog(gh_json, "custom:gh-456", "Fira Code GitHub").unwrap();
         assert_eq!(parsed_json.len(), 1);
         assert_eq!(parsed_json[0].name, "Fira Code 6.2");
+        assert_eq!(parsed_json[0].version_tag.as_deref(), Some("v6.2"));
         assert_eq!(parsed_json[0].category, "mono");
         assert_eq!(parsed_json[0].designers, vec!["tonsky"]);
         assert_eq!(

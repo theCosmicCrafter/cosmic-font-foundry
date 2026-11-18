@@ -552,24 +552,22 @@ fn handle_http_connection(mut stream: TcpStream, app: &AppHandle, ctrl: &Arc<Age
     }
 }
 
-fn handle_mcp_post(
-    stream: &mut TcpStream,
+enum McpHttpReply {
+    Accepted,
+    Json(Value),
+}
+
+fn dispatch_mcp_rpc(
     body: &[u8],
-    app: &AppHandle,
-    ctrl: &Arc<AgentControl>,
-    allow_mutations: bool,
-) {
+    on_tools_list: impl FnOnce(),
+    on_tools_call: impl FnOnce(&str, &Value) -> Result<Value, String>,
+) -> McpHttpReply {
     let Ok(rpc) = serde_json::from_slice::<Value>(body) else {
-        write_json(
-            stream,
-            "200 OK",
-            &json!({
-                "jsonrpc": "2.0",
-                "id": null,
-                "error": { "code": -32700, "message": "Parse error" }
-            }),
-        );
-        return;
+        return McpHttpReply::Json(json!({
+            "jsonrpc": "2.0",
+            "id": null,
+            "error": { "code": -32700, "message": "Parse error" }
+        }));
     };
 
     let method = rpc["method"].as_str().unwrap_or("");
@@ -578,8 +576,7 @@ fn handle_mcp_post(
     // JSON-RPC notifications without an `id` return 202 Accepted per MCP Streamable HTTP.
     if id.is_none() || method == "notifications/initialized" || method.starts_with("notifications/")
     {
-        write_http_response(stream, "202 Accepted", "application/json", b"");
-        return;
+        return McpHttpReply::Accepted;
     }
 
     let id_val = id.unwrap_or(Value::Null);
@@ -604,13 +601,7 @@ fn handle_mcp_post(
             "result": {}
         }),
         "tools/list" => {
-            ctrl.record_log(
-                Some(app),
-                "mcp",
-                "tools/list",
-                "Listed 6 MCP font tools",
-                true,
-            );
+            on_tools_list();
             json!({
                 "jsonrpc": "2.0",
                 "id": id_val,
@@ -625,7 +616,7 @@ fn handle_mcp_post(
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            match execute_tool(app, ctrl, "mcp", name, &args, allow_mutations) {
+            match on_tools_call(name, &args) {
                 Ok(out) => {
                     let text = serde_json::to_string_pretty(&out).unwrap_or_default();
                     json!({
@@ -657,7 +648,36 @@ fn handle_mcp_post(
         }),
     };
 
-    write_json(stream, "200 OK", &resp);
+    McpHttpReply::Json(resp)
+}
+
+fn handle_mcp_post(
+    stream: &mut TcpStream,
+    body: &[u8],
+    app: &AppHandle,
+    ctrl: &Arc<AgentControl>,
+    allow_mutations: bool,
+) {
+    match dispatch_mcp_rpc(
+        body,
+        || {
+            ctrl.record_log(
+                Some(app),
+                "mcp",
+                "tools/list",
+                "Listed 6 MCP font tools",
+                true,
+            );
+        },
+        |name, args| execute_tool(app, ctrl, "mcp", name, args, allow_mutations),
+    ) {
+        McpHttpReply::Accepted => {
+            write_http_response(stream, "202 Accepted", "application/json", b"");
+        }
+        McpHttpReply::Json(resp) => {
+            write_json(stream, "200 OK", &resp);
+        }
+    }
 }
 
 pub fn mcp_tools_list() -> Vec<Value> {
@@ -1775,5 +1795,53 @@ mod tests {
                 variable_only: true,
             }
         );
+    }
+
+    #[test]
+    fn mcp_loopback_socket_roundtrip_initialize_and_tools_list() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let req = read_http_request(&mut stream).unwrap();
+                assert_eq!(req.method, "POST");
+                assert_eq!(req.path, "/mcp");
+                match dispatch_mcp_rpc(&req.body, || {}, |_, _| Ok(json!({}))) {
+                    McpHttpReply::Accepted => {
+                        write_http_response(&mut stream, "202 Accepted", "application/json", b"");
+                    }
+                    McpHttpReply::Json(val) => {
+                        write_json(&mut stream, "200 OK", &val);
+                    }
+                }
+            }
+        });
+
+        let send_rpc = |payload: &str| -> (String, Value) {
+            let mut client = TcpStream::connect(addr).unwrap();
+            let raw_req = format!(
+                "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                payload.len(),
+                payload
+            );
+            client.write_all(raw_req.as_bytes()).unwrap();
+            let mut raw_resp = String::new();
+            client.read_to_string(&mut raw_resp).unwrap();
+            let (headers, body) = raw_resp.split_once("\r\n\r\n").unwrap();
+            (headers.to_string(), serde_json::from_str(body).unwrap())
+        };
+
+        let (h1, r1) = send_rpc(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+        assert!(h1.starts_with("HTTP/1.1 200 OK"));
+        assert_eq!(r1["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(r1["result"]["serverInfo"]["name"], "cosmic-font-foundry");
+
+        let (h2, r2) = send_rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+        assert!(h2.starts_with("HTTP/1.1 200 OK"));
+        assert_eq!(r2["result"]["tools"].as_array().unwrap().len(), 6);
+
+        server.join().unwrap();
     }
 }

@@ -3,7 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import {
     Search, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart,
-    WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles, Rss,
+    WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles, Rss, Code2,
   } from "@lucide/svelte";
 
   import Sidebar from "./components/Sidebar.svelte";
@@ -798,9 +798,8 @@
             ].map((v) => ({ value: v, label: t("src." + v) }))}
             value={discoverSource.startsWith("custom:") ? "custom" : discoverSource}
             onselect={(v) => (discoverSource = v)}
-            width={66}
             height={22}
-            paddingX={5}
+            paddingX={8}
             font="600 10.5px"
           />
           <SegmentedControl
@@ -829,6 +828,35 @@
           </button>
           <button type="button" class="pill" title={t("col.exportZip")} onclick={exportCollectionZip}>
             <Archive size={12} strokeWidth={2} />{t("col.exportZip")}
+          </button>
+          <button
+            type="button"
+            class="pill"
+            title={t("col.copyCss")}
+            onclick={async () => {
+              const names = activeCollection.fonts ?? [];
+              const css = [
+                `/* Cosmic Font Foundry — Collection: ${activeCollection.name} */`,
+                ":root {",
+                ...names.map((n, i) => `  --font-${i + 1}: "${n}", sans-serif;`),
+                "}",
+                "",
+                "/* Tailwind CSS theme.extend.fontFamily */",
+                JSON.stringify(
+                  Object.fromEntries(names.map((n, i) => [`font-${i + 1}`, [`"${n}"`, "sans-serif"]])),
+                  null,
+                  2,
+                ),
+              ].join("\n");
+              try {
+                await navigator.clipboard.writeText(css);
+                notify("ok", t("col.copiedCss"), `${names.length} fonts · ${activeCollection.name}`);
+              } catch {
+                notify("err", t("err.one"), "");
+              }
+            }}
+          >
+            <Code2 size={12} strokeWidth={2} />{t("col.copyCss")}
           </button>
           <button
             type="button"

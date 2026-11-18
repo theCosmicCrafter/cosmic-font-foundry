@@ -9,6 +9,7 @@
     CHAR_GROUPS,
     buildPresetGlyphs,
     cloneGrid,
+    resizeGlyphsResolution,
     compileTrueTypeFont,
   } from "../lib/forge.js";
   import { installForgedFont } from "../lib/fonts.svelte.js";
@@ -28,6 +29,10 @@
   let tracking = $state(80);
   let corner = $state(26);
 
+  let gridScale = $state(1); // 1 = 7x9 | 2 = 14x18
+  const cols = $derived(MATRIX_COLS * gridScale);
+  const rows = $derived(MATRIX_ROWS * gridScale);
+
   let glyphs = $state(buildPresetGlyphs("cosmic"));
   let activeChar = $state("A");
   let testPhrase = $state("");
@@ -42,7 +47,7 @@
   let compileError = $state("");
   let compiledBytes = $state(new Uint8Array(0));
 
-  const currentGrid = $derived(glyphs[activeChar] ?? Array.from({ length: MATRIX_ROWS }, () => new Array(MATRIX_COLS).fill(0)));
+  const currentGrid = $derived(glyphs[activeChar] ?? Array.from({ length: rows }, () => new Array(cols).fill(0)));
   const effectivePhrase = $derived(testPhrase.trim() || sample || "COSMIC FONT FOUNDRY 0123456789");
 
   let activeFontFace = null;
@@ -59,6 +64,8 @@
       corner,
       shape,
       glyphs,
+      cols,
+      rows,
     };
     const seq = ++compileSeq;
     try {
@@ -88,6 +95,14 @@
     if (activeFontFace) document.fonts.delete(activeFontFace);
   });
 
+  function setGridScale(nextScale) {
+    if (nextScale === gridScale) return;
+    const targetCols = MATRIX_COLS * nextScale;
+    const targetRows = MATRIX_ROWS * nextScale;
+    glyphs = resizeGlyphsResolution(glyphs, targetCols, targetRows);
+    gridScale = nextScale;
+  }
+
   function applyPreset(p) {
     activePreset = p.id;
     shape = p.shape;
@@ -96,7 +111,8 @@
     slant = p.slant;
     tracking = p.tracking;
     corner = p.corner;
-    glyphs = buildPresetGlyphs(p.id);
+    const base = buildPresetGlyphs(p.id);
+    glyphs = gridScale === 2 ? resizeGlyphsResolution(base, MATRIX_COLS * 2, MATRIX_ROWS * 2) : base;
   }
 
   function setCell(r, c, val) {
@@ -118,7 +134,7 @@
   }
 
   function clearGlyph() {
-    const empty = Array.from({ length: MATRIX_ROWS }, () => new Array(MATRIX_COLS).fill(0));
+    const empty = Array.from({ length: rows }, () => new Array(cols).fill(0));
     glyphs = { ...glyphs, [activeChar]: empty };
   }
 
@@ -134,7 +150,10 @@
 
   function resetCurrentGlyph() {
     const fresh = buildPresetGlyphs(activePreset);
-    if (fresh[activeChar]) glyphs = { ...glyphs, [activeChar]: fresh[activeChar] };
+    if (fresh[activeChar]) {
+      const next = gridScale === 2 ? resizeGlyphsResolution({ [activeChar]: fresh[activeChar] }, cols, rows)[activeChar] : fresh[activeChar];
+      glyphs = { ...glyphs, [activeChar]: next };
+    }
   }
 
   function exportTtf() {
@@ -197,6 +216,18 @@
       <div class="panel-head">
         <span class="label">{t("forge.matrix")} · “{activeChar}”</span>
         <div class="tool-btns">
+          <button
+            type="button"
+            class="res-pill"
+            class:active={gridScale === 1}
+            onclick={() => setGridScale(1)}
+          >7×9</button>
+          <button
+            type="button"
+            class="res-pill"
+            class:active={gridScale === 2}
+            onclick={() => setGridScale(2)}
+          >14×18</button>
           <button type="button" class="mini" title={t("forge.mirror")} onclick={mirrorGlyph}><FlipHorizontal2 size={12} /></button>
           <button type="button" class="mini" title={t("forge.invert")} onclick={invertGlyph}><Contrast size={12} /></button>
           <button type="button" class="mini" title={t("forge.clear")} onclick={clearGlyph}><Eraser size={12} /></button>
@@ -206,15 +237,23 @@
 
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="matrix-stage" onmouseleave={() => (painting = null)}>
-        <div class="matrix" role="grid" aria-label="Glyph blueprint matrix">
+        <div
+          class="matrix"
+          role="grid"
+          aria-label="Glyph blueprint matrix"
+          style:--cols={cols}
+          style:--rows={rows}
+          style:--cell={gridScale === 2 ? "13px" : "26px"}
+          style:--gap={gridScale === 2 ? "2px" : "3px"}
+        >
           {#each currentGrid as row, r (r)}
             {#each row as cell, c (c)}
               <button
                 type="button"
                 class="cell"
                 class:on={cell === 1}
-                class:baseline={r === 8}
-                class:xheight={r === 2}
+                class:baseline={r === rows - 1}
+                class:xheight={r === 2 * gridScale}
                 aria-label="Row {r + 1} Col {c + 1}"
                 aria-pressed={cell === 1}
                 onmousedown={(e) => {
@@ -227,7 +266,7 @@
           {/each}
         </div>
         <div class="guide-legend">
-          <span>{MATRIX_COLS}×{MATRIX_ROWS} EM GRID</span>
+          <span>{cols}×{rows} EM GRID</span>
           <span>1000 UPM · TTF</span>
         </div>
       </div>
@@ -423,7 +462,12 @@
 
   .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .panel-head .label { display: inline-flex; align-items: center; gap: 5px; }
-  .tool-btns { display: flex; gap: 4px; }
+  .tool-btns { display: flex; align-items: center; gap: 4px; }
+  .res-pill {
+    height: 24px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--field); color: var(--ink3); font: 600 10px var(--mono);
+  }
+  .res-pill.active { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
   .mini {
     width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--field); color: var(--ink2); display: grid; place-items: center;
@@ -442,9 +486,9 @@
   }
   .matrix {
     display: grid;
-    grid-template-columns: repeat(7, 26px);
-    grid-template-rows: repeat(9, 26px);
-    gap: 3px;
+    grid-template-columns: repeat(var(--cols, 7), var(--cell, 26px));
+    grid-template-rows: repeat(var(--rows, 9), var(--cell, 26px));
+    gap: var(--gap, 3px);
   }
   .cell {
     border: 1px solid var(--line);

@@ -510,6 +510,11 @@ function webPresetEntries(presetKey, sourceIdKey, sourceName) {
   }));
 }
 
+function extractVersionTag(raw) {
+  const m = String(raw || "").match(/\bv?\d+\.\d+(?:\.\d+)?\b/i);
+  return m ? m[0] : null;
+}
+
 function webParseXmlFeed(xmlText, srcTag, sourceName) {
   const doc = new DOMParser().parseFromString(xmlText, "text/xml");
   const nodes = [...doc.querySelectorAll("item, entry")];
@@ -547,6 +552,7 @@ function webParseXmlFeed(xmlText, srcTag, sourceName) {
       source: srcTag,
       source_id: name,
       source_label: sourceName,
+      version_tag: extractVersionTag(rawTitle),
       preview_url: arr.find((u) => webUrlHasExt(u, ".woff2")) || null,
       download_urls: arr.filter((u) => webUrlHasExt(u, ".ttf") || webUrlHasExt(u, ".otf") || webUrlHasExt(u, ".zip")),
     });
@@ -581,6 +587,7 @@ function webParseJsonFeed(val, srcTag, sourceName) {
           source: srcTag,
           source_id: name,
           source_label: sourceName,
+          version_tag: it.tag_name || it.version || null,
           preview_url: urls.find((u) => webUrlHasExt(u, ".woff2")) || null,
           download_urls: urls.filter((u) => !webUrlHasExt(u, ".woff2")),
         });
@@ -605,6 +612,7 @@ function webParseJsonFeed(val, srcTag, sourceName) {
       source: srcTag,
       source_id: name,
       source_label: sourceName,
+      version_tag: it.version || it.tag_name || null,
       preview_url: it.preview_url || rawUrls.find((u) => webUrlHasExt(u, ".woff2")) || null,
       download_urls: rawUrls.filter((u) => webUrlHasExt(u, ".ttf") || webUrlHasExt(u, ".otf") || webUrlHasExt(u, ".zip")),
     });

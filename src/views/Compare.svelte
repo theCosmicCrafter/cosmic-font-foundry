@@ -1,7 +1,8 @@
 <script>
-  import { ChevronLeft, X, ArrowLeftRight } from "@lucide/svelte";
+  import { ChevronLeft, X, ArrowLeftRight, Copy, Check } from "@lucide/svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
   import { fontStyle } from "../lib/fonts.svelte.js";
+  import { notify } from "../lib/toasts.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
 
   let { families, sample, size, onback, onremove } = $props();
@@ -29,6 +30,35 @@
     headingIdx = bodyIdx;
     bodyIdx = h;
   }
+
+  let copiedTokens = $state(false);
+  async function copyDesignTokens() {
+    const hName = headingFont?.name || families[0]?.name || "sans-serif";
+    const bName = bodyFont?.name || families[1]?.name || hName;
+    const css = [
+      "/* Cosmic Font Foundry — Typography Design Tokens */",
+      ":root {",
+      `  --font-heading: "${hName}", system-ui, sans-serif;`,
+      `  --font-body: "${bName}", system-ui, sans-serif;`,
+      `  --size-heading: ${headingSize}px;`,
+      `  --size-body: ${bodySize}px;`,
+      "}",
+      "",
+      "/* Tailwind CSS v4 @theme */",
+      "@theme {",
+      `  --font-heading: "${hName}", system-ui, sans-serif;`,
+      `  --font-body: "${bName}", system-ui, sans-serif;`,
+      "}",
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(css);
+      copiedTokens = true;
+      setTimeout(() => (copiedTokens = false), 1800);
+      notify("ok", t("cmp.copiedTokens"), `${hName} + ${bName}`);
+    } catch {
+      notify("err", t("err.one"), "");
+    }
+  }
 </script>
 
 <div class="cmp">
@@ -46,6 +76,13 @@
       height={24}
       font="600 11.5px"
     />
+    <button type="button" class="tokens-btn" onclick={copyDesignTokens}>
+      {#if copiedTokens}
+        <Check size={12} strokeWidth={2.2} />{t("agent.copied")}
+      {:else}
+        <Copy size={12} strokeWidth={2} />{t("cmp.copyTokens")}
+      {/if}
+    </button>
   </div>
 
   {#if mode === "pairing" && headingFont && bodyFont}
@@ -128,6 +165,12 @@
 <style>
   .cmp { flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px 60px; display: flex; flex-direction: column; gap: 14px; animation: cf-up 0.25s ease-out; }
   .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tokens-btn {
+    height: 26px; padding: 0 11px; border: 1px solid var(--line2); border-radius: 999px;
+    background: var(--field); color: var(--ink); font: 600 11.5px var(--sans);
+    display: inline-flex; align-items: center; gap: 5px; transition: border-color 0.15s, background-color 0.15s;
+  }
+  .tokens-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
   .back {
     flex: none;
     height: 28px;

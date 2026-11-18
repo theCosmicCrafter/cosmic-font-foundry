@@ -17,6 +17,7 @@
     notInstalled = false,
   } = $props();
   const srcKey = $derived(g.source ?? "google");
+  const isCustomRelease = $derived(srcKey.startsWith("custom:") && (Boolean(g.version_tag) || g.popularity === 1));
   const textDec = $derived([fmt.underline && "underline", fmt.strike && "line-through"].filter(Boolean).join(" ") || "none");
 </script>
 
@@ -26,6 +27,11 @@
     <span class="name">
       <span>{g.name} · {g.styles} {g.styles === 1 ? t("style") : t("styles")}</span>
       <span class="pill src" class:fontshare={srcKey === "fontshare"} class:fontsource={srcKey === "fontsource"} class:adobe={srcKey === "adobe_dev"} class:squirrel={srcKey === "fontsquirrel"} class:custom={srcKey.startsWith("custom:")}>{srcKey.startsWith("custom:") ? (g.source_label || t("src.custom")) : t("src." + srcKey)}</span>
+      {#if isCustomRelease}
+        <span class="pill release" class:update={installed}>
+          {installed ? t("src.updateAvailable") : (g.version_tag ? `${t("src.release")} · ${g.version_tag}` : t("src.newRelease"))}
+        </span>
+      {/if}
       {#if g.is_variable}<span class="pill vf">VF</span>{/if}
       {#if notInstalled}<span class="missing"> · {t("g.notInstalled")}</span>{/if}
     </span>
@@ -88,6 +94,8 @@
   .pill.src.adobe { background: rgba(251, 113, 133, 0.16); color: var(--danger); }
   .pill.src.squirrel { background: rgba(245, 158, 11, 0.16); color: var(--warn); }
   .pill.src.custom { background: var(--accent-soft); color: var(--accent); }
+  .pill.release { font: 700 9px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--cyan-soft); color: var(--accent-2); flex: none; }
+  .pill.release.update { background: rgba(45, 212, 191, 0.16); color: var(--ok); }
   .sample { line-height: 1.38; padding-top: 0.2em; white-space: nowrap; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; }
   .missing { color: var(--ink2); font-weight: 600; }
   .action { justify-self: end; }

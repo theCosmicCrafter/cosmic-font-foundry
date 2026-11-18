@@ -83,6 +83,9 @@ export default {
   "src.fontsquirrel": "Font Squirrel",
   "src.custom": "Custom",
   "src.manage": "Sources",
+  "src.newRelease": "New Release",
+  "src.release": "Release",
+  "src.updateAvailable": "Update Available",
   specimenTitle: "Specimen",
   compareTitle: "Compare",
 
@@ -120,6 +123,8 @@ export default {
   "col.pin": "Pin to tray menu",
   "col.unpin": "Unpin from tray menu",
   "col.exportZip": "Export ZIP",
+  "col.copyCss": "Copy CSS",
+  "col.copiedCss": "Collection CSS & Tailwind tokens copied.",
   "col.exportedZip": "Client bundle exported.",
   "col.exportedZipDesc": "{files} font files + LICENSES.txt saved.",
   "folder.add": "Add folder",
@@ -321,6 +326,8 @@ export default {
   "cmp.headingFont": "Heading font",
   "cmp.bodyFont": "Body font",
   "cmp.swap": "Swap pair",
+  "cmp.copyTokens": "Copy CSS / Tailwind",
+  "cmp.copiedTokens": "Pairing CSS & Tailwind tokens copied.",
   "cmp.headingSample": "Display Heading — Cosmic Typography",
   "cmp.bodySample": "Clean UI and editorial body copy stay balanced across weights and sizes. Edit this paragraph to stress-test hierarchy, kerning, and contrast.",
 

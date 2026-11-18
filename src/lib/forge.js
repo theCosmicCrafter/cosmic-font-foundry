@@ -112,9 +112,20 @@ const DIGIT_SYMBOL_MATRICES = {
   '"': [".#...#.", ".#...#.", ".#...#.", ".......", ".......", ".......", ".......", ".......", "......."],
 };
 
+const ACCENTED_MATRICES = {
+  "Á": ["....#..", "...#...", "..###..", ".#...#.", "#.....#", "#######", "#.....#", "#.....#", "#.....#"],
+  "É": ["....#..", "...#...", "#######", "#......", "######.", "#......", "#......", "#......", "#######"],
+  "Í": ["....#..", "...#...", ".#####.", "...#...", "...#...", "...#...", "...#...", "...#...", ".#####."],
+  "Ó": ["....#..", "...#...", ".#####.", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", ".#####."],
+  "Ú": ["....#..", "...#...", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", ".#####."],
+  "Ñ": [".##.##.", "#..#...", "#.....#", "##....#", "#.#...#", "#..#..#", "#...#.#", "#....##", "#.....#"],
+  "Ü": [".#...#.", ".......", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", ".#####."],
+};
+
 export const CHAR_GROUPS = [
   { id: "upper", label: "A–Z", chars: Object.keys(UPPER_MATRICES) },
   { id: "lower", label: "a–z", chars: Object.keys(LOWER_MATRICES) },
+  { id: "accented", label: "ÁÉÑ", chars: Object.keys(ACCENTED_MATRICES) },
   { id: "digits", label: "0–9", chars: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] },
   { id: "symbols", label: "Symbols", chars: Object.keys(DIGIT_SYMBOL_MATRICES).slice(10) },
 ];
@@ -145,6 +156,9 @@ export function buildPresetGlyphs(presetId = "cosmic") {
   for (const [ch, rows] of Object.entries(DIGIT_SYMBOL_MATRICES)) {
     glyphs[ch] = rowsToGrid(rows);
   }
+  for (const [ch, rows] of Object.entries(ACCENTED_MATRICES)) {
+    glyphs[ch] = rowsToGrid(rows);
+  }
   if (presetId === "stencil") {
     for (const ch of Object.keys(glyphs)) {
       const g = glyphs[ch];
@@ -159,6 +173,39 @@ export function buildPresetGlyphs(presetId = "cosmic") {
 
 export function cloneGrid(grid) {
   return grid.map((r) => [...r]);
+}
+
+export function resizeGrid(grid, targetCols, targetRows) {
+  const curRows = grid.length || MATRIX_ROWS;
+  const curCols = grid[0]?.length || MATRIX_COLS;
+  if (curRows === targetRows && curCols === targetCols) return cloneGrid(grid);
+  const out = Array.from({ length: targetRows }, () => new Array(targetCols).fill(0));
+  for (let r = 0; r < targetRows; r++) {
+    const srcR0 = Math.floor((r * curRows) / targetRows);
+    const srcR1 = Math.max(srcR0 + 1, Math.ceil(((r + 1) * curRows) / targetRows));
+    for (let c = 0; c < targetCols; c++) {
+      const srcC0 = Math.floor((c * curCols) / targetCols);
+      const srcC1 = Math.max(srcC0 + 1, Math.ceil(((c + 1) * curCols) / targetCols));
+      let hits = 0;
+      let total = 0;
+      for (let sr = srcR0; sr < srcR1 && sr < curRows; sr++) {
+        for (let sc = srcC0; sc < srcC1 && sc < curCols; sc++) {
+          total++;
+          if (grid[sr]?.[sc]) hits++;
+        }
+      }
+      out[r][c] = hits > 0 && hits * 2 >= total ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+export function resizeGlyphsResolution(glyphs, targetCols, targetRows) {
+  const next = {};
+  for (const [ch, grid] of Object.entries(glyphs)) {
+    next[ch] = resizeGrid(grid, targetCols, targetRows);
+  }
+  return next;
 }
 
 // ---- Binary SFNT Writer Helpers ----
@@ -458,16 +505,18 @@ export function compileTrueTypeFont({
   corner = 26,
   shape = "chamfer",
   glyphs = {},
+  cols = MATRIX_COLS,
+  rows = MATRIX_ROWS,
 }) {
   const cleanFamily = String(familyName || "Cosmic Forge").trim().slice(0, 48) || "Cosmic Forge";
   const cleanStyle = String(styleName || "Regular").trim().slice(0, 24) || "Regular";
   const psName = `${cleanFamily}-${cleanStyle}`.replace(/[^A-Za-z0-9-]/g, "") || "CosmicForge-Regular";
 
-  const cellSize = 76;
+  const cellSize = Math.max(18, Math.round(76 * (MATRIX_COLS / cols)));
   const originX = 48;
   const topY = 740;
-  const modW = Math.max(18, Math.round(cellSize * (weight / 100)));
-  const modH = Math.max(18, Math.round(modW * (contrast / 100)));
+  const modW = Math.max(10, Math.round(cellSize * (weight / 100)));
+  const modH = Math.max(10, Math.round(modW * (contrast / 100)));
   const slantFactor = Math.tan((slant * Math.PI) / 180);
   const sidePad = Math.max(20, Math.round(tracking));
 
@@ -492,7 +541,7 @@ export function compileTrueTypeFont({
   glyphRecords.push({ ...notdef, advanceWidth: 520, lsb: 60 });
 
   // Glyph 1: space (0x20)
-  const spaceAdv = Math.round(cellSize * 3.8 + sidePad);
+  const spaceAdv = Math.round(cellSize * (cols * 0.54) + sidePad);
   glyphRecords.push({ bytes: new Uint8Array(0), xMin: 0, yMin: 0, xMax: 0, yMax: 0, points: 0, advanceWidth: spaceAdv, lsb: 0 });
   cmapPairs.push({ code: 0x20, gid: 1 });
 
@@ -501,13 +550,13 @@ export function compileTrueTypeFont({
     const code = ch.charCodeAt(0);
     if (code <= 0x20) continue;
     const grid = glyphs[ch];
-    if (!Array.isArray(grid) || grid.length !== MATRIX_ROWS) continue;
+    if (!Array.isArray(grid) || grid.length !== rows) continue;
 
-    let minCol = MATRIX_COLS;
+    let minCol = cols;
     let maxCol = -1;
     const contours = [];
-    for (let r = 0; r < MATRIX_ROWS; r++) {
-      for (let c = 0; c < MATRIX_COLS; c++) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
         if (!grid[r][c]) continue;
         if (c < minCol) minCol = c;
         if (c > maxCol) maxCol = c;

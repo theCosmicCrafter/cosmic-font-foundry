@@ -83,6 +83,9 @@ export default {
   "src.fontsquirrel": "Font Squirrel",
   "src.custom": "Personalizadas",
   "src.manage": "Fuentes RSS",
+  "src.newRelease": "Nuevo Lanzamiento",
+  "src.release": "Versión",
+  "src.updateAvailable": "Actualización Disponible",
   specimenTitle: "Espécimen",
   compareTitle: "Comparar",
 
@@ -120,6 +123,8 @@ export default {
   "col.pin": "Fijar en el menú de bandeja",
   "col.unpin": "Desfijar del menú de bandeja",
   "col.exportZip": "Exportar ZIP",
+  "col.copyCss": "Copiar CSS",
+  "col.copiedCss": "Tokens CSS y Tailwind copiados.",
   "col.exportedZip": "Paquete ZIP exportado.",
   "col.exportedZipDesc": "{files} archivos de fuente + LICENSES.txt guardados.",
   "folder.add": "Añadir carpeta",
@@ -321,6 +326,8 @@ export default {
   "cmp.headingFont": "Fuente de título",
   "cmp.bodyFont": "Fuente de cuerpo",
   "cmp.swap": "Intercambiar",
+  "cmp.copyTokens": "Copiar CSS / Tailwind",
+  "cmp.copiedTokens": "Tokens CSS y Tailwind copiados.",
   "cmp.headingSample": "Titular de muestra — Tipografía Cósmica",
   "cmp.bodySample": "El texto corrido mantiene equilibrio y legibilidad entre pesos y tamaños. Edita este párrafo para evaluar jerarquía y contraste.",
 
