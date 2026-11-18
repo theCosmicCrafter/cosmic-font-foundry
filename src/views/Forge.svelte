@@ -497,13 +497,13 @@
     padding: 0;
     transition: background-color 0.08s, border-color 0.08s, transform 0.08s;
   }
-  .cell.xheight { border-top-color: rgba(34, 211, 238, 0.35); }
-  .cell.baseline { border-bottom-color: rgba(155, 109, 255, 0.5); }
+  .cell.xheight { border-top-color: rgba(251, 191, 36, 0.42); }
+  .cell.baseline { border-bottom-color: rgba(242, 107, 33, 0.55); }
   .cell:hover { border-color: var(--accent-2); }
   .cell.on {
     background: var(--accent);
     border-color: var(--accent-2);
-    box-shadow: 0 0 10px rgba(155, 109, 255, 0.45);
+    box-shadow: 0 0 10px rgba(242, 107, 33, 0.45);
   }
   .guide-legend { width: 100%; display: flex; justify-content: space-between; font: 500 10px var(--mono); color: var(--ink3); }
 

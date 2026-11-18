@@ -25,8 +25,8 @@ const SETTINGS_FILE: &str = "settings.json";
 const LIBRARY_FILE: &str = "library.json";
 
 /// Cosmic Font Foundry window backgrounds (matched to `--win` in `src/app.css` to eliminate startup flash).
-const BG_LIGHT: (u8, u8, u8, u8) = (0xf5, 0xf6, 0xfc, 255);
-const BG_DARK: (u8, u8, u8, u8) = (0x09, 0x0b, 0x12, 255);
+const BG_LIGHT: (u8, u8, u8, u8) = (0xfd, 0xf9, 0xf4, 255);
+const BG_DARK: (u8, u8, u8, u8) = (0x09, 0x08, 0x0c, 255);
 
 fn err(e: impl ToString) -> String {
     e.to_string()

@@ -269,7 +269,7 @@
     transition: background-color 0.3s;
   }
   .head { flex: none; height: 52px; display: flex; align-items: center; gap: 9px; padding: 0 8px; }
-  .head img { display: block; flex: none; filter: drop-shadow(0 0 8px rgba(155, 109, 255, 0.32)); }
+  .head img { display: block; flex: none; filter: drop-shadow(0 0 8px rgba(242, 107, 33, 0.34)); }
   .brand-wrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .brand-kicker { font: 700 8.5px/1 var(--mono); letter-spacing: 0.16em; color: var(--accent-2); }
   .head .brand { display: flex; align-items: center; font-size: 15.5px; white-space: nowrap; }
