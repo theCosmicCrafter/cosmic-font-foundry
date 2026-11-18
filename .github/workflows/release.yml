@@ -1,14 +1,3 @@
-# Al subir un tag vX.Y.Z: compila el instalador NSIS firmado para el
-# actualizador y el zip portable desde el código del tag, genera latest.json y
-# las sumas SHA-256, y lo deja todo en una release BORRADOR con las notas de
-# .github/notas/vX.Y.Z.md. Se publica a mano después de revisarla.
-#
-# Lanzado a mano (workflow_dispatch) solo compila: sube los archivos como
-# artifact del run y no crea ni toca ninguna release. Si los secrets de firma
-# están puestos, también firma (para probar que la clave funciona).
-#
-# Secrets: TAURI_SIGNING_PRIVATE_KEY y TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-# (la clave del actualizador; su parte pública está en src-tauri/tauri.conf.json).
 name: release
 
 on:
@@ -28,29 +17,26 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
-      # Crear la release y subirle archivos. Nada más.
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      ES_TAG: ${{ github.ref_type == 'tag' }}
+      IS_TAG: ${{ github.ref_type == 'tag' }}
       TAG: ${{ github.ref_name }}
     steps:
-      # Acciones fijadas por commit: una etiqueta se puede mover, un SHA no.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Versión (y que el tag coincida)
+      - name: Verify version and tag
         shell: pwsh
         run: |
-          $paquete = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          if ($paquete -ne $tauri) { throw "package.json $paquete, tauri.conf.json $tauri" }
-          if ($env:ES_TAG -eq "true") {
-            if ("v$paquete" -ne $env:TAG) { throw "tag $env:TAG, versión $paquete" }
-            if (-not (Test-Path ".github/notas/$env:TAG.md")) { throw "falta .github/notas/$env:TAG.md" }
+          if ($pkg -ne $tauri) { throw "package.json $pkg != tauri.conf.json $tauri" }
+          if ($env:IS_TAG -eq "true") {
+            if ("v$pkg" -ne $env:TAG) { throw "tag $env:TAG != version $pkg" }
           }
-          "VERSION=$paquete" >> $env:GITHUB_ENV
+          "VERSION=$pkg" >> $env:GITHUB_ENV
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -60,87 +46,86 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Dependencias (versiones exactas del lockfile)
+      - name: Install npm dependencies
         run: npm ci
 
-      - name: Compilar el instalador (firmado si hay clave)
+      - name: Run core & Windows unit tests
+        run: |
+          cargo test --manifest-path src-tauri/core/Cargo.toml
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build installer (signed if updater key is configured)
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           if ($env:TAURI_SIGNING_PRIVATE_KEY) {
-            # Solo aquí se generan los paquetes firmados (.sig): compilar en local no pide la clave.
-            npm run instalador -- --ci --config src-tauri/tauri.release.conf.json
-            "FIRMADO=1" >> $env:GITHUB_ENV
-          } elseif ($env:ES_TAG -eq "true") {
-            throw "faltan los secrets TAURI_SIGNING_PRIVATE_KEY y TAURI_SIGNING_PRIVATE_KEY_PASSWORD: sin firma, el actualizador no aceptaría esta versión"
+            npm run installer -- --ci --config src-tauri/tauri.release.conf.json
+            "SIGNED=1" >> $env:GITHUB_ENV
+          } elseif ($env:IS_TAG -eq "true") {
+            throw "Missing TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets"
           } else {
-            Write-Warning "sin clave de firma: se compila sin los archivos del actualizador"
-            npm run instalador -- --ci
-            "FIRMADO=0" >> $env:GITHUB_ENV
+            Write-Warning "No signing key configured: building unsigned test artifacts"
+            npm run installer -- --ci
+            "SIGNED=0" >> $env:GITHUB_ENV
           }
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      # Después de compilar: el build de Rust necesita la interfaz ya generada en dist/.
-      - name: Tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
-
-      - name: Zip portable, latest.json y SHA-256
+      - name: Package portable zip, latest.json, and SHA-256
         shell: pwsh
         run: |
           $v = $env:VERSION
-          $nombre = "tuna-fonts_${v}_x64-setup.exe"
-          $setup = Get-Item "src-tauri/target/release/bundle/nsis/$nombre"
+          $setupName = "Cosmic Font Foundry_${v}_x64-setup.exe"
+          $setup = Get-Item "src-tauri/target/release/bundle/nsis/$setupName"
+          $outSetup = "Cosmic-Font-Foundry_${v}_x64-setup.exe"
 
-          # Portable: el .exe con las licencias al lado, como el instalador.
-          $dir = New-Item -ItemType Directory -Force "salida/portable/tuna-fonts"
-          Copy-Item src-tauri/target/release/tuna-fonts.exe $dir
+          $dir = New-Item -ItemType Directory -Force "out/portable/Cosmic Font Foundry"
+          Copy-Item "src-tauri/target/release/cosmic-font-foundry.exe" "$dir/Cosmic Font Foundry.exe"
           Copy-Item LICENSE "$dir/LICENSE.txt"
           Copy-Item THIRD-PARTY-NOTICES.md $dir
           Copy-Item licenses "$dir/licenses" -Recurse
-          Compress-Archive "$dir/*" "salida/tuna-fonts_${v}_x64-portable.zip"
-          Copy-Item $setup salida/
+          Compress-Archive "$dir/*" "out/Cosmic-Font-Foundry_${v}_x64-portable.zip"
+          Copy-Item $setup "out/$outSetup"
 
-          # El actualizador lee latest.json de la última release publicada y solo
-          # instala el paquete si su firma cuadra con la clave pública de la app.
-          if ($env:FIRMADO -eq "1") {
-            $firma = (Get-Content "$($setup.FullName).sig" -Raw).Trim()
-            Copy-Item "$($setup.FullName).sig" salida/
-            $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$v/$nombre"
-            $plataforma = @{ signature = $firma; url = $url }
+          if ($env:SIGNED -eq "1") {
+            $sig = (Get-Content "$($setup.FullName).sig" -Raw).Trim()
+            Copy-Item "$($setup.FullName).sig" "out/${outSetup}.sig"
+            $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$v/$outSetup"
+            $platform = @{ signature = $sig; url = $url }
             $json = [ordered]@{
               version   = $v
               notes     = "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/v$v"
               pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-              platforms = [ordered]@{ "windows-x86_64" = $plataforma; "windows-x86_64-nsis" = $plataforma }
+              platforms = [ordered]@{ "windows-x86_64" = $platform; "windows-x86_64-nsis" = $platform }
             } | ConvertTo-Json -Depth 5
-            [IO.File]::WriteAllText("$PWD/salida/latest.json", $json)
+            [IO.File]::WriteAllText("$PWD/out/latest.json", $json)
           }
 
-          Push-Location salida
-          $sumas = Get-ChildItem -File | Where-Object { $_.Extension -in ".exe", ".zip" } | Sort-Object Name | ForEach-Object {
+          Push-Location out
+          $sums = Get-ChildItem -File | Where-Object { $_.Extension -in ".exe", ".zip" } | Sort-Object Name | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           }
-          $sumas | Set-Content SHA256SUMS.txt -Encoding ascii
+          $sums | Set-Content SHA256SUMS.txt -Encoding ascii
           Pop-Location
-          Get-Content salida/SHA256SUMS.txt
+          Get-Content out/SHA256SUMS.txt
 
-      - name: Archivos del run (solo a mano)
+      - name: Upload workflow artifacts
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tuna-fonts-${{ env.VERSION }}-${{ github.sha }}
-          path: salida/*.*
+          name: cosmic-font-foundry-${{ env.VERSION }}-${{ github.sha }}
+          path: out/*.*
           if-no-files-found: error
 
-      - name: Release borrador
+      - name: Create draft release
         if: github.ref_type == 'tag'
         shell: pwsh
         run: |
-          $cuerpo = (Get-Content ".github/notas/$env:TAG.md" -Raw).TrimEnd()
-          $tres = [string][char]96 * 3
-          $cuerpo += "`n`n### SHA-256`n$tres`n" + ((Get-Content salida/SHA256SUMS.txt) -join "`n") + "`n$tres`n"
-          $cuerpo | Set-Content notas.md -Encoding utf8
-          $archivos = @(Get-ChildItem salida -File | ForEach-Object FullName)
-          gh release create $env:TAG --draft --verify-tag --title "tuna-fonts $env:TAG" --notes-file notas.md @archivos
+          $notesFile = ".github/notas/$env:TAG.md"
+          $body = if (Test-Path $notesFile) { (Get-Content $notesFile -Raw).TrimEnd() } else { "Release $env:TAG" }
+          $fence = [string][char]96 * 3
+          $body += "`n`n### SHA-256`n$fence`n" + ((Get-Content out/SHA256SUMS.txt) -join "`n") + "`n$fence`n"
+          $body | Set-Content notes.md -Encoding utf8
+          $files = @(Get-ChildItem out -File | ForEach-Object FullName)
+          gh release create $env:TAG --draft --verify-tag --title "Cosmic Font Foundry $env:TAG" --notes-file notes.md @files

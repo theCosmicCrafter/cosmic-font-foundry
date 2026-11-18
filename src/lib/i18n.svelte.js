@@ -1,23 +1,25 @@
-// t("clave", { var }) en cualquier componente. Lee ajustes.idioma, así que lo
-// que lo use se repinta solo al cambiar de idioma.
-import { ajustes } from "./ajustes.svelte.js";
-import es from "../i18n/es.js";
+import { settings } from "./settings.svelte.js";
 import en from "../i18n/en.js";
+import es from "../i18n/es.js";
 
-const TEXTOS = { es, en };
+const DICTIONARIES = { en, es };
 
-export const idioma = () => (ajustes.idioma === "en" ? "en" : "es");
+export const language = () => (settings.language === "es" ? "es" : "en");
 
-export function t(clave, vars) {
-  let texto = TEXTOS[idioma()][clave] ?? es[clave] ?? clave;
-  if (vars) for (const [k, v] of Object.entries(vars)) texto = texto.replaceAll(`{${k}}`, v);
-  return texto;
+export function t(key, vars) {
+  let text = DICTIONARIES[language()][key] ?? en[key] ?? key;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      text = text.replaceAll(`{${k}}`, v);
+    }
+  }
+  return text;
 }
 
-export const locale = () => (idioma() === "es" ? "es-ES" : "en-US");
+export const locale = () => (language() === "es" ? "es-ES" : "en-US");
 
 $effect.root(() => {
   $effect(() => {
-    document.documentElement.lang = idioma();
+    document.documentElement.lang = language();
   });
 });

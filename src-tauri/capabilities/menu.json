@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "menu",
-  "description": "Menú de la bandeja: recibir el estado, el tema y el idioma de la ventana principal.",
+  "description": "System tray popup menu receiving state, theme, and language from main.",
   "windows": [
     "menu"
   ],

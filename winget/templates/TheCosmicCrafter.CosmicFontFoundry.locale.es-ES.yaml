@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.10.0.schema.json
+PackageIdentifier: TheCosmicCrafter.CosmicFontFoundry
+PackageVersion: {VERSION}
+PackageLocale: es-ES
+Publisher: theCosmicCrafter
+PackageName: Cosmic Font Foundry
+License: MIT
+ShortDescription: Estudio tipográfico local y de código abierto para Windows. Rápido, privado y sin ataduras en la nube.
+Description: |-
+  Inspecciona, organiza y activa fuentes en Windows con ejes variables, funciones OpenType en vivo,
+  espécimen previo en Google Fonts Discover, comparación en columnas o pareja titular/cuerpo,
+  Quick-Switcher global, diagnóstico de duplicados, BYO-Sync y exportación de colecciones en ZIP.
+ManifestType: locale
+ManifestVersion: 1.10.0

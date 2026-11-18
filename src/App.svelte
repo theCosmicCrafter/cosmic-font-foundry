@@ -1,698 +1,878 @@
 <script>
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import { Search, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart, WifiOff, Layers, Type, LoaderCircle } from "@lucide/svelte";
+  import {
+    Search, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart,
+    WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles,
+  } from "@lucide/svelte";
 
-  import Lateral from "./componentes/Lateral.svelte";
-  import Controles from "./componentes/Controles.svelte";
-  import Avisos from "./componentes/Avisos.svelte";
-  import Segmentado from "./componentes/Segmentado.svelte";
-  import ListaVirtual from "./componentes/ListaVirtual.svelte";
-  import Fila from "./componentes/Fila.svelte";
-  import Tarjeta from "./componentes/Tarjeta.svelte";
-  import { iniciarActualizador } from "./lib/actualizador.svelte.js";
-  import TarjetaGoogle from "./componentes/TarjetaGoogle.svelte";
-  import FilaGoogle from "./componentes/FilaGoogle.svelte";
-  import Vacio from "./componentes/Vacio.svelte";
-  import Esqueleto from "./componentes/Esqueleto.svelte";
-  import BarraSeleccion from "./componentes/BarraSeleccion.svelte";
-  import Ajustes from "./vistas/Ajustes.svelte";
-  import Especimen from "./vistas/Especimen.svelte";
-  import Comparar from "./vistas/Comparar.svelte";
+  import Sidebar from "./components/Sidebar.svelte";
+  import WindowControls from "./components/WindowControls.svelte";
+  import Toasts from "./components/Toasts.svelte";
+  import SegmentedControl from "./components/SegmentedControl.svelte";
+  import VirtualList from "./components/VirtualList.svelte";
+  import FontRow from "./components/FontRow.svelte";
+  import FontCard from "./components/FontCard.svelte";
+  import GoogleRow from "./components/GoogleRow.svelte";
+  import GoogleCard from "./components/GoogleCard.svelte";
+  import EmptyState from "./components/EmptyState.svelte";
+  import SkeletonList from "./components/SkeletonList.svelte";
+  import SelectionBar from "./components/SelectionBar.svelte";
+  import Settings from "./views/Settings.svelte";
+  import Specimen from "./views/Specimen.svelte";
+  import Compare from "./views/Compare.svelte";
 
-  import { ajustes, enTauri, temaActual } from "./lib/ajustes.svelte.js";
+  import { initUpdater } from "./lib/updater.svelte.js";
+  import { settings, inTauri, currentTheme } from "./lib/settings.svelte.js";
   import { t, locale } from "./lib/i18n.svelte.js";
-  import { avisar } from "./lib/avisos.svelte.js";
-  import { fuentes, iniciarFuentes, actualizarFuentes, alternar, instalar, estiloDe, ponerLista, llamar } from "./lib/fuentes.svelte.js";
-  import { biblioteca, iniciarBiblioteca, alternarFavorita, aFavoritas, nuevaColeccion, renombrar, eliminarColeccion, aColeccion } from "./lib/biblioteca.svelte.js";
-  import { descubrir, cargarCatalogo, pedirVistas, precargar, instalarGoogle } from "./lib/descubrir.svelte.js";
-  import { arrastre, empezarArrastre } from "./lib/arrastre.svelte.js";
-  import { comboDe } from "./lib/atajos.js";
+  import { notify } from "./lib/toasts.svelte.js";
+  import {
+    fonts, initFonts, refreshFonts, toggleFamilies, installFontFiles,
+    fontStyle, applyExternalList, invokeCmd, quarantineCorruptFont,
+  } from "./lib/fonts.svelte.js";
+  import {
+    library, initLibrary, toggleFavorite, addToFavorites, createCollection,
+    renameCollection, togglePinCollection, deleteCollection, addFontsToCollection,
+    tagsForFamily,
+  } from "./lib/library.svelte.js";
+  import { discover, loadCatalog, requestGooglePreviews, preloadDiscover, installGoogleFont } from "./lib/discover.svelte.js";
+  import { drag, startDrag } from "./lib/drag.svelte.js";
+  import { shortcutCombo } from "./lib/shortcuts.js";
 
-  // ---- estado de la vista ----
-  // instaladas | descubrir | favoritas | col:<id> | car:<ruta>
-  let seccion = $state(ajustes.alAbrir === "favoritas" ? "favoritas" : "instaladas");
+  // section: installed | discover | favorites | diagnostics | col:<id> | dir:<path>
+  let section = $state(settings.onOpen === "favorites" ? "favorites" : "installed");
   let cat = $state(null);
+  let script = $state(null);
   let q = $state("");
-  let muestraPropia = $state("");
-  let filtro = $state("todas");
-  let orden = $state("popularidad");
+  let customSample = $state("");
+  let filter = $state("all"); // all | active | inactive | variable
+  let sort = $state("popularity");
   const sel = new SvelteSet();
-  let detalle = $state(null);
-  let comparar = $state([]);
-  let ajustesEn = $state(null);
-  let colAbierta = $state(false);
-  let renombrando = $state(null);
-  let borrando = $state(null);
-  let soltando = $state(false);
-  let carpetas = $state([]);
-  let leyendo = $state(null);
-  let buscador = $state();
+  let detailName = $state(null);
+  let googleDetailName = $state(null);
+  let compareNames = $state([]);
+  let settingsTab = $state(null);
+  let colOpen = $state(false);
+  let renaming = $state(null);
+  let confirmingDelete = $state(null);
+  let dropping = $state(false);
+  let folders = $state([]);
+  let readingFolder = $state(null);
+  let searchInput = $state();
 
-  const sinMovimiento = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let splash = $state(!sinMovimiento);
-  if (!sinMovimiento) setTimeout(() => (splash = false), 800);
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let splash = $state(!reducedMotion);
+  if (!reducedMotion) setTimeout(() => (splash = false), 760);
 
-  const muestraDefecto = $derived(ajustes.textoPrueba.trim() || t("defaultSample"));
-  const muestra = $derived(muestraPropia || muestraDefecto);
-  const tamano = $derived(ajustes.tamano);
+  const defaultSample = $derived(settings.sampleText.trim() || t("defaultSample"));
+  const sample = $derived(customSample || defaultSample);
+  const size = $derived(settings.size);
 
-  const enDescubrir = $derived(seccion === "descubrir");
-  const coleccion = $derived(seccion.startsWith("col:") ? biblioteca.colecciones.find((c) => "col:" + c.id === seccion) : null);
-  const carpeta = $derived(seccion.startsWith("car:") ? seccion.slice(4) : null);
-  const detalleF = $derived(detalle ? fuentes.lista.find((f) => f.nombre === detalle) : null);
-  const comparadas = $derived(comparar.map((n) => fuentes.lista.find((f) => f.nombre === n)).filter(Boolean));
-
-  const bloqueada = (f) => f.origen === "sis" && (!ajustes.desbloqueadas || f.imprescindible);
-  const motivo = (f) => (f.imprescindible ? t("candado.imprescindible") : t("candado.sistema"));
-  // Las del sistema con candado no se enseñan salvo que se pida en ajustes
-  // (en favoritas y colecciones sí: ahí las has puesto tú).
-  const visible = (f) => ajustes.verBloqueadas || !bloqueada(f);
-  // Por archivo, no por origen: si la familia también está instalada, cuenta como instalada.
-  const enCarpeta = (f, ruta) => f.archivos.some((a) => a.toLowerCase().startsWith(ruta.toLowerCase() + "\\"));
-  const favs = $derived(new Set(biblioteca.favoritas));
-
-  // ---- listas ----
-  const base = $derived.by(() => {
-    const l = fuentes.lista;
-    if (seccion === "favoritas") return l.filter((f) => favs.has(f.nombre));
-    if (coleccion) return l.filter((f) => coleccion.fuentes.includes(f.nombre));
-    if (carpeta) return l.filter((f) => enCarpeta(f, carpeta));
-    return l.filter((f) => f.origen !== "car" && visible(f));
-  });
-  const ql = $derived(q.trim().toLowerCase());
-  const lista = $derived(
-    base.filter(
-      (f) =>
-        (!cat || f.categoria === cat) &&
-        (!ql || f.nombre.toLowerCase().includes(ql)) &&
-        (filtro === "todas" || (filtro === "activas") === (f.activa || bloqueada(f))),
-    ),
+  const inDiscover = $derived(section === "discover");
+  const inDiagnostics = $derived(section === "diagnostics");
+  const activeCollection = $derived(section.startsWith("col:") ? library.collections.find((c) => "col:" + c.id === section) : null);
+  const activeFolder = $derived(section.startsWith("dir:") ? section.slice(4) : null);
+  const detailFamily = $derived(detailName ? fonts.list.find((f) => f.name === detailName) : null);
+  const googleDetail = $derived(
+    googleDetailName && !detailFamily ? discover.list.find((g) => g.name === googleDetailName) : null,
   );
-  const instaladasNombres = $derived(new Set(fuentes.lista.map((f) => f.nombre.toLowerCase())));
-  // Favoritas de Google Fonts sin instalar (marcarlas no instala nada: es una lista de deseos).
+  const comparedFamilies = $derived(compareNames.map((n) => fonts.list.find((f) => f.name === n)).filter(Boolean));
+
+  const isLocked = (f) => f.origin === "sys" && (!settings.systemUnlocked || f.essential);
+  const lockReason = (f) => (f.essential ? t("lock.essential") : t("lock.system"));
+  const isVisible = (f) => settings.showLocked || !isLocked(f);
+  const inFolder = (f, folderPath) =>
+    f.files.some((p) => p.toLowerCase().startsWith(folderPath.toLowerCase() + "\\"));
+  const favSet = $derived(new Set(library.favorites));
+
+  // ---- Filtered lists ----
+  const baseList = $derived.by(() => {
+    const l = fonts.list;
+    if (section === "favorites") return l.filter((f) => favSet.has(f.name));
+    if (section === "diagnostics") return l.filter((f) => f.error || f.has_conflicts || (f.duplicates?.length ?? 0) > 0);
+    if (activeCollection) return l.filter((f) => activeCollection.fonts.includes(f.name));
+    if (activeFolder) return l.filter((f) => inFolder(f, activeFolder));
+    return l.filter((f) => f.origin !== "dir" && isVisible(f));
+  });
+
+  const ql = $derived(q.trim().toLowerCase());
+  const matchesQuery = (f) =>
+    !ql ||
+    f.name.toLowerCase().includes(ql) ||
+    tagsForFamily(f.name).some((tag) => tag.includes(ql));
+
+  const filteredLocal = $derived(
+    baseList.filter((f) => {
+      if (cat && f.category !== cat) return false;
+      if (script && !(f.scripts ?? []).includes(script)) return false;
+      if (!matchesQuery(f)) return false;
+      if (filter === "variable") return f.is_variable;
+      if (filter === "active") return f.active || isLocked(f);
+      if (filter === "inactive") return !(f.active || isLocked(f));
+      return true;
+    }),
+  );
+
+  const installedNamesLower = $derived(new Set(fonts.list.map((f) => f.name.toLowerCase())));
+
   const favGoogle = $derived(
-    seccion === "favoritas"
-      ? descubrir.lista.filter(
+    section === "favorites"
+      ? discover.list.filter(
           (g) =>
-            favs.has(g.nombre) &&
-            !instaladasNombres.has(g.nombre.toLowerCase()) &&
-            (!cat || g.categoria === cat) &&
-            (!ql || g.nombre.toLowerCase().includes(ql)) &&
-            filtro !== "activas",
+            favSet.has(g.name) &&
+            !installedNamesLower.has(g.name.toLowerCase()) &&
+            (!cat || g.category === cat) &&
+            (!script || (g.scripts ?? []).includes(script)) &&
+            (!ql || g.name.toLowerCase().includes(ql)) &&
+            filter !== "active" &&
+            (filter !== "variable" || g.is_variable),
         )
       : [],
   );
-  // Lo que se pinta: en favoritas, las instaladas y las de Google por orden alfabético.
-  const listaVista = $derived(
+
+  const viewList = $derived(
     favGoogle.length
-      ? [...lista, ...favGoogle.map((g) => ({ google: g, nombre: g.nombre }))].sort((a, b) => a.nombre.localeCompare(b.nombre))
-      : lista,
+      ? [...filteredLocal, ...favGoogle.map((g) => ({ google: g, name: g.name }))].sort((a, b) => a.name.localeCompare(b.name))
+      : filteredLocal,
   );
-  // El catálogo solo hace falta si hay favoritas que no están instaladas.
+
   $effect(() => {
-    if (seccion === "favoritas" && biblioteca.favoritas.some((n) => !instaladasNombres.has(n.toLowerCase()))) cargarCatalogo();
-  });
-  const listaGoogle = $derived.by(() => {
-    const l = descubrir.lista.filter((g) => (!cat || g.categoria === cat) && (!ql || g.nombre.toLowerCase().includes(ql)));
-    if (orden === "popularidad") return [...l].sort((a, b) => a.popularidad - b.popularidad);
-    if (orden === "recientes") return [...l].sort((a, b) => (b.fecha > a.fecha ? 1 : b.fecha < a.fecha ? -1 : 0));
-    return [...l].sort((a, b) => a.nombre.localeCompare(b.nombre));
+    if (section === "favorites" && library.favorites.some((n) => !installedNamesLower.has(n.toLowerCase()))) {
+      loadCatalog();
+    }
   });
 
-  const catCuentas = $derived.by(() => {
+  const googleList = $derived.by(() => {
+    const l = discover.list.filter(
+      (g) =>
+        (!cat || g.category === cat) &&
+        (!script || (g.scripts ?? []).includes(script)) &&
+        (!ql || g.name.toLowerCase().includes(ql)),
+    );
+    if (sort === "popularity") return [...l].sort((a, b) => a.popularity - b.popularity);
+    if (sort === "recent") return [...l].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
+    return [...l].sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  const catCounts = $derived.by(() => {
     const c = {};
-    for (const f of enDescubrir ? descubrir.lista : base) c[f.categoria] = (c[f.categoria] ?? 0) + 1;
+    for (const f of inDiscover ? discover.list : baseList) c[f.category] = (c[f.category] ?? 0) + 1;
     return c;
   });
-  const instaladas = $derived(fuentes.lista.filter((f) => f.origen !== "car" && visible(f)));
-  const activasN = $derived(instaladas.filter((f) => f.activa || bloqueada(f)).length);
-  const cuentaGoogle = $derived(
-    descubrir.lista.length ? (descubrir.lista.length >= 1000 ? (Math.floor(descubrir.lista.length / 100) / 10).toLocaleString(locale()) + "k" : descubrir.lista.length) : "",
-  );
-  const cuentas = $derived({ instaladas: instaladas.length, descubrir: cuentaGoogle, favoritas: biblioteca.favoritas.length });
-  const carpetasCuenta = $derived(carpetas.map((c) => ({ ...c, cuenta: fuentes.lista.filter((f) => enCarpeta(f, c.ruta)).length })));
 
-  const cabecera = $derived(
-    comparadas.length
-      ? t("comparar")
-      : detalleF
-        ? t("especimen")
-        : cat
-          ? t("cat." + cat)
-          : enDescubrir
-            ? t("google")
-            : seccion === "favoritas"
-              ? t("sec.favoritas")
-              : coleccion
-                ? coleccion.nombre
-                : carpeta
-                  ? (carpetas.find((c) => c.ruta === carpeta)?.nombre ?? "")
-                  : t("sec.instaladas"),
-  );
-  const vistaNormal = $derived(!detalleF && !comparadas.length);
-
-  // Vistas previas de Descubrir: solo lo que se ve.
-  let vistasGoogle = [];
-  function alVerGoogle(items) {
-    vistasGoogle = items;
-    pedirVistas(items.map((g) => g.nombre), muestra);
-  }
-  function alVerFav(items) {
-    vistasGoogle = items.filter((it) => it.google).map((it) => it.google);
-    if (vistasGoogle.length) pedirVistas(vistasGoogle.map((g) => g.nombre), muestra);
-  }
-  $effect(() => {
-    // Si cambia el texto de prueba, se pide solo lo que falte de lo que se ve.
-    const m = muestra;
-    if (enDescubrir || seccion === "favoritas") pedirVistas(vistasGoogle.map((g) => g.nombre), m);
+  const scriptCounts = $derived.by(() => {
+    const c = {};
+    for (const f of inDiscover ? discover.list : baseList) {
+      for (const s of f.scripts ?? []) c[s] = (c[s] ?? 0) + 1;
+    }
+    return c;
   });
 
-  // ---- acciones ----
-  function irA(s) {
-    seccion = s;
-    detalle = null;
-    comparar = [];
+  const installedFonts = $derived(fonts.list.filter((f) => f.origin !== "dir" && isVisible(f)));
+  const activeCount = $derived(installedFonts.filter((f) => f.active || isLocked(f)).length);
+  const diagCount = $derived(fonts.list.filter((f) => f.error || f.has_conflicts || (f.duplicates?.length ?? 0) > 0).length);
+
+  const googleCountLabel = $derived(
+    discover.list.length
+      ? discover.list.length >= 1000
+        ? (Math.floor(discover.list.length / 100) / 10).toLocaleString(locale()) + "k"
+        : discover.list.length
+      : "",
+  );
+  const counts = $derived({
+    installed: installedFonts.length,
+    discover: googleCountLabel,
+    favorites: library.favorites.length,
+    diagnostics: diagCount,
+  });
+  const folderCounts = $derived(folders.map((c) => ({ ...c, count: fonts.list.filter((f) => inFolder(f, c.path)).length })));
+  const projectFolders = $derived(new Set((fonts.projects ?? []).map((p) => p.folder.toLowerCase())));
+  const activeProject = $derived(
+    activeFolder ? (fonts.projects ?? []).find((p) => p.folder.toLowerCase() === activeFolder.toLowerCase()) : null,
+  );
+
+  const heading = $derived(
+    comparedFamilies.length
+      ? t("compareTitle")
+      : detailFamily || googleDetail
+        ? t("specimenTitle")
+        : cat
+          ? t("cat." + cat)
+          : inDiscover
+            ? t("google")
+            : inDiagnostics
+              ? t("sec.diagnostics")
+              : section === "favorites"
+                ? t("sec.favorites")
+                : activeCollection
+                  ? activeCollection.name
+                  : activeFolder
+                    ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
+                    : t("sec.installed"),
+  );
+  const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length);
+
+  // ---- Google preview font requests ----
+  let visibleGoogle = [];
+  function onVisibleGoogle(items) {
+    visibleGoogle = items;
+    requestGooglePreviews(items.map((g) => g.name), sample);
+  }
+  function onVisibleFav(items) {
+    visibleGoogle = items.filter((it) => it.google).map((it) => it.google);
+    if (visibleGoogle.length) requestGooglePreviews(visibleGoogle.map((g) => g.name), sample);
+  }
+  $effect(() => {
+    const m = sample;
+    if (inDiscover || section === "favorites") requestGooglePreviews(visibleGoogle.map((g) => g.name), m);
+  });
+
+  // ---- Actions ----
+  function goTo(s) {
+    section = s;
+    detailName = null;
+    googleDetailName = null;
+    compareNames = [];
     sel.clear();
     cat = null;
-    colAbierta = false;
-    if (s === "descubrir") cargarCatalogo();
+    script = null;
+    colOpen = false;
+    if (s === "discover") loadCatalog();
   }
 
-  async function alternarUna(f) {
-    const activar = !f.activa;
-    const r = await alternar([f.nombre], activar, ajustes.desbloqueadas);
-    if (r?.cambiadas) avisar("ok", t(activar ? "ok.activada" : "ok.desactivada", { n: f.nombre }), activar ? t("ok.yaSale") : "");
-  }
-
-  async function alternarVarias(nombres, activar, limpiar = true) {
-    const fs = nombres.map((n) => fuentes.lista.find((f) => f.nombre === n)).filter(Boolean);
-    const bloq = fs.filter(bloqueada).length;
-    const tocar = fs.filter((f) => !bloqueada(f) && f.activa !== activar).map((f) => f.nombre);
-    if (limpiar) sel.clear();
-    colAbierta = false;
-    if (tocar.length) await alternar(tocar, activar, ajustes.desbloqueadas);
-    const n = fs.length - bloq;
-    if (bloq && !activar) avisar("warn", t("ok.desactivadas", { n }), bloq === 1 ? t("aviso.sistemaUna") : t("aviso.sistema", { n: bloq }));
-    else avisar("ok", t(activar ? "ok.activadas" : "ok.desactivadas", { n }), "");
-  }
-
-  function aCol(id, nombres) {
-    let c = biblioteca.colecciones.find((x) => x.id === id);
-    if (!c) {
-      id = nuevaColeccion(t("col.nombre", { n: biblioteca.colecciones.length + 1 }));
-      c = biblioteca.colecciones.find((x) => x.id === id);
+  async function toggleOne(f) {
+    const activate = !f.active;
+    const o = await toggleFamilies([f.name], activate, settings.systemUnlocked);
+    if (o?.changed) {
+      notify("ok", t(activate ? "ok.activated" : "ok.deactivated", { n: f.name }), activate ? t("ok.availableNow") : "");
     }
-    aColeccion(id, nombres);
-    avisar("ok", t("ok.aColeccion", { n: nombres.length === 1 ? nombres[0] : t("fuentesN", { n: nombres.length }), c: c.nombre }), "");
   }
 
-  function crearColeccion(nombre) {
-    const id = nuevaColeccion(nombre);
-    irA("col:" + id);
+  async function toggleMany(names, activate, clearSelection = true) {
+    const targets = names.map((n) => fonts.list.find((f) => f.name === n)).filter(Boolean);
+    const lockedCount = targets.filter(isLocked).length;
+    const toChange = targets.filter((f) => !isLocked(f) && f.active !== activate).map((f) => f.name);
+    if (clearSelection) sel.clear();
+    colOpen = false;
+    if (toChange.length) await toggleFamilies(toChange, activate, settings.systemUnlocked);
+    const n = targets.length - lockedCount;
+    if (lockedCount && !activate) {
+      notify("warn", t("ok.deactivatedMany", { n }), lockedCount === 1 ? t("warn.systemSkippedOne") : t("warn.systemSkipped", { n: lockedCount }));
+    } else {
+      notify("ok", t(activate ? "ok.activatedMany" : "ok.deactivatedMany", { n }), "");
+    }
   }
 
-  let temporizadorBorrar;
-  function borrarColeccion() {
-    if (!coleccion) return;
-    if (borrando !== coleccion.id) {
-      borrando = coleccion.id;
-      clearTimeout(temporizadorBorrar);
-      temporizadorBorrar = setTimeout(() => (borrando = null), 3000);
+  function addToCol(id, names) {
+    let col = library.collections.find((x) => x.id === id);
+    if (!col) {
+      id = createCollection(t("col.defaultName", { n: library.collections.length + 1 }));
+      col = library.collections.find((x) => x.id === id);
+    }
+    addFontsToCollection(id, names);
+    notify("ok", t("ok.toCollection", { n: names.length === 1 ? names[0] : t("fontsN", { n: names.length }), c: col.name }), "");
+  }
+
+  function onCreateCollection(name) {
+    const id = createCollection(name);
+    goTo("col:" + id);
+  }
+
+  let deleteTimer;
+  function onDeleteCollection() {
+    if (!activeCollection) return;
+    if (confirmingDelete !== activeCollection.id) {
+      confirmingDelete = activeCollection.id;
+      clearTimeout(deleteTimer);
+      deleteTimer = setTimeout(() => (confirmingDelete = null), 3000);
       return;
     }
-    eliminarColeccion(coleccion.id);
-    borrando = null;
-    irA("instaladas");
-    avisar("ok", t("ok.colEliminada"), t("ok.siguenInstaladas"));
+    deleteCollection(activeCollection.id);
+    confirmingDelete = null;
+    goTo("installed");
+    notify("ok", t("ok.colDeleted"), t("ok.fontsUntouched"));
   }
 
-  async function activarColeccion(activar) {
-    if (!coleccion) return;
-    const n = coleccion.fuentes;
-    const fs = n.map((x) => fuentes.lista.find((f) => f.nombre === x)).filter((f) => f && !bloqueada(f) && f.activa !== activar);
-    if (fs.length) await alternar(fs.map((f) => f.nombre), activar, ajustes.desbloqueadas);
-    if (activar) avisar("ok", t("ok.colActivada"), t("ok.colListas", { n: n.length }));
-    else avisar("ok", t("ok.colDesactivada"), "");
+  async function toggleCollectionFonts(activate) {
+    if (!activeCollection) return;
+    const names = activeCollection.fonts;
+    const targets = names.map((x) => fonts.list.find((f) => f.name === x)).filter((f) => f && !isLocked(f) && f.active !== activate);
+    if (targets.length) await toggleFamilies(targets.map((f) => f.name), activate, settings.systemUnlocked);
+    if (activate) notify("ok", t("ok.colActivated"), t("ok.colReady", { n: names.length }));
+    else notify("ok", t("ok.colDeactivated"), "");
   }
 
-  async function anadirCarpeta() {
-    if (!enTauri) return;
-    const l = await llamar("anadir_carpeta");
-    if (!l) return;
-    const nueva = l.find((c) => !carpetas.some((x) => x.ruta === c.ruta));
-    carpetas = l;
-    if (nueva) irA("car:" + nueva.ruta);
-    // Una carpeta con miles de fuentes tarda en leerse: mientras, se dice.
-    leyendo = nueva?.ruta ?? null;
+  async function exportCollectionZip() {
+    if (!activeCollection || !inTauri) return;
     try {
-      await actualizarFuentes();
-    } finally {
-      leyendo = null;
+      const res = await invokeCmd("export_collection_zip", {
+        collectionName: activeCollection.name,
+        fonts: activeCollection.fonts,
+      });
+      if (res) {
+        notify("ok", t("col.exportedZip"), t("col.exportedZipDesc", { files: res.font_files }));
+      }
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
     }
-    avisar("ok", t("ok.carpeta"), t("ok.carpetaTexto"));
   }
 
-  async function quitarCarpeta() {
-    if (!carpeta) return;
-    carpetas = await llamar("quitar_carpeta", { ruta: carpeta });
-    await actualizarFuentes();
-    irA("instaladas");
-    avisar("ok", t("ok.carpetaQuitada"), t("ok.carpetaQuitadaTexto"));
+  async function activateProjectFonts() {
+    if (!activeProject) return;
+    const missingOrOff = activeProject.fonts.filter((name) => {
+      const fam = fonts.list.find((f) => f.name.toLowerCase() === name.toLowerCase());
+      return fam && !fam.active && !isLocked(fam);
+    });
+    if (missingOrOff.length) {
+      await toggleFamilies(missingOrOff, true, settings.systemUnlocked);
+    }
+    notify("ok", t("ok.colActivated"), t("ok.colReady", { n: activeProject.fonts.length }));
   }
 
-  function seleccionar(f) {
-    if (sel.has(f.nombre)) sel.delete(f.nombre);
-    else sel.add(f.nombre);
-    colAbierta = false;
+  async function addFolder() {
+    if (!inTauri) return;
+    const list = await invokeCmd("add_watched_folder");
+    if (!list) return;
+    const created = list.find((c) => !folders.some((x) => x.path === c.path));
+    folders = list;
+    if (created) goTo("dir:" + created.path);
+    readingFolder = created?.path ?? null;
+    try {
+      await refreshFonts();
+    } finally {
+      readingFolder = null;
+    }
+    notify("ok", t("ok.folderAdded"), t("ok.folderAddedText"));
   }
 
-  function arrastrar(e, f) {
-    empezarArrastre(
+  async function removeFolder() {
+    if (!activeFolder) return;
+    folders = await invokeCmd("remove_watched_folder", { path: activeFolder });
+    await refreshFonts();
+    goTo("installed");
+    notify("ok", t("ok.folderRemoved"), t("ok.folderRemovedText"));
+  }
+
+  function selectFamily(f) {
+    if (sel.has(f.name)) sel.delete(f.name);
+    else sel.add(f.name);
+    colOpen = false;
+  }
+
+  function onDragFamily(e, f) {
+    startDrag(
       e,
-      () => (sel.has(f.nombre) ? [...sel] : [f.nombre]),
-      (id, nombres) => {
-        aCol(id, nombres);
+      () => (sel.has(f.name) ? [...sel] : [f.name]),
+      (id, names) => {
+        addToCol(id, names);
         sel.clear();
       },
     );
   }
 
-  // ---- Ctrl + rueda: tamaño de las muestras, no zoom de la ventana ----
-  // Con addEventListener porque hace falta passive: false para poder cancelar el zoom.
+  // ---- Ctrl + wheel: adjust sample preview size ----
   $effect(() => {
-    const rueda = (e) => {
+    const onWheel = (e) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      const paso = e.deltaY < 0 ? 2 : -2;
-      ajustes.tamano = Math.min(96, Math.max(10, Math.round(ajustes.tamano) + paso));
+      const step = e.deltaY < 0 ? 2 : -2;
+      settings.size = Math.min(96, Math.max(10, Math.round(settings.size) + step));
     };
-    window.addEventListener("wheel", rueda, { passive: false });
-    return () => window.removeEventListener("wheel", rueda);
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
   });
 
-  // ---- teclado ----
-  function tecla(e) {
-    if (ajustesEn || splash) return;
-    const combo = comboDe(e) ?? "";
+  // ---- Keyboard shortcuts ----
+  function onKeyDown(e) {
+    if (settingsTab || splash) return;
+    const combo = shortcutCombo(e) ?? "";
     const tag = e.target?.tagName ?? "";
-    const escribiendo = tag === "INPUT" || tag === "TEXTAREA";
-    if (combo === ajustes.atajos.buscar) {
+    const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    if (combo === settings.shortcuts.search) {
       e.preventDefault();
-      buscador?.focus();
-      buscador?.select();
+      searchInput?.focus();
+      searchInput?.select();
       return;
     }
     if (e.key === "Escape") {
-      if (escribiendo) return e.target.blur();
-      if (colAbierta) colAbierta = false;
-      else if (comparar.length) comparar = [];
-      else if (detalle) detalle = null;
-      else sel.clear();
+      if (typing) return e.target.blur();
+      if (colOpen) colOpen = false;
+      else if (compareNames.length) compareNames = [];
+      else if (detailName || googleDetailName) {
+        detailName = null;
+        googleDetailName = null;
+      } else sel.clear();
       return;
     }
-    if (escribiendo || !vistaNormal || enDescubrir) return;
-    if (combo === ajustes.atajos.todas) {
+    if (typing || !isNormalView || inDiscover) return;
+    if (combo === settings.shortcuts.all) {
       e.preventDefault();
-      for (const f of lista) sel.add(f.nombre);
+      for (const f of filteredLocal) sel.add(f.name);
       return;
     }
-    if (combo === ajustes.atajos.alternar && sel.size) {
+    if (combo === settings.shortcuts.toggle && sel.size) {
       e.preventDefault();
-      const n = [...sel];
-      const algunaApagada = fuentes.lista.some((f) => sel.has(f.nombre) && !bloqueada(f) && !f.activa);
-      alternarVarias(n, algunaApagada, false);
+      const names = [...sel];
+      const anyInactive = fonts.list.some((f) => sel.has(f.name) && !isLocked(f) && !f.active);
+      toggleMany(names, anyInactive, false);
     }
   }
 
-  // ---- bandeja ----
-  // El menú de la bandeja enseña cómo están las fuentes, con el tema y el idioma de la app.
+  // ---- Sync status + pinned collections to tray menu & Quick-Switcher ----
   $effect(() => {
-    if (!enTauri) return;
-    const n = carpetas.length;
-    const estado = n === 1 ? t("menu.carpeta") : n ? t("menu.carpetas", { n }) : t("menu.activas", { a: activasN, n: instaladas.length });
-    const datos = { estado, carpetas: n, tema: temaActual(), idioma: ajustes.idioma };
-    const id = setTimeout(() => llamar("poner_bandeja", datos).catch(() => {}), 300);
-    return () => clearTimeout(id);
+    if (!inTauri) return;
+    const n = folders.length;
+    const status = n === 1 ? t("menu.folder") : n ? t("menu.folders", { n }) : t("menu.activeFonts", { a: activeCount, n: installedFonts.length });
+    const pinned = library.collections
+      .filter((c) => c.pinned)
+      .slice(0, 4)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        fonts: [...c.fonts],
+        all_active:
+          c.fonts.length > 0 &&
+          c.fonts.every((name) => fonts.list.find((f) => f.name === name)?.active ?? false),
+      }));
+    const payload = {
+      status,
+      folders: n,
+      theme: currentTheme(),
+      language: settings.language,
+      shortcut: settings.quickSwitcherShortcut ?? "Ctrl+Shift+F",
+      pinned,
+    };
+    const timer = setTimeout(() => invokeCmd("update_tray", payload).catch(() => {}), 260);
+    return () => clearTimeout(timer);
   });
 
-  // ---- arranque ----
+  // ---- Startup ----
   onMount(() => {
-    iniciarBiblioteca();
-    iniciarActualizador();
-    iniciarFuentes();
-    precargar(muestra);
-    if (!enTauri) return;
-    llamar("carpetas").then((l) => (carpetas = l));
-    // Lo que se pide desde el menú de la bandeja (la ventana ya está a la vista).
-    let quitarBandeja;
+    initLibrary();
+    initUpdater();
+    initFonts();
+    preloadDiscover(sample);
+    if (!inTauri) return;
+
+    invokeCmd("watched_folders").then((l) => (folders = l)).catch(() => {});
+
+    let unlistenTray;
     import("@tauri-apps/api/event").then(async ({ listen }) => {
-      quitarBandeja = await listen("bandeja", ({ payload }) => {
-        if (payload === "buscar") {
-          ajustesEn = null;
-          if (seccion !== "instaladas") irA("instaladas");
-          setTimeout(() => buscador?.focus(), 50);
-        } else if (payload === "descubrir") {
-          ajustesEn = null;
-          irA("descubrir");
-        } else if (payload === "ajustes") ajustesEn = "ajustes";
-      });
-    });
-    let quitar;
-    import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
-      // Archivos arrastrados desde fuera (el explorador). Lo de dentro de la
-      // app no usa el arrastre del navegador, así que aquí nunca llega.
-      quitar = await getCurrentWebview().onDragDropEvent(async ({ payload: p }) => {
-        if (p.type === "enter") soltando = (p.paths ?? []).length > 0;
-        else if (p.type === "leave") soltando = false;
-        else if (p.type === "drop") {
-          soltando = false;
-          const rutas = (p.paths ?? []).filter((r) => /\.(ttf|otf|ttc|otc)$/i.test(r));
-          if (!rutas.length) return avisar("err", t("err.noFuente"), t("err.noFuenteTexto"));
-          const todos = ajustes.instalarPara === "todos";
-          const r = await instalar(rutas, todos);
-          if (!r || !r.instaladas.length) return;
-          const titulo = r.instaladas.length === 1 ? t("ok.instalada", { n: r.instaladas[0] }) : t("ok.instaladas", { n: r.instaladas.length });
-          avisar("ok", titulo, todos ? t("ok.paraTodos") : t("ok.soloTu"));
+      unlistenTray = await listen("tray-command", ({ payload }) => {
+        if (payload === "search") {
+          settingsTab = null;
+          if (section !== "installed") goTo("installed");
+          setTimeout(() => searchInput?.focus(), 50);
+        } else if (payload === "discover") {
+          settingsTab = null;
+          goTo("discover");
+        } else if (payload === "settings") {
+          settingsTab = "settings";
         }
       });
     });
+
+    let unlistenDrop;
+    import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
+      unlistenDrop = await getCurrentWebview().onDragDropEvent(async ({ payload: p }) => {
+        if (p.type === "enter") dropping = (p.paths ?? []).length > 0;
+        else if (p.type === "leave") dropping = false;
+        else if (p.type === "drop") {
+          dropping = false;
+          const paths = (p.paths ?? []).filter((r) => /\.(ttf|otf|ttc|otc)$/i.test(r));
+          if (!paths.length) return notify("err", t("err.notFont"), t("err.notFontText"));
+          const allUsers = settings.installFor === "all";
+          const o = await installFontFiles(paths, allUsers);
+          if (!o || !o.installed.length) return;
+          const title = o.installed.length === 1 ? t("ok.installed", { n: o.installed[0] }) : t("ok.installedMany", { n: o.installed.length });
+          notify("ok", title, allUsers ? t("ok.forAll") : t("ok.forUser"));
+        }
+      });
+    });
+
     return () => {
-      quitar?.();
-      quitarBandeja?.();
+      unlistenDrop?.();
+      unlistenTray?.();
     };
   });
 </script>
 
-<svelte:window onkeydown={tecla} />
+<svelte:window onkeydown={onKeyDown} />
 
-{#snippet fila(f)}
-  <Fila
+{#snippet rowSnippet(f)}
+  <FontRow
     {f}
-    estilo={estiloDe(f)}
-    {muestra}
-    {tamano}
-    sel={sel.has(f.nombre)}
-    fav={favs.has(f.nombre)}
-    bloqueada={bloqueada(f)}
-    motivo={motivo(f)}
-    onsel={() => seleccionar(f)}
-    onabrir={() => ((detalle = f.nombre), sel.clear())}
-    onalternar={() => alternarUna(f)}
-    onfav={() => alternarFavorita(f.nombre)}
-    onarrastre={(e) => arrastrar(e, f)}
+    style={fontStyle(f)}
+    {sample}
+    {size}
+    selected={sel.has(f.name)}
+    fav={favSet.has(f.name)}
+    locked={isLocked(f)}
+    reason={lockReason(f)}
+    onselect={() => selectFamily(f)}
+    onopen={() => ((detailName = f.name), (googleDetailName = null), sel.clear())}
+    ontoggle={() => toggleOne(f)}
+    onfav={() => toggleFavorite(f.name)}
+    ondrag={(e) => onDragFamily(e, f)}
   />
 {/snippet}
 
-{#snippet tarjeta(f)}
-  <Tarjeta
+{#snippet cardSnippet(f)}
+  <FontCard
     {f}
-    estilo={estiloDe(f)}
-    sel={sel.has(f.nombre)}
-    fav={favs.has(f.nombre)}
-    bloqueada={bloqueada(f)}
-    motivo={motivo(f)}
-    onsel={() => seleccionar(f)}
-    onabrir={() => ((detalle = f.nombre), sel.clear())}
-    onalternar={() => alternarUna(f)}
-    onfav={() => alternarFavorita(f.nombre)}
-    onarrastre={(e) => arrastrar(e, f)}
+    style={fontStyle(f)}
+    selected={sel.has(f.name)}
+    fav={favSet.has(f.name)}
+    locked={isLocked(f)}
+    reason={lockReason(f)}
+    onselect={() => selectFamily(f)}
+    onopen={() => ((detailName = f.name), (googleDetailName = null), sel.clear())}
+    ontoggle={() => toggleOne(f)}
+    onfav={() => toggleFavorite(f.name)}
+    ondrag={(e) => onDragFamily(e, f)}
   />
 {/snippet}
 
-{#snippet filaGoogle(g)}
-  <FilaGoogle
+{#snippet googleRowSnippet(g)}
+  <GoogleRow
     {g}
-    {muestra}
-    {tamano}
-    instalada={instaladasNombres.has(g.nombre.toLowerCase())}
-    pct={descubrir.descargas[g.nombre]}
-    fav={favs.has(g.nombre)}
-    onfav={() => alternarFavorita(g.nombre)}
-    oninstalar={() => instalarGoogle(g.nombre, ponerLista)}
+    {sample}
+    {size}
+    installed={installedNamesLower.has(g.name.toLowerCase())}
+    pct={discover.downloads[g.name]}
+    fav={favSet.has(g.name)}
+    onfav={() => toggleFavorite(g.name)}
+    oninstall={() => installGoogleFont(g.name, applyExternalList)}
+    oninspect={(entry) => ((googleDetailName = entry.name), (detailName = null))}
   />
 {/snippet}
 
-{#snippet filaFav(it)}
-  {#if it.google}
-    <FilaGoogle
-      g={it.google}
-      {muestra}
-      {tamano}
-      sinInstalar
-      instalada={false}
-      pct={descubrir.descargas[it.nombre]}
-      fav={favs.has(it.nombre)}
-      onfav={() => alternarFavorita(it.nombre)}
-      oninstalar={() => instalarGoogle(it.nombre, ponerLista)}
+{#snippet favRowSnippet(item)}
+  {#if item.google}
+    <GoogleRow
+      g={item.google}
+      {sample}
+      {size}
+      notInstalled
+      installed={false}
+      pct={discover.downloads[item.name]}
+      fav={favSet.has(item.name)}
+      onfav={() => toggleFavorite(item.name)}
+      oninstall={() => installGoogleFont(item.name, applyExternalList)}
+      oninspect={(entry) => ((googleDetailName = entry.name), (detailName = null))}
     />
   {:else}
-    {@render fila(it)}
+    {@render rowSnippet(item)}
   {/if}
 {/snippet}
 
-{#snippet tarjetaFav(it)}
-  {#if it.google}
-    <TarjetaGoogle
-      g={it.google}
-      pct={descubrir.descargas[it.nombre]}
-      fav={favs.has(it.nombre)}
-      onfav={() => alternarFavorita(it.nombre)}
-      oninstalar={() => instalarGoogle(it.nombre, ponerLista)}
+{#snippet favCardSnippet(item)}
+  {#if item.google}
+    <GoogleCard
+      g={item.google}
+      pct={discover.downloads[item.name]}
+      fav={favSet.has(item.name)}
+      onfav={() => toggleFavorite(item.name)}
+      oninstall={() => installGoogleFont(item.name, applyExternalList)}
+      oninspect={(entry) => ((googleDetailName = entry.name), (detailName = null))}
     />
   {:else}
-    {@render tarjeta(it)}
+    {@render cardSnippet(item)}
   {/if}
 {/snippet}
 
-<div class="ventana">
-  <Lateral
-    {seccion}
+<div class="window">
+  <Sidebar
+    {section}
     {cat}
-    {cuentas}
-    {catCuentas}
-    colecciones={biblioteca.colecciones}
-    carpetas={carpetasCuenta}
-    pie={t("activas", { n: activasN, total: instaladas.length })}
-    bind:renombrando
-    onseccion={irA}
-    oncat={(c) => ((cat = c), (detalle = null), (comparar = []))}
-    onnueva={crearColeccion}
-    onrenombrar={renombrar}
-    onanadirCarpeta={anadirCarpeta}
-    onajustes={() => (ajustesEn = "ajustes")}
-    onacerca={() => (ajustesEn = "acerca")}
+    {script}
+    {counts}
+    {catCounts}
+    {scriptCounts}
+    collections={library.collections}
+    folders={folderCounts}
+    {projectFolders}
+    footer={t("activeSummary", { n: activeCount, total: installedFonts.length })}
+    bind:renaming
+    onsection={goTo}
+    oncat={(c) => ((cat = c), (detailName = null), (googleDetailName = null), (compareNames = []))}
+    onscript={(s) => ((script = s), (detailName = null), (googleDetailName = null), (compareNames = []))}
+    oncreateCollection={onCreateCollection}
+    onrenameCollection={renameCollection}
+    onaddFolder={addFolder}
+    onsettings={() => (settingsTab = "settings")}
+    onabout={() => (settingsTab = "about")}
   />
 
   <main>
     <header data-tauri-drag-region>
-      {#if vistaNormal}
-        <label class="campo buscar">
+      {#if isNormalView}
+        <label class="field search">
           <Search size={13} strokeWidth={2} />
-          <input bind:this={buscador} bind:value={q} placeholder={enDescubrir ? t("searchGoogle") : t("search")} spellcheck="false" />
+          <input bind:this={searchInput} bind:value={q} placeholder={inDiscover ? t("searchGoogle") : t("search")} spellcheck="false" />
         </label>
-        <label class="campo prueba">
+        <label class="field sample-box">
           <span class="a">A</span>
-          <input bind:value={muestraPropia} placeholder={t("typeSomething")} spellcheck="false" />
-          {#if muestraPropia}
-            <button type="button" class="reset" title={t("resetText")} aria-label={t("resetText")} onclick={() => (muestraPropia = "")}><X size={9} strokeWidth={3} /></button>
+          <input bind:value={customSample} placeholder={t("typeSomething")} spellcheck="false" />
+          {#if customSample}
+            <button type="button" class="reset" title={t("resetText")} aria-label={t("resetText")} onclick={() => (customSample = "")}><X size={9} strokeWidth={3} /></button>
           {/if}
         </label>
-        <div class="tamano" title={t("tamano")}>
-          <span class="a pq">A</span>
-          <input class="rango" type="range" min="10" max="96" bind:value={ajustes.tamano} aria-label={t("tamano")} />
-          <span class="a gr">A</span>
-          <span class="num n">{tamano}</span>
+        <div class="size-ctrl" title={t("size")}>
+          <span class="a sm">A</span>
+          <input class="range" type="range" min="10" max="96" bind:value={settings.size} aria-label={t("size")} />
+          <span class="a lg">A</span>
+          <span class="num n">{size}</span>
         </div>
       {/if}
-      <div class="hueco" data-tauri-drag-region></div>
-      {#if vistaNormal && !enDescubrir}
-        <div class="vista">
-          <Segmentado
-            etiqueta={t("list")}
-            opciones={[
-              { valor: "lista", icono: List, titulo: t("list") },
-              { valor: "cuadricula", icono: LayoutGrid, titulo: t("grid") },
+      <div class="spacer" data-tauri-drag-region></div>
+      {#if isNormalView && !inDiscover}
+        <div class="view-mode">
+          <SegmentedControl
+            label={t("list")}
+            options={[
+              { value: "list", icon: List, title: t("list") },
+              { value: "grid", icon: LayoutGrid, title: t("grid") },
             ]}
-            valor={ajustes.vista}
-            onelegir={(v) => (ajustes.vista = v)}
-            ancho={34}
-            alto={24}
+            value={settings.view}
+            onselect={(v) => (settings.view = v)}
+            width={34}
+            height={24}
           />
         </div>
       {/if}
-      <Controles />
+      <WindowControls />
     </header>
 
-    <div class="titulo">
-      <span class="etiqueta">{cabecera}</span>
-      {#if vistaNormal}<span class="cuenta num">{enDescubrir ? listaGoogle.length : listaVista.length}</span>{/if}
-      <div class="derecha">
-        {#if vistaNormal && !enDescubrir}
-          <Segmentado
-            etiqueta={t("vista.todas")}
-            opciones={["todas", "activas", "inactivas"].map((v) => ({ valor: v, etiqueta: t("vista." + v) }))}
-            valor={filtro}
-            onelegir={(v) => (filtro = v)}
-            ancho={74}
-            alto={22}
-            fuente="600 11.5px"
+    <div class="title-bar">
+      <span class="label">{heading}</span>
+      {#if isNormalView}<span class="count num">{inDiscover ? googleList.length : viewList.length}</span>{/if}
+      <div class="right">
+        {#if isNormalView && !inDiscover && !inDiagnostics}
+          <SegmentedControl
+            label={t("filter.all")}
+            options={["all", "active", "inactive", "variable"].map((v) => ({ value: v, label: t("filter." + v) }))}
+            value={filter}
+            onselect={(v) => (filter = v)}
+            width={66}
+            height={22}
+            font="600 11.5px"
           />
-        {:else if vistaNormal}
-          <Segmentado
-            etiqueta={t("orden.popularidad")}
-            opciones={["popularidad", "recientes", "alfabetico"].map((v) => ({ valor: v, etiqueta: t("orden." + v) }))}
-            valor={orden}
-            onelegir={(v) => (orden = v)}
-            ancho={84}
-            alto={22}
-            fuente="600 11.5px"
+        {:else if isNormalView && inDiscover}
+          <SegmentedControl
+            label={t("sort.popularity")}
+            options={["popularity", "recent", "alpha"].map((v) => ({ value: v, label: t("sort." + v) }))}
+            value={sort}
+            onselect={(v) => (sort = v)}
+            width={84}
+            height={22}
+            font="600 11.5px"
           />
         {/if}
-        {#if coleccion && vistaNormal}
+
+        {#if activeCollection && isNormalView}
           <span class="sep"></span>
-          <button type="button" class="pild tinta" onclick={() => activarColeccion(true)}>{t("activateAll")}</button>
-          <button type="button" class="pild" onclick={() => activarColeccion(false)}>{t("deactivate")}</button>
-          <button type="button" class="pild borrar" class:seguro={borrando === coleccion.id} title={t("col.eliminarPista")} onclick={borrarColeccion}>
-            <Trash2 size={12} strokeWidth={2} />{borrando === coleccion.id ? t("col.seguro") : t("col.eliminar")}
+          <button type="button" class="pill primary" onclick={() => toggleCollectionFonts(true)}>{t("activateAll")}</button>
+          <button type="button" class="pill" onclick={() => toggleCollectionFonts(false)}>{t("deactivate")}</button>
+          <button
+            type="button"
+            class="pill"
+            class:accent={activeCollection.pinned}
+            title={activeCollection.pinned ? t("col.unpin") : t("col.pin")}
+            onclick={() => togglePinCollection(activeCollection.id)}
+          >
+            <Pin size={12} strokeWidth={2} />
+          </button>
+          <button type="button" class="pill" title={t("col.exportZip")} onclick={exportCollectionZip}>
+            <Archive size={12} strokeWidth={2} />{t("col.exportZip")}
+          </button>
+          <button
+            type="button"
+            class="pill del"
+            class:confirm={confirmingDelete === activeCollection.id}
+            title={t("col.deleteHint")}
+            onclick={onDeleteCollection}
+          >
+            <Trash2 size={12} strokeWidth={2} />{confirmingDelete === activeCollection.id ? t("col.confirmDelete") : t("col.delete")}
           </button>
         {/if}
       </div>
     </div>
 
-    {#if carpeta && vistaNormal}
-      <div class="aviso-carpeta">
+    {#if activeFolder && isNormalView}
+      <div class="folder-banner">
         <Folder size={16} strokeWidth={1.9} />
         <span>{t("folderInfo")}</span>
-        <button type="button" class="pild blanca" onclick={anadirCarpeta}>{t("addAnother")}</button>
-        <button type="button" class="pild clara" onclick={quitarCarpeta}>{t("stopWatching")}</button>
+        <button type="button" class="pill white" onclick={addFolder}>{t("addAnother")}</button>
+        <button type="button" class="pill ghost" onclick={removeFolder}>{t("stopWatching")}</button>
       </div>
     {/if}
 
-    {#if detalleF}
-      <Especimen
-        f={detalleF}
-        {muestra}
-        fav={favs.has(detalleF.nombre)}
-        bloqueada={bloqueada(detalleF)}
-        volver={seccion === "favoritas" ? t("favorites") : coleccion ? coleccion.nombre : t("sec.instaladas")}
-        onvolver={() => (detalle = null)}
-        onalternar={() => alternarUna(detalleF)}
-        onfav={() => alternarFavorita(detalleF.nombre)}
+    {#if activeProject && isNormalView}
+      <div class="project-banner">
+        <Sparkles size={15} strokeWidth={2} />
+        <span>{t("proj.banner", { name: activeProject.name, n: activeProject.fonts.length })}</span>
+        <button type="button" class="pill primary" onclick={activateProjectFonts}>{t("proj.activate")}</button>
+      </div>
+    {/if}
+
+    {#if inDiagnostics && isNormalView}
+      <div class="diag-summary">
+        <span class="diag-stat"><b>{fonts.diagnostics.exact_duplicates}</b> {t("diag.exact")}</span>
+        <span class="diag-stat"><b>{fonts.diagnostics.style_conflicts}</b> {t("diag.conflicts")}</span>
+        <span class="diag-stat"><b>{fonts.diagnostics.corrupt_files}</b> {t("diag.corrupt")}</span>
+        <span class="diag-hint">{t("diag.quarantineHint")}</span>
+      </div>
+    {/if}
+
+    {#if detailFamily}
+      <Specimen
+        f={detailFamily}
+        {sample}
+        fav={favSet.has(detailFamily.name)}
+        locked={isLocked(detailFamily)}
+        backLabel={section === "favorites" ? t("favorites") : activeCollection ? activeCollection.name : inDiagnostics ? t("sec.diagnostics") : t("sec.installed")}
+        onback={() => (detailName = null)}
+        ontoggle={() => toggleOne(detailFamily)}
+        onfav={() => toggleFavorite(detailFamily.name)}
       />
-    {:else if comparadas.length}
-      <Comparar
-        familias={comparadas}
-        {muestra}
-        {tamano}
-        onvolver={() => (comparar = [])}
-        onquitar={(n) => (comparar = comparar.length <= 2 ? [] : comparar.filter((x) => x !== n))}
+    {:else if googleDetail}
+      <Specimen
+        googleFont={googleDetail}
+        {sample}
+        fav={favSet.has(googleDetail.name)}
+        installed={installedNamesLower.has(googleDetail.name.toLowerCase())}
+        backLabel={inDiscover ? t("google") : t("favorites")}
+        onback={() => (googleDetailName = null)}
+        onfav={() => toggleFavorite(googleDetail.name)}
+        onInstallGoogle={(name) => installGoogleFont(name, applyExternalList)}
       />
-    {:else if enDescubrir}
-      {#if descubrir.lista.length && listaGoogle.length}
-        <ListaVirtual items={listaGoogle} alto={Math.ceil(34 + tamano * 1.58)} clave={(g) => g.nombre} fila={filaGoogle} alVer={alVerGoogle} padBottom={60} />
-      {:else if descubrir.lista.length}
-        <Vacio titulo={t("vacio.nada", { q: q.trim() })} texto={t("vacio.nadaGoogle")} boton={t("vacio.borrar")} onboton={() => (q = "")} />
-      {:else if descubrir.error}
-        <Vacio icono={WifiOff} titulo={t("g.sinRed")} texto={descubrir.error} boton={t("g.reintentar")} onboton={() => cargarCatalogo(true)} />
+    {:else if comparedFamilies.length}
+      <Compare
+        families={comparedFamilies}
+        {sample}
+        {size}
+        onback={() => (compareNames = [])}
+        onremove={(n) => (compareNames = compareNames.length <= 2 ? [] : compareNames.filter((x) => x !== n))}
+      />
+    {:else if inDiscover}
+      {#if discover.list.length && googleList.length}
+        <VirtualList items={googleList} height={Math.ceil(34 + size * 1.58)} getKey={(g) => g.name} row={googleRowSnippet} onVisible={onVisibleGoogle} padBottom={60} />
+      {:else if discover.list.length}
+        <EmptyState title={t("empty.none", { q: q.trim() })} text={t("empty.noneGoogle")} actionLabel={t("empty.clear")} onaction={() => (q = "")} />
+      {:else if discover.error}
+        <EmptyState icon={WifiOff} title={t("g.offline")} text={discover.error} actionLabel={t("g.retry")} onaction={() => loadCatalog(true)} />
       {:else}
-        <Esqueleto />
+        <SkeletonList />
       {/if}
-    {:else if fuentes.cargando}
-      {#if fuentes.esqueleto}<Esqueleto />{/if}
-    {:else if !listaVista.length}
-      {#if seccion === "favoritas" && !ql && !base.length && !biblioteca.favoritas.some((n) => descubrir.lista.some((g) => g.nombre === n))}
-        <Vacio icono={Heart} titulo={t("vacio.favTitulo")} texto={t("vacio.favTexto")} boton={t("vacio.favBoton")} onboton={() => irA("instaladas")} />
+    {:else if fonts.loading}
+      {#if fonts.skeleton}<SkeletonList />{/if}
+    {:else if !viewList.length}
+      {#if inDiagnostics}
+        <EmptyState icon={ShieldCheck} title={t("empty.diagTitle")} text={t("empty.diagText")} actionLabel={t("empty.favBtn")} onaction={() => goTo("installed")} />
+      {:else if section === "favorites" && !ql && !baseList.length && !library.favorites.some((n) => discover.list.some((g) => g.name === n))}
+        <EmptyState icon={Heart} title={t("empty.favTitle")} text={t("empty.favText")} actionLabel={t("empty.favBtn")} onaction={() => goTo("installed")} />
       {:else if ql}
-        <Vacio
-          titulo={t("vacio.nada", { q: q.trim() })}
-          texto={t("vacio.nadaTexto")}
-          boton={t("vacio.buscarGoogle")}
-          onboton={() => {
-            const b = q;
-            irA("descubrir");
-            q = b;
+        <EmptyState
+          title={t("empty.none", { q: q.trim() })}
+          text={t("empty.noneText")}
+          actionLabel={t("empty.searchGoogle")}
+          onaction={() => {
+            const query = q;
+            goTo("discover");
+            q = query;
           }}
         />
-      {:else if carpeta && leyendo === carpeta}
-        <Vacio icono={LoaderCircle} girando titulo={t("vacio.leyendo")} texto={t("vacio.leyendoTexto")} />
+      {:else if activeFolder && readingFolder === activeFolder}
+        <EmptyState icon={LoaderCircle} spinning title={t("empty.reading")} text={t("empty.readingText")} />
       {:else}
-        <Vacio icono={coleccion ? Layers : carpeta ? FolderOpen : Type} titulo={t("vacio.lista")} texto={coleccion ? t("vacio.colTexto") : carpeta ? t("vacio.carTexto") : ""} />
+        <EmptyState
+          icon={activeCollection ? Layers : activeFolder ? FolderOpen : Type}
+          title={t("empty.list")}
+          text={activeCollection ? t("empty.colText") : activeFolder ? t("empty.folderText") : ""}
+        />
       {/if}
-    {:else if ajustes.vista === "cuadricula"}
-      {#key seccion + cat}
-        <ListaVirtual items={listaVista} alto={146} minAncho={176} gap={10} padX={24} padTop={4} clave={(f) => (f.google ? "g:" : "") + f.nombre} fila={tarjetaFav} alVer={alVerFav} />
+    {:else if settings.view === "grid"}
+      {#key section + cat + script}
+        <VirtualList items={viewList} height={146} minWidth={176} gap={10} padX={24} padTop={4} getKey={(f) => (f.google ? "g:" : "") + f.name} row={favCardSnippet} onVisible={onVisibleFav} />
       {/key}
     {:else}
-      {#key seccion + cat}
-        <ListaVirtual items={listaVista} alto={Math.ceil(32 + tamano * 1.58)} clave={(f) => (f.google ? "g:" : "") + f.nombre} fila={filaFav} alVer={alVerFav} padBottom={80} />
+      {#key section + cat + script}
+        <VirtualList items={viewList} height={Math.ceil(32 + size * 1.58)} getKey={(f) => (f.google ? "g:" : "") + f.name} row={favRowSnippet} onVisible={onVisibleFav} padBottom={80} />
       {/key}
     {/if}
 
-    {#if sel.size && vistaNormal && !enDescubrir}
-      <BarraSeleccion
+    {#if sel.size && isNormalView && !inDiscover}
+      <SelectionBar
         n={sel.size}
-        colecciones={biblioteca.colecciones}
-        bind:abierta={colAbierta}
-        onactivar={() => alternarVarias([...sel], true)}
-        ondesactivar={() => alternarVarias([...sel], false)}
-        onfavoritas={() => {
-          const n = [...sel];
-          aFavoritas(n);
+        collections={library.collections}
+        bind:open={colOpen}
+        onactivate={() => toggleMany([...sel], true)}
+        ondeactivate={() => toggleMany([...sel], false)}
+        onfavorites={() => {
+          const names = [...sel];
+          addToFavorites(names);
           sel.clear();
-          avisar("ok", t("ok.aFavoritas", { n: n.length }), "");
+          notify("ok", t("ok.toFavorites", { n: names.length }), "");
         }}
-        oncoleccion={(id) => {
-          aCol(id, [...sel]);
+        oncollection={(id) => {
+          addToCol(id, [...sel]);
           sel.clear();
-          colAbierta = false;
+          colOpen = false;
         }}
-        oncomparar={() => {
+        oncompare={() => {
           if (sel.size < 2 || sel.size > 4) return;
-          comparar = [...sel];
+          compareNames = [...sel];
           sel.clear();
         }}
-        onlimpiar={() => sel.clear()}
+        onclear={() => sel.clear()}
       />
     {/if}
 
-    {#if soltando}
-      <div class="soltar">
-        <div class="marco">
+    {#if dropping}
+      <div class="drop-veil">
+        <div class="frame">
           <img src="/icon.svg" width="92" height="92" alt="" draggable="false" />
-          <span class="st">{t("dropTitle")}</span>
-          <span class="sx">{ajustes.instalarPara === "todos" ? t("dropTextTodos") : t("dropText")}</span>
+          <span class="dt">{t("dropTitle")}</span>
+          <span class="dx">{settings.installFor === "all" ? t("dropTextAll") : t("dropText")}</span>
         </div>
       </div>
     {/if}
   </main>
 
-  {#if arrastre.activo}
-    <div class="fantasma" style:left="{arrastre.x + 12}px" style:top="{arrastre.y + 10}px">
-      {arrastre.nombres.length === 1 ? arrastre.nombres[0] : t("fuentesN", { n: arrastre.nombres.length })}
+  {#if drag.active}
+    <div class="ghost-pill" style:left="{drag.x + 12}px" style:top="{drag.y + 10}px">
+      {drag.names.length === 1 ? drag.names[0] : t("fontsN", { n: drag.names.length })}
     </div>
   {/if}
 
-  {#if ajustesEn}
-    <Ajustes bind:pestana={ajustesEn} oncerrar={() => (ajustesEn = null)} cuentas={{ instaladas: instaladas.length, activas: activasN, favoritas: biblioteca.favoritas.length }} />
+  {#if settingsTab}
+    <Settings
+      bind:tab={settingsTab}
+      onclose={() => (settingsTab = null)}
+      counts={{ installed: installedFonts.length, active: activeCount, favorites: library.favorites.length }}
+      onMigrated={() => {
+        if (inTauri) invokeCmd("watched_folders").then((l) => (folders = l)).catch(() => {});
+      }}
+    />
   {/if}
 
-  <Avisos />
+  <Toasts />
 
   {#if splash}
     <div class="splash">
-      <img src="/icon.svg" width="140" height="140" alt="" draggable="false" />
-      <span class="marca">tuna-fonts<i>.</i></span>
+      <img src="/icon.svg" width="136" height="136" alt="" draggable="false" />
+      <span class="brand">Cosmic Font Foundry<i>.</i></span>
     </div>
   {/if}
 </div>
 
 <style>
-  .ventana { position: relative; height: 100vh; overflow: hidden; display: grid; grid-template-columns: 216px minmax(0, 1fr); }
+  .window { position: relative; height: 100vh; overflow: hidden; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
   main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   header { flex: none; height: 52px; display: flex; align-items: center; gap: 10px; padding-left: 24px; }
-  .hueco { flex: 1; align-self: stretch; }
-  .campo {
+  .spacer { flex: 1; align-self: stretch; }
+  .field {
     height: 28px;
     display: flex;
     align-items: center;
@@ -703,24 +883,24 @@
     box-shadow: 0 0 0 1px var(--line);
     color: var(--ink3);
   }
-  .buscar { flex: 0 0 190px; }
-  .prueba { flex: 1 1 auto; min-width: 0; max-width: 360px; }
-  .campo input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 500 12.5px var(--sans); color: var(--ink); }
+  .search { flex: 0 0 190px; }
+  .sample-box { flex: 1 1 auto; min-width: 0; max-width: 340px; }
+  .field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 500 12.5px var(--sans); color: var(--ink); }
   .a { font: 700 12px var(--sans); color: var(--ink3); }
   .reset { width: 16px; height: 16px; border: 0; border-radius: 50%; background: var(--line2); color: var(--win); padding: 0; display: flex; align-items: center; justify-content: center; flex: none; }
-  .tamano { flex: none; display: flex; align-items: center; gap: 8px; margin-left: 8px; }
-  .tamano .pq { font: 600 10px var(--sans); }
-  .tamano .gr { font: 600 15px var(--sans); }
-  .tamano .n { width: 22px; font-size: 11.5px; color: var(--ink3); }
-  .rango { -webkit-appearance: none; appearance: none; width: 90px; height: 2px; background: var(--line2); border-radius: 2px; outline: none; }
-  .rango::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--ink); border: 0; cursor: pointer; }
-  .vista { margin-right: 12px; display: flex; }
+  .size-ctrl { flex: none; display: flex; align-items: center; gap: 8px; margin-left: 6px; }
+  .size-ctrl .sm { font: 600 10px var(--sans); }
+  .size-ctrl .lg { font: 600 15px var(--sans); }
+  .size-ctrl .n { width: 22px; font-size: 11.5px; color: var(--ink3); }
+  .range { -webkit-appearance: none; appearance: none; width: 88px; height: 2px; background: var(--line2); border-radius: 2px; outline: none; }
+  .range::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 0; cursor: pointer; }
+  .view-mode { margin-right: 12px; display: flex; }
 
-  .titulo { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 24px 8px; min-height: 46px; }
-  .cuenta { font-size: 10.5px; color: var(--ink3); }
-  .derecha { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-  .sep { width: 1px; height: 16px; background: var(--line2); margin: 0 6px; }
-  .pild {
+  .title-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 24px 8px; min-height: 46px; }
+  .count { font-size: 10.5px; color: var(--ink3); }
+  .right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .sep { width: 1px; height: 16px; background: var(--line2); margin: 0 4px; }
+  .pill {
     height: 24px;
     padding: 0 10px;
     border: 0;
@@ -734,17 +914,21 @@
     flex: none;
     transition: background-color 0.15s, color 0.15s;
   }
-  .pild.tinta { background: var(--ink); color: var(--win); }
-  .pild.borrar { background: transparent; color: var(--ink2); padding: 0 10px 0 8px; }
-  .pild.borrar:hover { background: var(--hov); }
-  .pild.borrar.seguro { background: var(--red); color: #fff; }
-  .pild.blanca { height: 26px; padding: 0 12px; background: var(--win); box-shadow: 0 0 0 1px var(--line2); font-size: 12px; }
-  .pild.clara { height: 26px; padding: 0 12px; background: transparent; color: var(--ink2); font-size: 12px; }
-  .pild.clara:hover { background: var(--hov); color: var(--ink); }
-  .aviso-carpeta {
+  .pill:hover { background: var(--line2); }
+  .pill.primary { background: var(--accent); color: #fff; }
+  .pill.primary:hover { filter: brightness(1.06); }
+  .pill.accent { background: var(--accent-soft); color: var(--accent); }
+  .pill.del { background: transparent; color: var(--ink2); padding: 0 10px 0 8px; }
+  .pill.del:hover { background: var(--hov); }
+  .pill.del.confirm { background: var(--danger); color: #fff; }
+  .pill.white { height: 26px; padding: 0 12px; background: var(--win); box-shadow: 0 0 0 1px var(--line2); font-size: 12px; }
+  .pill.ghost { height: 26px; padding: 0 12px; background: transparent; color: var(--ink2); font-size: 12px; }
+  .pill.ghost:hover { background: var(--hov); color: var(--ink); }
+
+  .folder-banner, .project-banner, .diag-summary {
     flex: none;
-    margin: 0 24px 6px;
-    padding: 10px 12px;
+    margin: 0 24px 8px;
+    padding: 10px 14px;
     border-radius: 10px;
     background: var(--chip);
     display: flex;
@@ -754,27 +938,32 @@
     line-height: 1.45;
     color: var(--ink2);
   }
-  .aviso-carpeta span { flex: 1; }
+  .folder-banner span, .project-banner span { flex: 1; }
+  .project-banner { background: var(--accent-soft); color: var(--ink); border: 1px solid rgba(91, 77, 247, 0.25); }
+  .diag-summary { gap: 18px; }
+  .diag-stat { font-size: 12px; color: var(--ink2); }
+  .diag-stat b { color: var(--ink); font-weight: 700; }
+  .diag-hint { margin-left: auto; font-size: 11.5px; color: var(--ink3); }
 
-  .soltar { position: absolute; inset: 0; z-index: 9; padding: 14px; background: var(--win); animation: tf-fade 0.15s ease-out; }
-  .marco { height: 100%; border: 1.5px dashed var(--line2); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
-  .marco img { display: block; }
-  .st { font-size: 17px; font-weight: 700; }
-  .sx { font-size: 13.5px; color: var(--ink2); }
+  .drop-veil { position: absolute; inset: 0; z-index: 9; padding: 14px; background: var(--win); animation: cf-fade 0.15s ease-out; }
+  .frame { height: 100%; border: 1.5px dashed var(--accent); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; background: var(--accent-soft); }
+  .frame img { display: block; }
+  .dt { font-size: 17px; font-weight: 700; }
+  .dx { font-size: 13.5px; color: var(--ink2); }
 
-  .fantasma {
+  .ghost-pill {
     position: fixed;
     z-index: 50;
     pointer-events: none;
     padding: 6px 10px;
     border-radius: 999px;
-    background: var(--ink);
-    color: var(--win);
+    background: var(--accent);
+    color: #fff;
     font: 600 12px var(--sans);
     white-space: nowrap;
   }
 
   .splash { position: absolute; inset: 0; z-index: 40; background: var(--win); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
-  .splash img { display: block; animation: tf-key 0.55s cubic-bezier(0.3, 1.2, 0.5, 1) both; filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.25)); }
-  .splash .marca { font-size: 34px; animation: tf-fade 0.3s ease-out 0.45s both; }
+  .splash img { display: block; animation: cf-key 0.55s cubic-bezier(0.3, 1.2, 0.5, 1) both; filter: drop-shadow(0 18px 30px rgba(91, 77, 247, 0.25)); }
+  .splash .brand { font-size: 28px; animation: cf-fade 0.3s ease-out 0.35s both; }
 </style>

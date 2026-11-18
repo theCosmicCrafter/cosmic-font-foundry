@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: TheCosmicCrafter.CosmicFontFoundry
+PackageVersion: {VERSION}
+PackageLocale: en-US
+Publisher: theCosmicCrafter
+PublisherUrl: https://github.com/theCosmicCrafter
+PublisherSupportUrl: https://github.com/theCosmicCrafter/tuna-fonts/issues
+PackageName: Cosmic Font Foundry
+PackageUrl: https://github.com/theCosmicCrafter/tuna-fonts
+License: MIT
+LicenseUrl: https://github.com/theCosmicCrafter/tuna-fonts/blob/main/LICENSE
+ShortDescription: Open-source, local-first font studio for Windows. Fast, private, zero cloud lock-in.
+Description: |-
+  Inspect, organize, and activate Windows fonts with variable axes sliders, live OpenType feature toggles,
+  Google Fonts Discover specimen previews, side-by-side & heading/body pairing comparison,
+  global Quick-Switcher overlay, duplicate/conflict diagnostics, BYO-Sync manifests, and client ZIP handoff bundles.
+Moniker: cosmic-font-foundry
+Tags:
+  - fonts
+  - font-manager
+  - typography
+  - variable-fonts
+  - google-fonts
+ReleaseNotesUrl: https://github.com/theCosmicCrafter/tuna-fonts/releases/tag/v{VERSION}
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

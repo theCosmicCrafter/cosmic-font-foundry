@@ -1,17 +1,18 @@
 # Third-party notices
 
-tuna-fonts is MIT licensed (see `LICENSE`). It ships with:
+**Cosmic Font Foundry** is MIT licensed (see `LICENSE`) and originally forked from [`atunfrito/tuna-fonts`](https://github.com/atunfrito/tuna-fonts) (MIT).
+
+It ships with:
 
 | What | License | Where |
 | --- | --- | --- |
 | Archivo (interface font) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
-| JetBrains Mono (paths and versions) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
-| Gochi Hand (the app name) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
-| Poppins (the Ko-fi button) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
-| Ko-fi cup symbol (`src/assets/kofi.svg`), from Ko-fi's brand assets; Ko-fi is a trademark of Ko-fi Labs | Ko-fi brand guidelines | https://ko-fi.com |
+| JetBrains Mono (paths, versions, code tags) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
+| Gochi Hand (script sample & fixture) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
+| Poppins (support badge typography) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
 | Lucide icons | ISC | https://lucide.dev/license |
-| Tauri, Svelte and the Rust crates listed in `src-tauri/Cargo.lock` | MIT / Apache-2.0 | their repositories |
+| Tauri, Svelte, and the Rust crates listed in `src-tauri/Cargo.lock` | MIT / Apache-2.0 | their repositories |
 
-`src-tauri/tests/fixtures/GochiHand-Regular.ttf` is only used by the tests; its license is next to it (`OFL.txt`).
+`src-tauri/tests/fixtures/GochiHand-Regular.ttf` is only used by automated tests; its license is next to it (`OFL.txt`).
 
-Fonts you install from Google Fonts keep their own licenses (mostly OFL or Apache 2.0).
+Fonts installed from Google Fonts retain their individual licenses (typically SIL OFL 1.1 or Apache 2.0).

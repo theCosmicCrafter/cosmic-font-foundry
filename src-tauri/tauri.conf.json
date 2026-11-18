@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tuna-fonts",
-  "version": "0.2.3",
-  "identifier": "es.atunfrito.tunafonts",
+  "productName": "Cosmic Font Foundry",
+  "version": "0.3.0",
+  "identifier": "com.thecosmiccrafter.cosmicfontfoundry",
   "build": {
     "beforeDevCommand": "npm run vite",
     "devUrl": "http://localhost:1420",
@@ -24,11 +24,11 @@
     "targets": [
       "nsis"
     ],
-    "publisher": "AtunFrito",
-    "homepage": "https://atunfrito.es",
-    "copyright": "AtunFrito",
+    "publisher": "Cosmic Font Foundry",
+    "homepage": "https://github.com/theCosmicCrafter/tuna-fonts",
+    "copyright": "Copyright (c) 2026 Cosmic Font Foundry",
     "category": "Utility",
-    "shortDescription": "Gestor de fuentes para Windows",
+    "shortDescription": "Local-first font manager for Windows",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,8 +42,8 @@
       "nsis": {
         "installMode": "currentUser",
         "languages": [
-          "Spanish",
-          "English"
+          "English",
+          "Spanish"
         ],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
@@ -59,9 +59,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNDQjg0NDNCQjM0RjU1QjYKUldTMlZVK3pPMFM0UExzV0M5bXAwR3FneVlTUEIwN3U4WGo3N243VWlNa24xQkp5TWZZaXFEQ3cK",
+      "pubkey": "REPLACE_WITH_YOUR_TAURI_SIGNING_PUBLIC_KEY",
       "endpoints": [
-        "https://github.com/atunfrito/tuna-fonts/releases/latest/download/latest.json"
+        "https://github.com/theCosmicCrafter/tuna-fonts/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

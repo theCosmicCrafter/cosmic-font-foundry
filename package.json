@@ -1,11 +1,12 @@
 {
-  "name": "tuna-fonts",
+  "name": "cosmic-font-foundry",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build --no-bundle",
+    "installer": "tauri build --bundles nsis",
     "instalador": "tauri build --bundles nsis",
     "vite": "vite",
     "vite:build": "vite build",

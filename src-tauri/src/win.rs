@@ -1,30 +1,39 @@
-//! Llamadas a Windows: cargar y descargar fuentes en la sesión, avisar a los
-//! programas de que han cambiado, mover archivos al reiniciar y relanzarse con
-//! permisos de administrador (UAC).
+//! Windows OS integration: GDI session font loading/unloading, WM_FONTCHANGE broadcast,
+//! MoveFileExW reboot scheduling, UAC self-elevation, TrustedInstaller ownership checks,
+//! and native Win32 RegisterHotKey global shortcut listener.
 
-use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::Path};
+use std::{
+    ffi::OsStr,
+    os::windows::ffi::OsStrExt,
+    path::Path,
+    sync::atomic::{AtomicU32, Ordering},
+};
 use windows_sys::Win32::{
     Foundation::{CloseHandle, WAIT_OBJECT_0},
     Graphics::Gdi::{AddFontResourceExW, RemoveFontResourceExW, FR_PRIVATE},
     Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT},
-    System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE},
+    System::Threading::{GetCurrentThreadId, GetExitCodeProcess, WaitForSingleObject, INFINITE},
     UI::{
+        Input::KeyboardAndMouse::{
+            RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+        },
         Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW},
-        WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, SW_HIDE, WM_FONTCHANGE},
+        WindowsAndMessaging::{
+            GetMessageW, PostThreadMessageW, SendMessageTimeoutW, HWND_BROADCAST, MSG,
+            SMTO_ABORTIFHUNG, SW_HIDE, WM_FONTCHANGE, WM_HOTKEY, WM_QUIT,
+        },
     },
 };
 
-/// Ruta de una carpeta conocida (FOLDERID_*), pedida a Windows en vez de
-/// montarla a mano con variables de entorno. None si Windows no la da.
-pub fn carpeta_conocida(id: &windows_sys::core::GUID) -> Option<std::path::PathBuf> {
+/// Resolves a Windows `FOLDERID_*` path via `SHGetKnownFolderPath`.
+pub fn known_folder(id: &windows_sys::core::GUID) -> Option<std::path::PathBuf> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::{System::Com::CoTaskMemFree, UI::Shell::SHGetKnownFolderPath};
     let mut ptr: windows_sys::core::PWSTR = std::ptr::null_mut();
-    // SAFETY: SHGetKnownFolderPath reserva la cadena; se copia y se libera
-    // siempre con CoTaskMemFree, también si falla (puede venir no nula).
+    // SAFETY: SHGetKnownFolderPath allocates the string; we copy it and always free with CoTaskMemFree.
     unsafe {
         let hr = SHGetKnownFolderPath(id, 0, std::ptr::null_mut(), &mut ptr);
-        let ruta = if hr == 0 && !ptr.is_null() {
+        let path = if hr == 0 && !ptr.is_null() {
             let mut n = 0;
             while *ptr.add(n) != 0 {
                 n += 1;
@@ -34,17 +43,16 @@ pub fn carpeta_conocida(id: &windows_sys::core::GUID) -> Option<std::path::PathB
             None
         };
         CoTaskMemFree(ptr as *const _);
-        ruta
+        path
     }
 }
 
-/// SID de NT SERVICE\TrustedInstaller, dueño de las fuentes que trae Windows
-/// (también las de «características a petición»).
-const SID_TRUSTEDINSTALLER: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+/// SID of `NT SERVICE\TrustedInstaller`, owner of inbox Windows system fonts.
+const SID_TRUSTED_INSTALLER: &str =
+    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
-/// ¿El archivo es de TrustedInstaller? None si no se puede leer su propietario.
-/// Se recuerda por sesión: la carpeta de fuentes del sistema tiene cientos.
-pub fn de_trustedinstaller(ruta: &Path) -> Option<bool> {
+/// Returns whether a font file is owned by `TrustedInstaller` (memoized per session).
+pub fn is_trusted_installer(path: &Path) -> Option<bool> {
     use std::{collections::HashMap, sync::Mutex};
     use windows_sys::Win32::{
         Foundation::{LocalFree, ERROR_SUCCESS},
@@ -53,122 +61,236 @@ pub fn de_trustedinstaller(ruta: &Path) -> Option<bool> {
             OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
         },
     };
-    static VISTOS: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
-    let clave = ruta.to_string_lossy().to_lowercase();
-    if let Some(&v) = VISTOS.lock().ok()?.get_or_insert_with(HashMap::new).get(&clave) {
+    static SEEN: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
+    let key = path.to_string_lossy().to_lowercase();
+    if let Some(&v) = SEEN
+        .lock()
+        .ok()?
+        .get_or_insert_with(HashMap::new)
+        .get(&key)
+    {
         return Some(v);
     }
-    let nombre = ancho(ruta);
-    let mut propietario = std::ptr::null_mut();
+    let wide_path = wide(path);
+    let mut owner = std::ptr::null_mut();
     let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-    // SAFETY: nombre acaba en 0; sd lo reserva Windows y se libera con LocalFree;
-    // propietario apunta dentro de sd y no se usa después de liberarlo.
-    let es = unsafe {
+    // SAFETY: wide_path is NUL-terminated; Windows allocates sd which is freed via LocalFree.
+    let result = unsafe {
         let r = GetNamedSecurityInfoW(
-            nombre.as_ptr(),
+            wide_path.as_ptr(),
             SE_FILE_OBJECT,
             OWNER_SECURITY_INFORMATION,
-            &mut propietario,
+            &mut owner,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             &mut sd,
         );
-        if r != ERROR_SUCCESS || propietario.is_null() {
+        if r != ERROR_SUCCESS || owner.is_null() {
             if !sd.is_null() {
                 LocalFree(sd as _);
             }
             return None;
         }
-        let mut texto: *mut u16 = std::ptr::null_mut();
-        let ok = ConvertSidToStringSidW(propietario, &mut texto) != 0 && !texto.is_null();
-        let es = ok && {
+        let mut text: *mut u16 = std::ptr::null_mut();
+        let ok = ConvertSidToStringSidW(owner, &mut text) != 0 && !text.is_null();
+        let is_ti = ok && {
             let mut n = 0;
-            while *texto.add(n) != 0 {
+            while *text.add(n) != 0 {
                 n += 1;
             }
-            String::from_utf16_lossy(std::slice::from_raw_parts(texto, n)) == SID_TRUSTEDINSTALLER
+            String::from_utf16_lossy(std::slice::from_raw_parts(text, n)) == SID_TRUSTED_INSTALLER
         };
-        if !texto.is_null() {
-            LocalFree(texto as _);
+        if !text.is_null() {
+            LocalFree(text as _);
         }
         LocalFree(sd as _);
-        es
+        is_ti
     };
-    if let Ok(mut m) = VISTOS.lock() {
-        m.get_or_insert_with(HashMap::new).insert(clave, es);
+    if let Ok(mut map) = SEEN.lock() {
+        map.get_or_insert_with(HashMap::new).insert(key, result);
     }
-    Some(es)
+    Some(result)
 }
 
-/// Abre una dirección web en el navegador predeterminado.
-pub fn abrir_url(url: &str) -> Result<(), String> {
+/// Opens a web URL in the default browser via `ShellExecuteW`.
+pub fn open_url(url: &str) -> Result<(), String> {
     use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
-    let (verbo, dir) = (ancho("open"), ancho(url));
-    // SAFETY: cadenas acabadas en 0 que viven durante la llamada; sin ventana padre.
-    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verbo.as_ptr(), dir.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
-    // ShellExecute devuelve un valor mayor que 32 si ha ido bien.
-    if r as isize > 32 { Ok(()) } else { Err(format!("no se ha podido abrir {url} ({})", r as isize)) }
+    let (verb, target) = (wide("open"), wide(url));
+    // SAFETY: NUL-terminated buffers live across the call; no parent window handle.
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if r as isize > 32 {
+        Ok(())
+    } else {
+        Err(format!("unable to open {url} ({})", r as isize))
+    }
 }
 
-pub fn ancho(s: impl AsRef<OsStr>) -> Vec<u16> {
+pub fn wide(s: impl AsRef<OsStr>) -> Vec<u16> {
     s.as_ref().encode_wide().chain(Some(0)).collect()
 }
 
-/// Carga la fuente en la sesión. `privada`: solo para este proceso.
-pub fn cargar(ruta: &Path, privada: bool) -> bool {
-    let w = ancho(ruta);
-    unsafe { AddFontResourceExW(w.as_ptr(), if privada { FR_PRIVATE } else { 0 }, std::ptr::null()) > 0 }
+/// Loads a font into the current Windows session (`private` restricts visibility to this process).
+pub fn load_font(path: &Path, private: bool) -> bool {
+    let w = wide(path);
+    unsafe { AddFontResourceExW(w.as_ptr(), if private { FR_PRIVATE } else { 0 }, std::ptr::null()) > 0 }
 }
 
-/// La descarga de la sesión. Windows cuenta las cargas: se repite hasta que no quede ninguna.
-pub fn descargar(ruta: &Path, privada: bool) {
-    let w = ancho(ruta);
+/// Unloads a font from the Windows session, draining Windows' internal load reference count.
+pub fn unload_font(path: &Path, private: bool) {
+    let w = wide(path);
     for _ in 0..16 {
-        if unsafe { RemoveFontResourceExW(w.as_ptr(), if privada { FR_PRIVATE } else { 0 }, std::ptr::null()) } == 0 {
+        if unsafe {
+            RemoveFontResourceExW(w.as_ptr(), if private { FR_PRIVATE } else { 0 }, std::ptr::null())
+        } == 0
+        {
             break;
         }
     }
 }
 
-/// WM_FONTCHANGE a todas las ventanas. Con tiempo límite: un programa colgado
-/// no deja colgada a tuna-fonts.
-pub fn avisar_cambio() {
+/// Broadcasts `WM_FONTCHANGE` to top-level windows with a 1s timeout per window so hung apps cannot stall the UI.
+pub fn broadcast_font_change() {
     unsafe {
-        SendMessageTimeoutW(HWND_BROADCAST, WM_FONTCHANGE, 0, 0, SMTO_ABORTIFHUNG, 1000, std::ptr::null_mut());
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_FONTCHANGE,
+            0,
+            0,
+            SMTO_ABORTIFHUNG,
+            1000,
+            std::ptr::null_mut(),
+        );
     }
 }
 
-/// Programa borrar (o mover) un archivo en el próximo arranque, para cuando Windows lo tiene en uso.
-pub fn al_reiniciar(origen: &Path, destino: Option<&Path>) -> bool {
-    let o = ancho(origen);
-    let d = destino.map(ancho);
-    unsafe { MoveFileExW(o.as_ptr(), d.as_ref().map_or(std::ptr::null(), |d| d.as_ptr()), MOVEFILE_DELAY_UNTIL_REBOOT) != 0 }
+/// Schedules a file delete/move on next reboot when Windows has a font locked in use.
+pub fn move_on_reboot(src: &Path, dst: Option<&Path>) -> bool {
+    let s = wide(src);
+    let d = dst.map(wide);
+    unsafe {
+        MoveFileExW(
+            s.as_ptr(),
+            d.as_ref().map_or(std::ptr::null(), |x| x.as_ptr()),
+            MOVEFILE_DELAY_UNTIL_REBOOT,
+        ) != 0
+    }
 }
 
-/// Lanza este mismo .exe con permisos de administrador y espera a que acabe.
-/// Devuelve su código de salida, o None si el usuario dijo que no al UAC.
-pub fn como_admin(args: &str) -> Option<u32> {
+/// Relaunches this executable elevated via UAC and waits for its exit code (`None` if cancelled).
+pub fn run_elevated(args: &str) -> Option<u32> {
     let exe = std::env::current_exe().ok()?;
-    let verbo = ancho("runas");
-    let archivo = ancho(&exe);
-    let parametros = ancho(args);
+    let verb = wide("runas");
+    let file = wide(&exe);
+    let params = wide(args);
     unsafe {
         let mut info: SHELLEXECUTEINFOW = std::mem::zeroed();
         info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
         info.fMask = SEE_MASK_NOCLOSEPROCESS;
-        info.lpVerb = verbo.as_ptr();
-        info.lpFile = archivo.as_ptr();
-        info.lpParameters = parametros.as_ptr();
+        info.lpVerb = verb.as_ptr();
+        info.lpFile = file.as_ptr();
+        info.lpParameters = params.as_ptr();
         info.nShow = SW_HIDE;
         if ShellExecuteExW(&mut info) == 0 || info.hProcess.is_null() {
             return None;
         }
-        let mut codigo = 1u32;
+        let mut code = 1u32;
         if WaitForSingleObject(info.hProcess, INFINITE) == WAIT_OBJECT_0 {
-            GetExitCodeProcess(info.hProcess, &mut codigo);
+            GetExitCodeProcess(info.hProcess, &mut code);
         }
         CloseHandle(info.hProcess);
-        Some(codigo)
+        Some(code)
     }
+}
+
+// ---- Native Win32 Global Hotkey Listener (Quick-Switcher) ----
+
+static HOTKEY_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+
+pub fn parse_shortcut(spec: &str) -> Option<(u32, u32)> {
+    let mut mods = 0u32;
+    let mut vk = None;
+    for raw in spec.split('+') {
+        let part = raw.trim().to_ascii_uppercase();
+        match part.as_str() {
+            "" => {}
+            "CTRL" | "CONTROL" => mods |= MOD_CONTROL,
+            "SHIFT" => mods |= MOD_SHIFT,
+            "ALT" => mods |= MOD_ALT,
+            "SPACE" => vk = Some(0x20),
+            s if s.len() == 1 => {
+                let b = s.as_bytes()[0];
+                if b.is_ascii_alphanumeric() {
+                    vk = Some(b as u32);
+                }
+            }
+            s if s.starts_with('F') => {
+                if let Ok(n) = s[1..].parse::<u32>() {
+                    if (1..=12).contains(&n) {
+                        vk = Some(0x70 + (n - 1));
+                    }
+                }
+            }
+            _ => return None,
+        }
+    }
+    let key = vk?;
+    if mods == 0 {
+        return None;
+    }
+    Some((mods, key))
+}
+
+pub fn stop_hotkey_listener() {
+    let prev = HOTKEY_THREAD_ID.swap(0, Ordering::SeqCst);
+    if prev != 0 {
+        unsafe {
+            PostThreadMessageW(prev, WM_QUIT, 0, 0);
+        }
+    }
+}
+
+pub fn start_hotkey_listener(app: tauri::AppHandle, shortcut: &str) -> Result<(), String> {
+    stop_hotkey_listener();
+    if shortcut.trim().is_empty() || shortcut.eq_ignore_ascii_case("off") {
+        return Ok(());
+    }
+    let Some((mods, vk)) = parse_shortcut(shortcut) else {
+        return Err(format!("unsupported global shortcut: {shortcut}"));
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+    std::thread::spawn(move || {
+        // SAFETY: Registers a thread-scoped global hotkey (hwnd = null) and pumps Win32 messages until WM_QUIT.
+        unsafe {
+            let tid = GetCurrentThreadId();
+            if RegisterHotKey(std::ptr::null_mut(), 1, mods | MOD_NOREPEAT, vk) == 0 {
+                let _ = tx.send(Err("hotkey is already in use by another application".into()));
+                return;
+            }
+            HOTKEY_THREAD_ID.store(tid, Ordering::SeqCst);
+            let _ = tx.send(Ok(()));
+
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                if msg.message == WM_HOTKEY && msg.wParam == 1 {
+                    crate::tray::toggle_quick_switcher(&app);
+                }
+            }
+            UnregisterHotKey(std::ptr::null_mut(), 1);
+            let _ = HOTKEY_THREAD_ID.compare_exchange(tid, 0, Ordering::SeqCst, Ordering::SeqCst);
+        }
+    });
+
+    rx.recv()
+        .unwrap_or_else(|_| Err("hotkey thread exited unexpectedly".into()))
 }

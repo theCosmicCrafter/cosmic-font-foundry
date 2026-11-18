@@ -1,16 +1,18 @@
-# Dependencias y compilados
+# Dependencies and build outputs
 node_modules/
 dist/
+target/
 src-tauri/target/
+src-tauri/core/target/
 src-tauri/gen/
 
-# Secretos y entorno local
+# Secrets and local environment
 .env
 .env.*
 *.pem
 *.pfx
 
-# Sistema y editores
+# OS and editors
 Thumbs.db
 desktop.ini
 .DS_Store

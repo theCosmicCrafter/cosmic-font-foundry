@@ -1,34 +1,19 @@
 # winget
 
-Manifests for [winget-pkgs](https://github.com/microsoft/winget-pkgs), package `AtunFrito.TunaFonts`.
+Manifests for [winget-pkgs](https://github.com/microsoft/winget-pkgs), package `TheCosmicCrafter.CosmicFontFoundry`.
 
-## First version (by hand, once)
+## First version (manual, once)
 
 After the release is **published** on GitHub:
 
 ```powershell
-./winget/preparar.ps1 0.2.0
-winget validate --manifest winget/manifests/a/AtunFrito/TunaFonts/0.2.0
-winget install --manifest winget/manifests/a/AtunFrito/TunaFonts/0.2.0   # optional: try it
+./winget/prepare.ps1 0.3.0
+winget validate --manifest winget/manifests/t/TheCosmicCrafter/CosmicFontFoundry/0.3.0
+winget install --manifest winget/manifests/t/TheCosmicCrafter/CosmicFontFoundry/0.3.0
 ```
 
-Then submit it, either with [wingetcreate](https://github.com/microsoft/winget-create):
+Submit via [wingetcreate](https://github.com/microsoft/winget-create) (`wingetcreate submit ...`) or a PR to `microsoft/winget-pkgs`. `winget/manifests/` is generated locally and gitignored.
 
-```powershell
-wingetcreate submit winget/manifests/a/AtunFrito/TunaFonts/0.2.0
-```
+## Future versions (automatic)
 
-or by opening a pull request to `microsoft/winget-pkgs` that adds that folder at `manifests/a/AtunFrito/TunaFonts/0.2.0/`. A Microsoft moderator reviews it; it usually takes a few days.
-
-`winget/manifests/` is generated and not committed.
-
-## Next versions (automatic)
-
-Once the package exists in winget, `.github/workflows/winget.yml` sends each new version when its release is published, using [komac](https://github.com/russellbanks/Komac) (fixed version, checked by SHA-256).
-
-It needs:
-
-1. A fork of `microsoft/winget-pkgs` in the same GitHub account.
-2. A classic token with the `public_repo` scope, saved as the repository secret `WINGET_TOKEN`.
-
-Without the secret the workflow does nothing.
+Once present in `winget-pkgs`, `.github/workflows/winget.yml` submits new releases via `komac` if the `WINGET_TOKEN` secret (`public_repo` scope) is configured.

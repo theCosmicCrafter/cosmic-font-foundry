@@ -1,31 +1,52 @@
-/* tuna-mono (ver docs/design.md). Los colores no se inventan: solo estos. */
+/* Cosmic Font Foundry design tokens: crisp daylight light + deep slate obsidian dark + Cosmic Indigo / Electric Violet */
 :root {
-  --win: #f7f6f3; --side: #efede9; --field: #ffffff;
-  --ink: #1b1a19; --ink2: rgba(27, 26, 25, 0.62); --ink3: rgba(27, 26, 25, 0.42);
-  --line: rgba(27, 26, 25, 0.08); --line2: rgba(27, 26, 25, 0.18);
-  --hov: rgba(27, 26, 25, 0.035); --chip: rgba(27, 26, 25, 0.06);
-  --sel: rgba(200, 16, 46, 0.055); --off: rgba(27, 26, 25, 0.22);
-  --red: #c8102e;
-  --ok: #2f7a4c; --warn: #b7791f;
-  --velo: rgba(15, 14, 13, 0.32);
+  --win: #f6f7fb;
+  --side: #edeff7;
+  --field: #ffffff;
+  --ink: #141625;
+  --ink2: rgba(20, 22, 37, 0.66);
+  --ink3: rgba(20, 22, 37, 0.44);
+  --line: rgba(20, 22, 37, 0.09);
+  --line2: rgba(20, 22, 37, 0.18);
+  --hov: rgba(91, 77, 247, 0.05);
+  --chip: rgba(20, 22, 37, 0.06);
+  --sel: rgba(91, 77, 247, 0.09);
+  --off: rgba(20, 22, 37, 0.24);
+  --accent: #5b4df7;
+  --accent-soft: rgba(91, 77, 247, 0.12);
+  --ok: #1f8a5b;
+  --warn: #c47d17;
+  --danger: #d63851;
+  --velo: rgba(12, 14, 24, 0.36);
 
-  --pastilla: 0 1px 2px rgba(0, 0, 0, 0.14);
-  --flotante: 0 12px 30px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--line2);
-  --desliza: left 0.26s cubic-bezier(0.3, 1.25, 0.5, 1);
+  --pill-shadow: 0 1px 2px rgba(14, 16, 30, 0.12);
+  --float-shadow: 0 14px 36px rgba(14, 16, 30, 0.18), 0 0 0 1px var(--line2);
+  --slide: left 0.26s cubic-bezier(0.3, 1.25, 0.5, 1);
 
   --sans: Archivo, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", Consolas, monospace;
-  --mano: "Gochi Hand", cursive;
   color-scheme: light;
 }
+
 :root[data-theme="dark"] {
-  --win: #191816; --side: #1f1e1b; --field: #232220;
-  --ink: #eeece8; --ink2: rgba(238, 236, 232, 0.62); --ink3: rgba(238, 236, 232, 0.4);
-  --line: rgba(238, 236, 232, 0.07); --line2: rgba(238, 236, 232, 0.16);
-  --hov: rgba(238, 236, 232, 0.04); --chip: rgba(238, 236, 232, 0.08);
-  --sel: rgba(229, 56, 74, 0.08); --off: rgba(238, 236, 232, 0.2);
-  --red: #e5384a;
-  --pastilla: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --win: #0f111a;
+  --side: #151824;
+  --field: #1b1f2e;
+  --ink: #eceef8;
+  --ink2: rgba(236, 238, 248, 0.66);
+  --ink3: rgba(236, 238, 248, 0.42);
+  --line: rgba(236, 238, 248, 0.08);
+  --line2: rgba(236, 238, 248, 0.17);
+  --hov: rgba(139, 123, 255, 0.07);
+  --chip: rgba(236, 238, 248, 0.08);
+  --sel: rgba(139, 123, 255, 0.13);
+  --off: rgba(236, 238, 248, 0.22);
+  --accent: #8b7bff;
+  --accent-soft: rgba(139, 123, 255, 0.16);
+  --ok: #32b67a;
+  --warn: #e3a23a;
+  --danger: #f05a71;
+  --pill-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   color-scheme: dark;
 }
 
@@ -38,41 +59,48 @@ body {
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
-  transition: background-color 0.3s, color 0.3s;
+  transition: background-color 0.25s, color 0.25s;
 }
 input, textarea { user-select: text; }
-button, input, textarea { font: inherit; color: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
-a { color: var(--red); }
-input::placeholder { color: var(--ink3); }
-::selection { background: var(--red); color: #fff; }
+a { color: var(--accent); }
+input::placeholder, textarea::placeholder { color: var(--ink3); }
+::selection { background: var(--accent); color: #fff; }
 
-/* Sin aro ni subrayado al pulsar con el ratón: solo con teclado. */
-button:focus, a:focus, input:focus { outline: none; }
-button:focus-visible, a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+button:focus, a:focus, input:focus, textarea:focus { outline: none; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 * { scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
-
 svg.lucide { display: block; flex: none; }
 
-.etiqueta {
-  font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em;
-  text-transform: uppercase; color: var(--ink3);
+.label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink3);
 }
-.marca { font-family: var(--mano); line-height: 1; letter-spacing: 0.01em; }
-.marca i { font-style: normal; color: var(--red); }
+.brand { font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+.brand i { font-style: normal; color: var(--accent); }
 .num { font-variant-numeric: tabular-nums; }
 
-@keyframes tf-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes tf-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes tf-key { 0% { opacity: 0; transform: scale(0.86) translateY(10px); } 60% { opacity: 1; transform: scale(1.02); } 100% { transform: none; } }
+@keyframes cf-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cf-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes cf-key {
+  0% { opacity: 0; transform: scale(0.86) translateY(10px); }
+  60% { opacity: 1; transform: scale(1.02); }
+  100% { transform: none; }
+}
 
-/* Ayudas al pasar el ratón (src/lib/ayudas.js): pastilla de tinta, pequeña y tranquila. */
-.ayuda {
+.tooltip {
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 100;
+  z-index: 120;
   max-width: 260px;
   padding: 5px 9px;
   border-radius: 7px;
@@ -82,18 +110,17 @@ svg.lucide { display: block; flex: none; }
   letter-spacing: 0.005em;
   white-space: normal;
   pointer-events: none;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
   opacity: 0;
   translate: 0 -3px;
-  transition: opacity 0.15s ease-out, translate 0.15s ease-out;
+  transition: opacity 0.14s ease-out, translate 0.14s ease-out;
 }
-.ayuda.arriba { translate: 0 3px; }
-.ayuda.vista { opacity: 1; translate: 0 0; }
+.tooltip.above { translate: 0 3px; }
+.tooltip.visible { opacity: 1; translate: 0 0; }
 
-/* Cambio de tema de golpe (ver ajustes.svelte.js); el interruptor sí se desliza. */
-.cambiando-tema *:not(.pastilla),
-.cambiando-tema *::before,
-.cambiando-tema *::after { transition: none !important; }
+.theme-switching *:not(.pill),
+.theme-switching *::before,
+.theme-switching *::after { transition: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

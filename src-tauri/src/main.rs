@@ -1,9 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // La copia con permisos de administrador (fuentes del sistema) no abre ventana.
-    if let Some(codigo) = tunafonts_lib::modo_elevado() {
-        std::process::exit(codigo);
+    // Elevated worker mode (for system font operations) executes without opening a GUI window.
+    if let Some(code) = cosmic_fonts_lib::elevated_mode() {
+        std::process::exit(code);
     }
-    tunafonts_lib::run()
+    cosmic_fonts_lib::run()
 }
