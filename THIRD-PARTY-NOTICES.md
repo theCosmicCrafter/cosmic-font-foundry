@@ -6,10 +6,10 @@ It ships with:
 
 | What | License | Where |
 | --- | --- | --- |
-| Archivo (interface font) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
-| JetBrains Mono (paths, versions, code tags) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
-| Gochi Hand (script sample & fixture) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
-| Poppins (support badge typography) | SIL Open Font License 1.1 | `licenses/OFL-1.1.txt` |
+| Archivo (interface font) | SIL Open Font License 1.1 | `LICENSES/OFL-1.1.txt` |
+| JetBrains Mono (paths, versions, code tags) | SIL Open Font License 1.1 | `LICENSES/OFL-1.1.txt` |
+| Gochi Hand (script sample & fixture) | SIL Open Font License 1.1 | `LICENSES/OFL-1.1.txt` |
+| Poppins (support badge typography) | SIL Open Font License 1.1 | `LICENSES/OFL-1.1.txt` |
 | Lucide icons | ISC | https://lucide.dev/license |
 | Tauri, Svelte, and the Rust crates listed in `src-tauri/Cargo.lock` | MIT / Apache-2.0 | their repositories |
 
