@@ -1,7 +1,7 @@
 <script>
-  import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check } from "@lucide/svelte";
+  import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check, Sun, Moon } from "@lucide/svelte";
   import HeartIcon from "../components/HeartIcon.svelte";
-  import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont } from "../lib/fonts.svelte.js";
+  import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont, installFamilyToWindows } from "../lib/fonts.svelte.js";
   import { tagsForFamily, addTagToFamily, removeTagFromFamily } from "../lib/library.svelte.js";
   import { loadGoogleFullSpecimen, discover, installGoogleFont } from "../lib/discover.svelte.js";
   import { notify } from "../lib/toasts.svelte.js";
@@ -28,6 +28,18 @@
   let specStrike = $state(false);
   let specUpper = $state(false);
   let specSmallCaps = $state(false);
+  let surface = $state("auto");
+  let installingWin = $state(false);
+
+  async function installToWindows() {
+    if (!f || installingWin) return;
+    installingWin = true;
+    try {
+      await installFamilyToWindows(f.name, false);
+    } finally {
+      installingWin = false;
+    }
+  }
 
   $effect(() => {
     specBold = Boolean(fmt?.bold);
@@ -232,6 +244,11 @@
     {:else if locked}
       <span class="chip fixed">{t("alwaysOn")}</span>
     {:else}
+      {#if f?.origin === "dir"}
+        <button type="button" class="chip" disabled={installingWin} onclick={installToWindows}>
+          <Download size={13} strokeWidth={2} />{t("spec.installWin")}
+        </button>
+      {/if}
       <button type="button" class="chip" class:primary={!f.active} onclick={ontoggle}>{f.active ? t("deactivate") : t("activate")}</button>
     {/if}
   </div>
@@ -246,6 +263,14 @@
       <button type="button" class="fmt-btn strike" class:on={specStrike} onclick={() => (specStrike = !specStrike)}>{t("fmt.strike")}</button>
       <button type="button" class="fmt-btn" class:on={specUpper} onclick={() => (specUpper = !specUpper)}>{t("fmt.upper")}</button>
       <button type="button" class="fmt-btn" class:on={specSmallCaps} onclick={() => (specSmallCaps = !specSmallCaps)}>{t("fmt.smallCaps")}</button>
+    </div>
+    <div class="surface-pills">
+      <button type="button" class="fmt-btn" class:on={surface === "light"} onclick={() => (surface = surface === "light" ? "auto" : "light")} title={t("spec.surfaceLight")}>
+        <Sun size={11} />
+      </button>
+      <button type="button" class="fmt-btn" class:on={surface === "dark"} onclick={() => (surface = surface === "dark" ? "auto" : "dark")} title={t("spec.surfaceDark")}>
+        <Moon size={11} />
+      </button>
     </div>
   </div>
 
@@ -406,7 +431,7 @@
   </div>
 
   <!-- Waterfall -->
-  <div class="waterfall">
+  <div class="waterfall" class:surface-light={surface === "light"} class:surface-dark={surface === "dark"}>
     {#each [12, 18, 24, 36, 48, 72] as n (n)}
       <div class="step">
         <span class="n num">{n}</span>
@@ -425,6 +450,31 @@
       </div>
     {/each}
   </div>
+
+  <!-- Editorial Article Preview -->
+  <section class="editorial-preview" class:surface-light={surface === "light"} class:surface-dark={surface === "dark"}>
+    <span class="label">{t("spec.editorial")}</span>
+    <h3
+      class="ed-h1"
+      style:font-family={previewStyle.family}
+      style:font-variation-settings={variationCss}
+      style:font-feature-settings={featureCss}>{t("spec.edHeadline")}</h3>
+    <p
+      class="ed-h2"
+      style:font-family={previewStyle.family}
+      style:font-variation-settings={variationCss}
+      style:font-feature-settings={featureCss}>{t("spec.edSubhead")}</p>
+    <div
+      class="ed-cols"
+      style:font-family={previewStyle.family}
+      style:font-weight={specBold ? 700 : (axisValues.wght ?? previewStyle.weight)}
+      style:font-style={specItalic || previewStyle.italic ? "italic" : "normal"}
+      style:font-variation-settings={variationCss}
+      style:font-feature-settings={featureCss}>
+      <p>{t("spec.edCol1")}</p>
+      <p>{t("spec.edCol2")}</p>
+    </div>
+  </section>
 
   <!-- Character Sets -->
   <div class="sets">
@@ -599,6 +649,17 @@
   .fmt-btn.strike { text-decoration: line-through; }
   .fmt-btn:hover { border-color: var(--accent-2); color: var(--ink); }
   .fmt-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: var(--glow); }
+  .surface-pills { margin-left: auto; display: flex; gap: 4px; }
+  .surface-pills .fmt-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; padding: 0; }
+  .surface-light { background: #fbf8f3 !important; color: #1a1615 !important; border-radius: 12px; padding: 14px 18px; border: 1px solid rgba(26, 22, 21, 0.12); }
+  .surface-light .n, .surface-light .label { color: #6e625c !important; }
+  .surface-dark { background: #100e14 !important; color: #f4efe8 !important; border-radius: 12px; padding: 14px 18px; border: 1px solid rgba(255, 255, 255, 0.1); }
+  .surface-dark .n, .surface-dark .label { color: #a79c95 !important; }
+  .editorial-preview { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; border-radius: 12px; background: var(--side); border: 1px solid var(--line); }
+  .ed-h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; }
+  .ed-h2 { margin: 0; font-size: 16px; line-height: 1.4; opacity: 0.8; }
+  .ed-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; font-size: 14.5px; line-height: 1.65; }
+  .ed-cols p { margin: 0; }
 
   .matrix-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
   .matrix-card { padding: 10px 14px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; min-width: 0; }

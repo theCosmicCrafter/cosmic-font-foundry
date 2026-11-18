@@ -51,7 +51,7 @@ pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
         .unwrap()
 }
 
-fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+pub fn move_file(from: &Path, to: &Path) -> Result<(), String> {
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -80,6 +80,16 @@ fn is_otf(path: &Path) -> bool {
 }
 
 pub fn deactivate_user(env: &Environment, entry: &FontEntry) -> Result<(), String> {
+    let records = super::load_install_records(env);
+    if let Some(expected_sha) = records.get(&path_key(&entry.path)) {
+        let actual_sha = super::reader::sha256_file(&entry.path)?;
+        if &actual_sha != expected_sha {
+            return Err(format!(
+                "{}: file changed externally since installation; deactivation cancelled",
+                filename(&entry.path)
+            ));
+        }
+    }
     if env.touch_windows {
         win::unload_font(&entry.path, false);
     }
@@ -163,9 +173,44 @@ pub fn activate_user(
 }
 
 pub fn install_user(env: &Environment, src: &Path, faces: &[FontFace]) -> Result<PathBuf, String> {
-    let dest = unique_path(&env.user_fonts, &filename(src));
+    let src_sha = super::reader::sha256_file(src)?;
+    let fname = filename(src);
+    let dest = env.user_fonts.join(&fname);
     fs::create_dir_all(&env.user_fonts).map_err(|e| e.to_string())?;
-    fs::copy(src, &dest).map_err(|e| e.to_string())?;
+
+    let mut copied_new = false;
+    if dest.exists() {
+        let existing_sha = super::reader::sha256_file(&dest)?;
+        if existing_sha != src_sha {
+            return Err(format!(
+                "{fname}: a different font file already exists at {}; install cancelled to avoid overwriting",
+                dest.display()
+            ));
+        }
+    } else {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    format!(
+                        "{fname}: a font file was created concurrently at {}; install cancelled",
+                        dest.display()
+                    )
+                } else {
+                    e.to_string()
+                }
+            })?;
+        let mut inp = fs::File::open(src).map_err(|e| e.to_string())?;
+        if let Err(e) = std::io::copy(&mut inp, &mut out) {
+            drop(out);
+            let _ = fs::remove_file(&dest);
+            return Err(e.to_string());
+        }
+        copied_new = true;
+    }
+
     let value = registry::format_value_name(
         &faces
             .iter()
@@ -179,12 +224,18 @@ pub fn install_user(env: &Environment, src: &Path, faces: &[FontFace]) -> Result
         &value,
         &dest.to_string_lossy(),
     ) {
-        let _ = fs::remove_file(&dest);
+        if copied_new {
+            let _ = fs::remove_file(&dest);
+        }
         return Err(e);
     }
+    let key = path_key(&dest);
     let mut app_installed = load_app_installed(env);
-    app_installed.insert(path_key(&dest));
+    app_installed.insert(key.clone());
     save_app_installed(env, &app_installed)?;
+    let mut records = super::load_install_records(env);
+    records.insert(key, src_sha);
+    super::save_install_records(env, &records)?;
     if env.touch_windows {
         win::load_font(&dest, false);
     }

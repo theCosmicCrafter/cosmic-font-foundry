@@ -3,6 +3,7 @@ pub mod fonts;
 mod google;
 mod startup;
 mod tray;
+pub mod vault;
 pub mod win;
 
 use cosmic_core::{migrate, sync};
@@ -231,6 +232,133 @@ async fn install_fonts(
     Ok(resp)
 }
 
+#[derive(Serialize, Clone)]
+struct VaultImportResponse {
+    report: vault::VaultImportReport,
+    stats: vault::VaultStats,
+    folders: Vec<FolderInfo>,
+    families: Vec<FontFamily>,
+    diagnostics: InventoryDiagnostics,
+}
+
+fn ensure_vault_watched(app: &AppHandle, state: &AppState, vault_path: &Path) {
+    let mut changed = false;
+    {
+        let mut folders = state.folders.lock().unwrap();
+        if !folders
+            .iter()
+            .any(|x| fonts::path_key(x) == fonts::path_key(vault_path))
+        {
+            folders.push(vault_path.to_path_buf());
+            changed = true;
+        }
+    }
+    let _ = app.asset_protocol_scope().allow_directory(vault_path, true);
+    if changed {
+        save_folders(state);
+        watch_folders(app);
+    }
+}
+
+#[tauri::command]
+async fn vault_stats(app: AppHandle) -> Result<vault::VaultStats, String> {
+    bg(move || {
+        let state = app.state::<AppState>();
+        let vault_path = vault::load_vault_path(&state.env.data_dir);
+        Ok(vault::compute_vault_stats(&vault_path))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn choose_vault_folder(app: AppHandle) -> Result<Option<vault::VaultStats>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(err)?;
+    bg(move || {
+        let state = app.state::<AppState>();
+        fs::create_dir_all(&path).map_err(err)?;
+        vault::save_vault_path(&state.env.data_dir, &path)?;
+        ensure_vault_watched(&app, &state, &path);
+        let (families, _, _, _) = state.refresh();
+        let _ = app.emit("inventory-updated", &families);
+        Ok(Some(vault::compute_vault_stats(&path)))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_folder_to_vault(
+    app: AppHandle,
+    move_files: bool,
+) -> Result<Option<VaultImportResponse>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let source_dir = picked.into_path().map_err(err)?;
+    let resp = bg({
+        let app = app.clone();
+        move || {
+            let state = app.state::<AppState>();
+            let vault_path = vault::load_vault_path(&state.env.data_dir);
+            let report = vault::import_to_vault(&vault_path, &[source_dir], move_files)?;
+            ensure_vault_watched(&app, &state, &vault_path);
+            let (families, _, diagnostics, _) = state.refresh();
+            let stats = vault::compute_vault_stats(&vault_path);
+            let folders = folder_list(&state);
+            Ok(VaultImportResponse {
+                report,
+                stats,
+                folders,
+                families,
+                diagnostics,
+            })
+        }
+    })
+    .await?;
+    let _ = app.emit("inventory-updated", &resp.families);
+    Ok(Some(resp))
+}
+
+#[tauri::command]
+async fn install_family_to_windows(
+    app: AppHandle,
+    family: String,
+    install_for_all: bool,
+) -> Result<ToggleResponse, String> {
+    let resp = bg({
+        let app = app.clone();
+        move || {
+            let state = app.state::<AppState>();
+            let paths: Vec<PathBuf> = {
+                let cache = state.cache.lock().unwrap();
+                cache
+                    .families
+                    .iter()
+                    .find(|f| f.name.eq_ignore_ascii_case(&family))
+                    .map(|f| f.files.iter().map(PathBuf::from).collect())
+                    .unwrap_or_default()
+            };
+            if paths.is_empty() {
+                return Err(format!("{family}: no font files found"));
+            }
+            let outcome = install_files(&state, &paths, install_for_all);
+            let (families, _, diagnostics, _) = state.refresh();
+            Ok(ToggleResponse {
+                families,
+                outcome,
+                diagnostics,
+            })
+        }
+    })
+    .await?;
+    let _ = app.emit("inventory-updated", &resp.families);
+    Ok(resp)
+}
+
 fn install_files(
     state: &AppState,
     paths: &[PathBuf],
@@ -421,7 +549,7 @@ fn watch_folders(app: &AppHandle) {
     });
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct FolderInfo {
     path: String,
     name: String,
@@ -1184,6 +1312,10 @@ pub fn run() {
             refresh_fonts,
             toggle_fonts,
             install_fonts,
+            install_family_to_windows,
+            vault_stats,
+            choose_vault_folder,
+            import_folder_to_vault,
             restore_system_fonts,
             backed_up_count,
             font_characters,

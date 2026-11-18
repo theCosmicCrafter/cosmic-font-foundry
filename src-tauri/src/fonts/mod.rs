@@ -179,6 +179,17 @@ pub fn save_app_installed(env: &Environment, set: &HashSet<String>) -> Result<()
     write_json(&env.data_dir.join("app-installed.json"), set)
 }
 
+pub fn load_install_records(env: &Environment) -> std::collections::HashMap<String, String> {
+    read_json(&env.data_dir.join("install-records.json"))
+}
+
+pub fn save_install_records(
+    env: &Environment,
+    map: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    write_json(&env.data_dir.join("install-records.json"), map)
+}
+
 fn resolve_reg_path(data: &str, dir: &Path) -> PathBuf {
     let p = PathBuf::from(data);
     if p.is_absolute() {

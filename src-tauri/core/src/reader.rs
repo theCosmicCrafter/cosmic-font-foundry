@@ -401,3 +401,18 @@ pub fn characters(path: &Path, limit: usize) -> Result<Vec<u32>, String> {
     }
     Ok(set.into_iter().take(limit).collect())
 }
+
+/// Computes the lowercase hex SHA-256 digest of a file on disk.
+pub fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut f = File::open(path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}

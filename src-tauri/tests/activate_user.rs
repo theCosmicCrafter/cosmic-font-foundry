@@ -195,3 +195,72 @@ fn arial_is_owned_by_trusted_installer() {
         Some(true)
     );
 }
+
+#[test]
+fn vault_imports_dedup_and_reports_storage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src_dir = tmp.path().join("scattered");
+    let nested = src_dir.join("nested");
+    let vault_dir = tmp.path().join("Vault");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/GochiHand-Regular.ttf");
+    std::fs::copy(&fixture, src_dir.join("GochiHand-Regular.ttf")).unwrap();
+    std::fs::copy(&fixture, nested.join("GochiHand-copy.ttf")).unwrap();
+
+    let report = cosmic_fonts_lib::vault::import_to_vault(&vault_dir, &[src_dir], false).unwrap();
+    assert_eq!(report.imported, 1);
+    assert_eq!(report.skipped_duplicates, 1);
+    assert!(report.bytes_copied > 0);
+    assert!(report.errors.is_empty());
+
+    let stats = cosmic_fonts_lib::vault::compute_vault_stats(&vault_dir);
+    assert!(stats.exists);
+    assert_eq!(stats.total_files, 1);
+    assert_eq!(stats.total_families, 1);
+    assert_eq!(stats.total_bytes, report.bytes_copied);
+}
+
+#[test]
+fn install_user_guards_foreign_collisions_and_hash_mismatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = format!(
+        r"Software\cosmic-font-foundry-tests\{}-guard",
+        std::process::id()
+    );
+    let _cleanup = RegCleanup(base.clone());
+    let env = Environment {
+        system_fonts: tmp.path().join("system"),
+        user_fonts: tmp.path().join("user"),
+        system_key: format!(r"{base}\System"),
+        user_key: format!(r"{base}\Fonts"),
+        data_dir: tmp.path().join("data"),
+        touch_windows: false,
+        is_windows_owned: |_| true,
+        app_bundled_fonts: HashSet::new(),
+    };
+    let font = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/GochiHand-Regular.ttf");
+    let faces = reader::read_faces(&font).unwrap();
+
+    // Pre-existing different file with same name should block overwrite.
+    std::fs::create_dir_all(&env.user_fonts).unwrap();
+    let target = env.user_fonts.join("GochiHand-Regular.ttf");
+    std::fs::write(&target, b"different-foreign-font").unwrap();
+    let err = changes::install_user(&env, &font, &faces).unwrap_err();
+    assert!(err.contains("different font file already exists"));
+
+    // Clean install succeeds, then external modification blocks deactivate_user.
+    std::fs::remove_file(&target).unwrap();
+    let installed = changes::install_user(&env, &font, &faces).unwrap();
+    assert_eq!(installed, target);
+    std::fs::write(&installed, b"tampered").unwrap();
+
+    let entries = fonts::collect_entries(&env, &[]);
+    let entry = entries
+        .iter()
+        .find(|e| fonts::path_key(&e.path) == fonts::path_key(&installed))
+        .unwrap();
+    let deact_err = changes::deactivate_user(&env, entry).unwrap_err();
+    assert!(deact_err.contains("changed externally"));
+}

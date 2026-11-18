@@ -149,6 +149,20 @@ export async function installFontFiles(paths, installForAll) {
   }
 }
 
+export async function installFamilyToWindows(family, installForAll = false) {
+  fonts.busy = true;
+  try {
+    const res = await invokeCmd("install_family_to_windows", { family, installForAll });
+    setFonts(res.families, res.diagnostics);
+    return reportOutcome(res);
+  } catch (e) {
+    notify("err", t("err.install"), String(e));
+    return null;
+  } finally {
+    fonts.busy = false;
+  }
+}
+
 export async function restoreSystemFonts() {
   fonts.busy = true;
   try {

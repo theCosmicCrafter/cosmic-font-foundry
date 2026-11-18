@@ -1,11 +1,11 @@
 <script>
-  import { SlidersHorizontal, RefreshCw, Keyboard, Info, X, ArrowUpRight, FolderSync, Download, Upload, Sparkles, Bot } from "@lucide/svelte";
+  import { SlidersHorizontal, RefreshCw, Keyboard, Info, X, ArrowUpRight, FolderSync, Download, Upload, Sparkles, Bot, HardDrive, FolderOpen } from "@lucide/svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
   import AgentHub from "./AgentHub.svelte";
   import { settings, currentTheme, setTheme, setLanguage, version, DEFAULT_SHORTCUTS, inTauri } from "../lib/settings.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
   import { notify } from "../lib/toasts.svelte.js";
-  import { backedUpCount, restoreSystemFonts, fonts, invokeCmd, applyExternalList } from "../lib/fonts.svelte.js";
+  import { backedUpCount, restoreSystemFonts, fonts, invokeCmd, applyExternalList, revealInExplorer } from "../lib/fonts.svelte.js";
   import { snapshotLibrary, applyLibrarySnapshot } from "../lib/library.svelte.js";
   import { shortcutCombo } from "../lib/shortcuts.js";
   import { updater, checkForUpdates } from "../lib/updater.svelte.js";
@@ -88,8 +88,65 @@
   let tunaStatus = $state({ available: false });
   let migrating = $state(false);
 
+  let vaultStats = $state(null);
+  let vaultBusy = $state(false);
+
   if (inTauri) {
     invokeCmd("detect_tuna_migration").then((s) => (tunaStatus = s)).catch(() => {});
+    invokeCmd("vault_stats").then((s) => (vaultStats = s)).catch(() => {});
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    let v = bytes;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i += 1;
+    }
+    return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  }
+
+  async function changeVaultFolder() {
+    if (!inTauri || vaultBusy) return;
+    vaultBusy = true;
+    try {
+      const stats = await invokeCmd("choose_vault_folder");
+      if (stats) {
+        vaultStats = stats;
+        onMigrated?.();
+      }
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      vaultBusy = false;
+    }
+  }
+
+  async function importFolderToVault() {
+    if (!inTauri || vaultBusy) return;
+    vaultBusy = true;
+    try {
+      const res = await invokeCmd("import_folder_to_vault", { moveFiles: false });
+      if (!res) return;
+      vaultStats = res.stats;
+      applyExternalList(res.families, res.diagnostics);
+      onMigrated?.();
+      notify(
+        "ok",
+        t("vault.imported"),
+        t("vault.importedDesc", {
+          n: res.report.imported,
+          dup: res.report.skipped_duplicates,
+          size: formatBytes(res.report.bytes_copied),
+        }),
+      );
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      vaultBusy = false;
+    }
   }
 
   async function chooseSyncFolder() {
@@ -312,6 +369,40 @@
           <div class="card-block">
             <div class="card-top">
               <div>
+                <div class="lbl row-title"><HardDrive size={14} />{t("vault.title")}</div>
+                <p class="hint">{t("vault.hint")}</p>
+              </div>
+            </div>
+            <div class="sync-path num">{vaultStats?.path || "—"}</div>
+            {#if vaultStats}
+              <div class="vault-metrics num">
+                <span>{t("vault.files", { n: vaultStats.total_files })}</span>
+                <span>·</span>
+                <span>{t("vault.families", { n: vaultStats.total_families })}</span>
+                <span>·</span>
+                <span>{formatBytes(vaultStats.total_bytes)}</span>
+                {#if vaultStats.disk_free_bytes != null}
+                  <span>·</span>
+                  <span>{t("vault.free", { size: formatBytes(vaultStats.disk_free_bytes) })}</span>
+                {/if}
+              </div>
+            {/if}
+            <div class="btn-row">
+              <button type="button" class="btn accent" disabled={vaultBusy} onclick={importFolderToVault}>
+                <Download size={12} />{t("vault.importCopy")}
+              </button>
+              <button type="button" class="btn" disabled={vaultBusy} onclick={changeVaultFolder}>{t("vault.change")}</button>
+              {#if vaultStats?.exists}
+                <button type="button" class="btn ghost" onclick={() => revealInExplorer(vaultStats.path)}>
+                  <FolderOpen size={12} />{t("vault.open")}
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <div class="card-block">
+            <div class="card-top">
+              <div>
                 <div class="lbl">{t("sync.title")}</div>
                 <p class="hint">{t("sync.hint")}</p>
               </div>
@@ -485,6 +576,7 @@
   .card-block.highlight { border-color: var(--accent); background: var(--accent-soft); }
   .row-title { display: flex; align-items: center; gap: 6px; color: var(--accent); }
   .sync-path { padding: 7px 10px; border-radius: 7px; background: var(--side); font: 400 11.5px var(--mono); color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vault-metrics { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--ink2); }
   .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
   .warn-note { font-size: 11.5px; color: var(--warn); display: flex; flex-direction: column; gap: 2px; }
 
