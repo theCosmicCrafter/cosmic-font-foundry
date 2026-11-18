@@ -299,3 +299,32 @@ pub fn start_hotkey_listener(app: tauri::AppHandle, shortcut: &str) -> Result<()
     rx.recv()
         .unwrap_or_else(|_| Err("hotkey thread exited unexpectedly".into()))
 }
+
+/// Sends a file to the Windows Recycle Bin (`FO_DELETE` + `FOF_ALLOWUNDO`) instead of permanently deleting it.
+pub fn recycle_file(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::{
+        SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
+        SHFILEOPSTRUCTW,
+    };
+
+    if !path.exists() {
+        return Err("file does not exist".into());
+    }
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0u16, 0u16]).collect();
+    let mut op = SHFILEOPSTRUCTW {
+        hwnd: std::ptr::null_mut(),
+        wFunc: FO_DELETE,
+        pFrom: wide.as_ptr(),
+        pTo: std::ptr::null(),
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT) as u16,
+        fAnyOperationsAborted: 0,
+        hNameMappings: std::ptr::null_mut(),
+        lpszProgressTitle: std::ptr::null(),
+    };
+    let rc = unsafe { SHFileOperationW(&mut op) };
+    if rc != 0 || op.fAnyOperationsAborted != 0 {
+        return Err(format!("Recycle Bin operation failed (code {rc})"));
+    }
+    Ok(())
+}

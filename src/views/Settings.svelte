@@ -1,5 +1,5 @@
 <script>
-  import { SlidersHorizontal, RefreshCw, Keyboard, Info, X, ArrowUpRight, FolderSync, Download, Upload, Sparkles, Bot, HardDrive, FolderOpen } from "@lucide/svelte";
+  import { SlidersHorizontal, RefreshCw, Keyboard, Info, X, ArrowUpRight, FolderSync, Download, Upload, Sparkles, Bot, HardDrive, FolderOpen, Trash2 } from "@lucide/svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
   import AgentHub from "./AgentHub.svelte";
   import { settings, currentTheme, setTheme, setLanguage, version, DEFAULT_SHORTCUTS, inTauri } from "../lib/settings.svelte.js";
@@ -90,6 +90,8 @@
 
   let vaultStats = $state(null);
   let vaultBusy = $state(false);
+  let cleanupScan = $state(null);
+  let cleanupSelected = $state(new Set());
 
   if (inTauri) {
     invokeCmd("detect_tuna_migration").then((s) => (tunaStatus = s)).catch(() => {});
@@ -124,11 +126,14 @@
     }
   }
 
-  async function importFolderToVault() {
+  async function importFolderToVault(recycleOriginals = false) {
     if (!inTauri || vaultBusy) return;
     vaultBusy = true;
     try {
-      const res = await invokeCmd("import_folder_to_vault", { moveFiles: false });
+      const res = await invokeCmd("import_folder_to_vault", {
+        moveFiles: false,
+        recycleOriginals,
+      });
       if (!res) return;
       vaultStats = res.stats;
       applyExternalList(res.families, res.diagnostics);
@@ -140,8 +145,57 @@
           n: res.report.imported,
           dup: res.report.skipped_duplicates,
           size: formatBytes(res.report.bytes_copied),
+        }) + (res.report.recycled ? ` · ${res.report.recycled} recycled` : ""),
+      );
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      vaultBusy = false;
+    }
+  }
+
+  async function scanCleanup(customFolder = false) {
+    if (!inTauri || vaultBusy) return;
+    vaultBusy = true;
+    try {
+      const res = await invokeCmd("scan_vault_cleanup", { customFolder });
+      if (!res) return;
+      cleanupScan = res;
+      cleanupSelected = new Set(res.candidates.map((c) => c.source_path));
+      if (!res.candidates.length) {
+        notify("ok", t("vault.cleanupNone"), "");
+      }
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      vaultBusy = false;
+    }
+  }
+
+  function toggleCleanupPath(p) {
+    const next = new Set(cleanupSelected);
+    if (next.has(p)) next.delete(p);
+    else next.add(p);
+    cleanupSelected = next;
+  }
+
+  async function recycleCheckedDuplicates() {
+    if (!inTauri || vaultBusy || !cleanupSelected.size) return;
+    vaultBusy = true;
+    try {
+      const paths = [...cleanupSelected];
+      const report = await invokeCmd("recycle_vault_duplicates", { paths });
+      notify(
+        "ok",
+        t("vault.recycled"),
+        t("vault.recycledDesc", {
+          n: report.recycled,
+          size: formatBytes(report.reclaimed_bytes),
         }),
       );
+      cleanupScan = null;
+      cleanupSelected = new Set();
+      vaultStats = await invokeCmd("vault_stats").catch(() => vaultStats);
     } catch (e) {
       notify("err", t("err.one"), String(e));
     } finally {
@@ -388,8 +442,11 @@
               </div>
             {/if}
             <div class="btn-row">
-              <button type="button" class="btn accent" disabled={vaultBusy} onclick={importFolderToVault}>
+              <button type="button" class="btn accent" disabled={vaultBusy} onclick={() => importFolderToVault(false)}>
                 <Download size={12} />{t("vault.importCopy")}
+              </button>
+              <button type="button" class="btn" disabled={vaultBusy} onclick={() => importFolderToVault(true)}>
+                <Trash2 size={12} />{t("vault.importRecycle")}
               </button>
               <button type="button" class="btn" disabled={vaultBusy} onclick={changeVaultFolder}>{t("vault.change")}</button>
               {#if vaultStats?.exists}
@@ -398,6 +455,34 @@
                 </button>
               {/if}
             </div>
+            <div class="btn-row">
+              <button type="button" class="btn" disabled={vaultBusy} onclick={() => scanCleanup(false)}>
+                <Trash2 size={12} />{t("vault.cleanupDefault")}
+              </button>
+              <button type="button" class="btn ghost" disabled={vaultBusy} onclick={() => scanCleanup(true)}>
+                {t("vault.cleanupPick")}
+              </button>
+            </div>
+            {#if cleanupScan?.candidates?.length}
+              <div class="cleanup-box">
+                <div class="cleanup-head">
+                  <span>{t("vault.cleanupFound", { n: cleanupScan.candidates.length, size: formatBytes(cleanupScan.total_reclaimable_bytes) })}</span>
+                  <button type="button" class="btn accent" disabled={vaultBusy || !cleanupSelected.size} onclick={recycleCheckedDuplicates}>
+                    <Trash2 size={12} />{t("vault.recycleSelected", { n: cleanupSelected.size })}
+                  </button>
+                </div>
+                <div class="cleanup-list">
+                  {#each cleanupScan.candidates.slice(0, 60) as c (c.source_path)}
+                    <label class="cleanup-row">
+                      <input type="checkbox" checked={cleanupSelected.has(c.source_path)} onchange={() => toggleCleanupPath(c.source_path)} />
+                      <span class="cleanup-fam">{c.family}</span>
+                      <span class="cleanup-path num" title={c.source_path}>{c.source_path}</span>
+                      <span class="num">{formatBytes(c.size_bytes)}</span>
+                    </label>
+                  {/each}
+                </div>
+              </div>
+            {/if}
           </div>
 
           <div class="card-block">
@@ -577,6 +662,12 @@
   .row-title { display: flex; align-items: center; gap: 6px; color: var(--accent); }
   .sync-path { padding: 7px 10px; border-radius: 7px; background: var(--side); font: 400 11.5px var(--mono); color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vault-metrics { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--ink2); }
+  .cleanup-box { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 10px; background: var(--side); border: 1px solid var(--line); }
+  .cleanup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; color: var(--ink); }
+  .cleanup-list { max-height: 180px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+  .cleanup-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink2); }
+  .cleanup-fam { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .cleanup-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink3); }
   .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
   .warn-note { font-size: 11.5px; color: var(--warn); display: flex; flex-direction: column; gap: 2px; }
 

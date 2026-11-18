@@ -1,10 +1,10 @@
 //! Central Font Vault management: storage capacity stats, SHA-256 deduplicated import,
 //! and family-organized archival outside the Windows Fonts folder.
 
-use crate::fonts::{self, is_font_file, list_fonts, reader};
+use crate::fonts::{self, is_font_file, list_fonts, path_key, reader, Environment};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -29,7 +29,32 @@ pub struct VaultImportReport {
     pub vault_path: String,
     pub imported: usize,
     pub skipped_duplicates: usize,
+    pub recycled: usize,
     pub bytes_copied: u64,
+    pub errors: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct VaultDuplicateCandidate {
+    pub source_path: String,
+    pub vault_path: String,
+    pub family: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct VaultCleanupScan {
+    pub scanned_roots: Vec<String>,
+    pub candidates: Vec<VaultDuplicateCandidate>,
+    pub total_reclaimable_bytes: u64,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct RecycleReport {
+    pub recycled: usize,
+    pub reclaimed_bytes: u64,
+    pub skipped_protected: usize,
     pub errors: Vec<String>,
 }
 
@@ -181,6 +206,83 @@ pub fn import_to_vault(
     sources: &[PathBuf],
     move_files: bool,
 ) -> Result<VaultImportReport, String> {
+    import_to_vault_with_options(vault_dir, sources, move_files, false, None, &|_| {
+        Err("recycle not enabled".into())
+    })
+}
+
+/// Checks whether a path is inside an OS, Windows Fonts, application-critical, Vault, or active project folder.
+pub fn is_protected_path(path: &Path, vault_dir: &Path, env: Option<&Environment>) -> bool {
+    let k = path_key(path);
+    let vault_k = path_key(vault_dir);
+    if k == vault_k || k.starts_with(&format!("{vault_k}\\")) {
+        return true;
+    }
+
+    if let Some(e) = env {
+        for protected in [&e.system_fonts, &e.user_fonts, &e.data_dir] {
+            let pk = path_key(protected);
+            if !pk.is_empty() && (k == pk || k.starts_with(&format!("{pk}\\"))) {
+                return true;
+            }
+        }
+    }
+
+    for var in ["WINDIR", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"] {
+        if let Some(val) = std::env::var_os(var).filter(|s| !s.is_empty()) {
+            let pk = path_key(Path::new(&val));
+            if k == pk || k.starts_with(&format!("{pk}\\")) {
+                return true;
+            }
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").filter(|s| !s.is_empty()) {
+        for sub in [r"Microsoft\Windows\Fonts", "Programs"] {
+            let pk = path_key(&PathBuf::from(&local).join(sub));
+            if k == pk || k.starts_with(&format!("{pk}\\")) {
+                return true;
+            }
+        }
+    }
+
+    let mut cur = path.parent();
+    while let Some(dir) = cur {
+        if dir.join(".cosmicfonts.json").is_file() {
+            return true;
+        }
+        if dir
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("document fonts"))
+        {
+            return true;
+        }
+        cur = dir.parent();
+    }
+    false
+}
+
+pub fn default_cleanup_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = std::env::var_os("USERPROFILE").filter(|s| !s.is_empty()) {
+        let base = PathBuf::from(home);
+        for sub in ["Downloads", "Desktop", "Documents"] {
+            let p = base.join(sub);
+            if p.is_dir() {
+                roots.push(p);
+            }
+        }
+    }
+    roots
+}
+
+pub fn import_to_vault_with_options(
+    vault_dir: &Path,
+    sources: &[PathBuf],
+    move_files: bool,
+    recycle_originals: bool,
+    env: Option<&Environment>,
+    recycle_fn: &dyn Fn(&Path) -> Result<(), String>,
+) -> Result<VaultImportReport, String> {
     fs::create_dir_all(vault_dir).map_err(|e| e.to_string())?;
 
     let mut existing_hashes: HashSet<String> = HashSet::new();
@@ -218,6 +320,12 @@ pub fn import_to_vault(
         };
         if existing_hashes.contains(&sha) {
             report.skipped_duplicates += 1;
+            if recycle_originals && !is_protected_path(&src, vault_dir, env) {
+                match recycle_fn(&src) {
+                    Ok(()) => report.recycled += 1,
+                    Err(e) => report.errors.push(format!("{name}: {e}")),
+                }
+            }
             continue;
         }
         let faces = match reader::read_faces(&src) {
@@ -241,13 +349,137 @@ pub fn import_to_vault(
         };
         match transfer {
             Ok(()) => {
-                existing_hashes.insert(sha);
+                existing_hashes.insert(sha.clone());
                 report.imported += 1;
                 report.bytes_copied = report.bytes_copied.saturating_add(size);
+                if recycle_originals && !move_files && !is_protected_path(&src, vault_dir, env) {
+                    // Verify Vault copy hash matches before sending original to Recycle Bin.
+                    match reader::sha256_file(&dest) {
+                        Ok(dest_sha) if dest_sha == sha => match recycle_fn(&src) {
+                            Ok(()) => report.recycled += 1,
+                            Err(e) => report.errors.push(format!("{name}: {e}")),
+                        },
+                        Ok(_) => report.errors.push(format!(
+                            "{name}: Vault verification mismatch; original kept"
+                        )),
+                        Err(e) => report.errors.push(format!("{name}: {e}")),
+                    }
+                }
             }
             Err(e) => report.errors.push(format!("{name}: {e}")),
         }
     }
 
     Ok(report)
+}
+
+fn index_vault_hashes(vault_dir: &Path) -> HashMap<String, (PathBuf, String)> {
+    let mut map = HashMap::new();
+    if !vault_dir.is_dir() {
+        return map;
+    }
+    for file in list_fonts(vault_dir, true) {
+        let Ok(sha) = reader::sha256_file(&file) else {
+            continue;
+        };
+        let family = reader::read_faces(&file)
+            .ok()
+            .and_then(|f| f.into_iter().next())
+            .map(|f| f.family)
+            .unwrap_or_else(|| "Unknown".into());
+        map.entry(sha).or_insert((file, family));
+    }
+    map
+}
+
+pub fn scan_vault_duplicates(
+    vault_dir: &Path,
+    roots: &[PathBuf],
+    env: Option<&Environment>,
+) -> VaultCleanupScan {
+    let vault_map = index_vault_hashes(vault_dir);
+    let mut scan = VaultCleanupScan {
+        scanned_roots: roots
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+        ..Default::default()
+    };
+    if vault_map.is_empty() {
+        return scan;
+    }
+
+    let mut seen_paths = HashSet::new();
+    for root in roots {
+        if !root.is_dir() || is_protected_path(root, vault_dir, env) {
+            continue;
+        }
+        for file in list_fonts(root, true) {
+            if is_protected_path(&file, vault_dir, env) || !seen_paths.insert(path_key(&file)) {
+                continue;
+            }
+            let Ok(sha) = reader::sha256_file(&file) else {
+                continue;
+            };
+            if let Some((vault_path, family)) = vault_map.get(&sha) {
+                let size_bytes = fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+                scan.total_reclaimable_bytes =
+                    scan.total_reclaimable_bytes.saturating_add(size_bytes);
+                scan.candidates.push(VaultDuplicateCandidate {
+                    source_path: file.to_string_lossy().into_owned(),
+                    vault_path: vault_path.to_string_lossy().into_owned(),
+                    family: family.clone(),
+                    sha256: sha,
+                    size_bytes,
+                });
+            }
+        }
+    }
+    scan
+}
+
+pub fn recycle_vault_duplicates(
+    vault_dir: &Path,
+    paths: &[PathBuf],
+    env: Option<&Environment>,
+    recycle_fn: &dyn Fn(&Path) -> Result<(), String>,
+) -> RecycleReport {
+    let vault_map = index_vault_hashes(vault_dir);
+    let mut report = RecycleReport::default();
+
+    for p in paths {
+        if is_protected_path(p, vault_dir, env) {
+            report.skipped_protected += 1;
+            continue;
+        }
+        if !p.is_file() {
+            continue;
+        }
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "font".into());
+        let sha = match reader::sha256_file(p) {
+            Ok(s) => s,
+            Err(e) => {
+                report.errors.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        if !vault_map.contains_key(&sha) {
+            report
+                .errors
+                .push(format!("{name}: not verified in Vault; kept"));
+            continue;
+        }
+        let size = fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        match recycle_fn(p) {
+            Ok(()) => {
+                report.recycled += 1;
+                report.reclaimed_bytes = report.reclaimed_bytes.saturating_add(size);
+            }
+            Err(e) => report.errors.push(format!("{name}: {e}")),
+        }
+    }
+    report
 }

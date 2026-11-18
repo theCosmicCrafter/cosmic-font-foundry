@@ -293,6 +293,7 @@ async fn choose_vault_folder(app: AppHandle) -> Result<Option<vault::VaultStats>
 async fn import_folder_to_vault(
     app: AppHandle,
     move_files: bool,
+    recycle_originals: Option<bool>,
 ) -> Result<Option<VaultImportResponse>, String> {
     use tauri_plugin_dialog::DialogExt;
     let Some(picked) = app.dialog().file().blocking_pick_folder() else {
@@ -304,7 +305,14 @@ async fn import_folder_to_vault(
         move || {
             let state = app.state::<AppState>();
             let vault_path = vault::load_vault_path(&state.env.data_dir);
-            let report = vault::import_to_vault(&vault_path, &[source_dir], move_files)?;
+            let report = vault::import_to_vault_with_options(
+                &vault_path,
+                &[source_dir],
+                move_files,
+                recycle_originals.unwrap_or(false),
+                Some(&state.env),
+                &win::recycle_file,
+            )?;
             ensure_vault_watched(&app, &state, &vault_path);
             let (families, _, diagnostics, _) = state.refresh();
             let stats = vault::compute_vault_stats(&vault_path);
@@ -321,6 +329,54 @@ async fn import_folder_to_vault(
     .await?;
     let _ = app.emit("inventory-updated", &resp.families);
     Ok(Some(resp))
+}
+
+#[tauri::command]
+async fn scan_vault_cleanup(
+    app: AppHandle,
+    custom_folder: Option<bool>,
+) -> Result<Option<vault::VaultCleanupScan>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let roots = if custom_folder.unwrap_or(false) {
+        let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+            return Ok(None);
+        };
+        vec![picked.into_path().map_err(err)?]
+    } else {
+        vault::default_cleanup_roots()
+    };
+    bg(move || {
+        let state = app.state::<AppState>();
+        let vault_path = vault::load_vault_path(&state.env.data_dir);
+        Ok(Some(vault::scan_vault_duplicates(
+            &vault_path,
+            &roots,
+            Some(&state.env),
+        )))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn recycle_vault_duplicates(
+    app: AppHandle,
+    paths: Vec<String>,
+) -> Result<vault::RecycleReport, String> {
+    bg(move || {
+        let state = app.state::<AppState>();
+        let vault_path = vault::load_vault_path(&state.env.data_dir);
+        let path_bufs: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+        let report = vault::recycle_vault_duplicates(
+            &vault_path,
+            &path_bufs,
+            Some(&state.env),
+            &win::recycle_file,
+        );
+        let (families, _, _, _) = state.refresh();
+        let _ = app.emit("inventory-updated", &families);
+        Ok(report)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1371,6 +1427,8 @@ pub fn run() {
             vault_stats,
             choose_vault_folder,
             import_folder_to_vault,
+            scan_vault_cleanup,
+            recycle_vault_duplicates,
             restore_system_fonts,
             backed_up_count,
             font_characters,

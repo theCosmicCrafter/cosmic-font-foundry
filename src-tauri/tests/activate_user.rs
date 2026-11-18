@@ -264,3 +264,64 @@ fn install_user_guards_foreign_collisions_and_hash_mismatch() {
     let deact_err = changes::deactivate_user(&env, entry).unwrap_err();
     assert!(deact_err.contains("changed externally"));
 }
+
+#[test]
+fn vault_cleanup_protects_system_and_recycles_verified_duplicates() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let env = Environment {
+        system_fonts: tmp.path().join("system"),
+        user_fonts: tmp.path().join("user"),
+        system_key: r"Software\cosmic-font-foundry-tests\unused-sys".into(),
+        user_key: r"Software\cosmic-font-foundry-tests\unused-usr".into(),
+        data_dir: tmp.path().join("data"),
+        touch_windows: false,
+        is_windows_owned: |_| true,
+        app_bundled_fonts: HashSet::new(),
+    };
+    let vault_dir = tmp.path().join("Vault");
+    let downloads = tmp.path().join("Downloads");
+    let project_dir = downloads.join("ClientProject");
+    std::fs::create_dir_all(&env.user_fonts).unwrap();
+    std::fs::create_dir_all(&downloads).unwrap();
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join(".cosmicfonts.json"), "{}").unwrap();
+
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/GochiHand-Regular.ttf");
+    let loose_dup = downloads.join("GochiHand-Regular.ttf");
+    let project_font = project_dir.join("GochiHand-Regular.ttf");
+    let user_font = env.user_fonts.join("GochiHand-Regular.ttf");
+    std::fs::copy(&fixture, &loose_dup).unwrap();
+    std::fs::copy(&fixture, &project_font).unwrap();
+    std::fs::copy(&fixture, &user_font).unwrap();
+
+    // Import loose_dup into Vault (copy only first).
+    cosmic_fonts_lib::vault::import_to_vault(&vault_dir, std::slice::from_ref(&loose_dup), false)
+        .unwrap();
+
+    // Cleanup scan should find loose_dup, but skip project_font (.cosmicfonts.json) and user_font.
+    let scan = cosmic_fonts_lib::vault::scan_vault_duplicates(
+        &vault_dir,
+        &[downloads.clone(), env.user_fonts.clone()],
+        Some(&env),
+    );
+    assert_eq!(scan.candidates.len(), 1);
+    assert_eq!(Path::new(&scan.candidates[0].source_path), loose_dup);
+
+    // Recycling both loose_dup and user_font should recycle loose_dup and skip user_font as protected.
+    let recycled_paths = std::sync::Mutex::new(Vec::new());
+    let report = cosmic_fonts_lib::vault::recycle_vault_duplicates(
+        &vault_dir,
+        &[loose_dup.clone(), user_font.clone()],
+        Some(&env),
+        &|p| {
+            recycled_paths.lock().unwrap().push(p.to_path_buf());
+            std::fs::remove_file(p).map_err(|e| e.to_string())
+        },
+    );
+    assert_eq!(report.recycled, 1);
+    assert_eq!(report.skipped_protected, 1);
+    assert_eq!(*recycled_paths.lock().unwrap(), vec![loose_dup]);
+    assert!(user_font.is_file());
+    assert!(project_font.is_file());
+}
