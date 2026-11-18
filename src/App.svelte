@@ -3,7 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import {
     Search, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart,
-    WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles, Rss, Code2,
+    WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles, Rss, Code2, Check,
   } from "@lucide/svelte";
 
   import Sidebar from "./components/Sidebar.svelte";
@@ -49,7 +49,9 @@
   let q = $state("");
   let customSample = $state("");
   let filter = $state("all"); // all | active | inactive | variable
-  let sort = $state("popularity");
+  let installedOnly = $state(false);
+  let discoverInstallFilter = $state("all"); // all | installed | uninstalled
+  let sort = $state("alpha");
   let discoverSource = $state("all"); // all | google | fontshare | fontsource
   const sel = new SvelteSet();
   let detailName = $state(null);
@@ -113,6 +115,7 @@
 
   const filteredLocal = $derived(
     baseList.filter((f) => {
+      if (installedOnly && f.origin === "dir") return false;
       if (cat && f.category !== cat) return false;
       if (script && !(f.scripts ?? []).includes(script)) return false;
       if (!matchesQuery(f)) return false;
@@ -124,9 +127,10 @@
   );
 
   const installedNamesLower = $derived(new Set(fonts.list.map((f) => f.name.toLowerCase())));
+  const discoverMetaMap = $derived(new Map(discover.list.map((g) => [g.name.toLowerCase(), g])));
 
   const favGoogle = $derived(
-    section === "favorites"
+    section === "favorites" && !installedOnly
       ? discover.list.filter(
           (g) =>
             favSet.has(g.name) &&
@@ -140,11 +144,27 @@
       : [],
   );
 
-  const viewList = $derived(
-    favGoogle.length
-      ? [...filteredLocal, ...favGoogle.map((g) => ({ google: g, name: g.name }))].sort((a, b) => a.name.localeCompare(b.name))
-      : filteredLocal,
-  );
+  const viewList = $derived.by(() => {
+    const items = favGoogle.length
+      ? [...filteredLocal, ...favGoogle.map((g) => ({ google: g, name: g.name }))]
+      : [...filteredLocal];
+    if (sort === "popularity") {
+      return items.sort((a, b) => {
+        const pa = a.google?.popularity ?? discoverMetaMap.get(a.name.toLowerCase())?.popularity ?? 999999;
+        const pb = b.google?.popularity ?? discoverMetaMap.get(b.name.toLowerCase())?.popularity ?? 999999;
+        return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
+      });
+    }
+    if (sort === "recent") {
+      return items.sort((a, b) => {
+        const da = a.google?.date ?? discoverMetaMap.get(a.name.toLowerCase())?.date ?? "";
+        const db = b.google?.date ?? discoverMetaMap.get(b.name.toLowerCase())?.date ?? "";
+        if (da !== db) return db > da ? 1 : -1;
+        return a.name.localeCompare(b.name);
+      });
+    }
+    return items.sort((a, b) => a.name.localeCompare(b.name));
+  });
 
   $effect(() => {
     if (section === "favorites" && library.favorites.some((n) => !installedNamesLower.has(n.toLowerCase()))) {
@@ -167,16 +187,21 @@
   });
 
   const googleList = $derived.by(() => {
-    const l = discover.list.filter(
-      (g) =>
+    const l = discover.list.filter((g) => {
+      const isInst = installedNamesLower.has(g.name.toLowerCase());
+      if (installedOnly && !isInst) return false;
+      if (discoverInstallFilter === "installed" && !isInst) return false;
+      if (discoverInstallFilter === "uninstalled" && isInst) return false;
+      return (
         (discoverSource === "all" ||
           (discoverSource === "custom"
             ? (g.source ?? "").startsWith("custom:")
             : (g.source ?? "google") === discoverSource)) &&
         (!cat || g.category === cat) &&
         (!script || (g.scripts ?? []).includes(script)) &&
-        (!ql || g.name.toLowerCase().includes(ql)),
-    );
+        (!ql || g.name.toLowerCase().includes(ql))
+      );
+    });
     if (sort === "popularity") return [...l].sort((a, b) => a.popularity - b.popularity);
     if (sort === "recent") return [...l].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
     return [...l].sort((a, b) => a.name.localeCompare(b.name));
@@ -747,6 +772,17 @@
       <span class="label">{heading}</span>
       {#if isNormalView}<span class="count num">{inDiscover ? googleList.length : viewList.length}</span>{/if}
       <div class="right">
+        {#if isNormalView && !inDiagnostics}
+          <button
+            type="button"
+            class="pill"
+            class:accent={installedOnly}
+            aria-pressed={installedOnly}
+            onclick={() => (installedOnly = !installedOnly)}
+          >
+            <Check size={11} strokeWidth={2.2} />{t("filter.installedOnly")}
+          </button>
+        {/if}
         {#if isNormalView && !inDiscover && !inDiagnostics}
           <button type="button" class="pill scan-btn" onclick={() => (scanOpen = true)}>
             <Search size={12} strokeWidth={2} />{t("scan.sidebarBtn")}
@@ -759,6 +795,15 @@
             width={66}
             height={22}
             font="600 11.5px"
+          />
+          <SegmentedControl
+            label={t("sort.popularity")}
+            options={["popularity", "recent", "alpha"].map((v) => ({ value: v, label: t("sort." + v) }))}
+            value={sort}
+            onselect={(v) => (sort = v)}
+            width={64}
+            height={22}
+            font="600 11px"
           />
         {:else if isNormalView && inDiscover}
           {#if activeCustomSource}
@@ -798,6 +843,15 @@
             ].map((v) => ({ value: v, label: t("src." + v) }))}
             value={discoverSource.startsWith("custom:") ? "custom" : discoverSource}
             onselect={(v) => (discoverSource = v)}
+            height={22}
+            paddingX={8}
+            font="600 10.5px"
+          />
+          <SegmentedControl
+            label={t("filter.all")}
+            options={["all", "installed", "uninstalled"].map((v) => ({ value: v, label: t("filter." + v) }))}
+            value={discoverInstallFilter}
+            onselect={(v) => (discoverInstallFilter = v)}
             height={22}
             paddingX={8}
             font="600 10.5px"
