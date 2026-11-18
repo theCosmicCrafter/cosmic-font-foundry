@@ -30,6 +30,7 @@ const DEFAULTS = {
   size: 30,
   syncFolder: "",
   lastSyncAt: 0,
+  showAgentTab: false,
 };
 
 export const settings = $state({ ...DEFAULTS, ...(boot.settings ?? {}) });

@@ -18,7 +18,7 @@
   import { inTauri } from "../lib/settings.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
 
-  let { notify = () => {} } = $props();
+  let { notify = () => {}, embedded = false } = $props();
 
   let snap = $state({
     config: {
@@ -178,7 +178,7 @@
   }
 </script>
 
-<div class="agent-hub">
+<div class="agent-hub" class:embedded>
   <!-- Control Plane Banner -->
   <section class="card status-banner">
     <div class="banner-left">
@@ -439,6 +439,12 @@
     flex-direction: column;
     gap: 14px;
     color: var(--ink);
+  }
+
+  .agent-hub.embedded {
+    height: auto;
+    overflow-y: visible;
+    padding: 2px 0 8px;
   }
 
   .card {

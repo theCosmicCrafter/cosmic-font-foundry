@@ -3,7 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import {
     Search, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart,
-    WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles,
+    WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles, Rss,
   } from "@lucide/svelte";
 
   import Sidebar from "./components/Sidebar.svelte";
@@ -19,11 +19,11 @@
   import SkeletonList from "./components/SkeletonList.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
   import SmartScanModal from "./components/SmartScanModal.svelte";
+  import CustomSourcesModal from "./components/CustomSourcesModal.svelte";
   import Settings from "./views/Settings.svelte";
   import Specimen from "./views/Specimen.svelte";
   import Compare from "./views/Compare.svelte";
   import Forge from "./views/Forge.svelte";
-  import AgentHub from "./views/AgentHub.svelte";
 
   import { initUpdater } from "./lib/updater.svelte.js";
   import { settings, inTauri, currentTheme } from "./lib/settings.svelte.js";
@@ -57,6 +57,7 @@
   let compareNames = $state([]);
   let settingsTab = $state(null);
   let scanOpen = $state(false);
+  let customSourcesOpen = $state(false);
   let fmt = $state({ bold: false, italic: false, underline: false, strike: false, uppercase: false });
   let colOpen = $state(false);
   let renaming = $state(null);
@@ -76,7 +77,6 @@
 
   const inDiscover = $derived(section === "discover");
   const inForge = $derived(section === "forge");
-  const inAgent = $derived(section === "agent");
   const inDiagnostics = $derived(section === "diagnostics");
   const activeCollection = $derived(section.startsWith("col:") ? library.collections.find((c) => "col:" + c.id === section) : null);
   const activeFolder = $derived(section.startsWith("dir:") ? section.slice(4) : null);
@@ -152,10 +152,27 @@
     }
   });
 
+  const activeCustomSource = $derived(
+    discoverSource.startsWith("custom:")
+      ? discover.customSources.find((s) => "custom:" + s.id === discoverSource) ?? null
+      : null,
+  );
+  const hasEnabledCustomSources = $derived(discover.customSources.some((s) => s.enabled));
+  $effect(() => {
+    if (discoverSource.startsWith("custom:") && !activeCustomSource) {
+      discoverSource = hasEnabledCustomSources ? "custom" : "all";
+    } else if (discoverSource === "custom" && !hasEnabledCustomSources) {
+      discoverSource = "all";
+    }
+  });
+
   const googleList = $derived.by(() => {
     const l = discover.list.filter(
       (g) =>
-        (discoverSource === "all" || (g.source ?? "google") === discoverSource) &&
+        (discoverSource === "all" ||
+          (discoverSource === "custom"
+            ? (g.source ?? "").startsWith("custom:")
+            : (g.source ?? "google") === discoverSource)) &&
         (!cat || g.category === cat) &&
         (!script || (g.scripts ?? []).includes(script)) &&
         (!ql || g.name.toLowerCase().includes(ql)),
@@ -213,19 +230,17 @@
             ? t("discoverCatalog")
             : inForge
               ? t("sec.forge")
-              : inAgent
-                ? t("sec.agent")
-                : inDiagnostics
-                  ? t("sec.diagnostics")
-                  : section === "favorites"
-                    ? t("sec.favorites")
-                    : activeCollection
-                      ? activeCollection.name
-                      : activeFolder
-                        ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
-                        : t("sec.installed"),
+              : inDiagnostics
+                ? t("sec.diagnostics")
+                : section === "favorites"
+                  ? t("sec.favorites")
+                  : activeCollection
+                    ? activeCollection.name
+                    : activeFolder
+                      ? (folders.find((c) => c.path === activeFolder)?.name ?? "")
+                      : t("sec.installed"),
   );
-  const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length && !inForge && !inAgent);
+  const isNormalView = $derived(!detailFamily && !googleDetail && !comparedFamilies.length && !inForge);
 
   // ---- Discover font preview requests ----
   let visibleGoogle = [];
@@ -485,8 +500,13 @@
     const handleAgentUiCommand = (payload) => {
       if (!payload) return;
       if (payload.action === "navigate") {
-        settingsTab = null;
-        if (payload.section) goTo(payload.section);
+        if (payload.section === "agent") {
+          settings.showAgentTab = true;
+          settingsTab = "agent";
+        } else {
+          settingsTab = null;
+          if (payload.section) goTo(payload.section);
+        }
         if (typeof payload.query === "string") q = payload.query;
         if (typeof payload.category === "string") {
           cat = payload.category === "all" ? null : payload.category;
@@ -741,14 +761,46 @@
             font="600 11.5px"
           />
         {:else if isNormalView && inDiscover}
+          {#if activeCustomSource}
+            <button
+              type="button"
+              class="pill accent"
+              title={t("empty.clear")}
+              onclick={() => (discoverSource = "all")}
+            >
+              <Rss size={11} strokeWidth={2} />
+              <span>{activeCustomSource.name}</span>
+              <X size={11} strokeWidth={2.2} />
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="pill scan-btn"
+            title={t("cs.title")}
+            onclick={() => (customSourcesOpen = true)}
+          >
+            <Rss size={11} strokeWidth={2} />
+            <span>+{t("src.manage")}</span>
+            {#if discover.customSources.length}
+              <span class="num">({discover.customSources.length})</span>
+            {/if}
+          </button>
           <SegmentedControl
             label={t("src.all")}
-            options={["all", "google", "fontshare", "fontsource", "adobe_dev", "fontsquirrel"].map((v) => ({ value: v, label: t("src." + v) }))}
-            value={discoverSource}
+            options={[
+              "all",
+              "google",
+              "fontshare",
+              "fontsource",
+              "adobe_dev",
+              "fontsquirrel",
+              ...(hasEnabledCustomSources ? ["custom"] : []),
+            ].map((v) => ({ value: v, label: t("src." + v) }))}
+            value={discoverSource.startsWith("custom:") ? "custom" : discoverSource}
             onselect={(v) => (discoverSource = v)}
-            width={84}
+            width={66}
             height={22}
-            paddingX={6}
+            paddingX={5}
             font="600 10.5px"
           />
           <SegmentedControl
@@ -851,11 +903,9 @@
       />
     {:else if inForge}
       <Forge {sample} onInstalled={() => goTo("installed")} />
-    {:else if inAgent}
-      <AgentHub {notify} />
     {:else if inDiscover}
       {#if discover.list.length && googleList.length}
-        <VirtualList items={googleList} height={Math.ceil(34 + size * 1.58)} getKey={(g) => g.name} row={googleRowSnippet} onVisible={onVisibleGoogle} padBottom={60} />
+        <VirtualList items={googleList} height={Math.ceil(34 + size * 1.58)} getKey={(g) => `${g.source ?? "google"}::${g.source_id ?? g.name}::${g.name}`} row={googleRowSnippet} onVisible={onVisibleGoogle} padBottom={60} />
       {:else if discover.list.length}
         <EmptyState title={t("empty.none", { q: q.trim() })} text={t("empty.noneGoogle")} actionLabel={t("empty.clear")} onaction={() => (q = "")} />
       {:else if discover.error}
@@ -963,6 +1013,16 @@
     />
   {/if}
 
+  {#if customSourcesOpen}
+    <CustomSourcesModal
+      onclose={() => (customSourcesOpen = false)}
+      onSelectSource={(srcTag) => {
+        discoverSource = srcTag;
+        if (section !== "discover") goTo("discover");
+      }}
+    />
+  {/if}
+
   <Toasts />
 
   {#if splash}
@@ -1017,7 +1077,7 @@
 
   .title-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 24px 8px; min-height: 46px; }
   .count { font-size: 10.5px; color: var(--ink3); }
-  .right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .right { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
   .sep { width: 1px; height: 16px; background: var(--line2); margin: 0 4px; }
   .pill {
     height: 24px;

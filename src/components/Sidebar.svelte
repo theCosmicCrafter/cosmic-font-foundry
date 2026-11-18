@@ -117,7 +117,6 @@
       {@render item(t("sec.installed"), section === "installed", () => onsection("installed"), counts.installed)}
       {@render item(t("sec.discover"), section === "discover", () => onsection("discover"), counts.discover)}
       {@render item(t("sec.forge"), section === "forge", () => onsection("forge"), null, { badge: "NEW", accent: true })}
-      {@render item(t("sec.agent"), section === "agent", () => onsection("agent"), null, { badge: "MCP", accent: true })}
       {#if counts.favorites || section === "favorites"}
         {@render item(t("sec.favorites"), section === "favorites", () => onsection("favorites"), counts.favorites, { accent: true })}
       {/if}

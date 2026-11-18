@@ -25,7 +25,7 @@
   <div class="txt" onclick={() => oninspect?.(g)}>
     <span class="name">
       <span>{g.name} · {g.styles} {g.styles === 1 ? t("style") : t("styles")}</span>
-      <span class="pill src" class:fontshare={srcKey === "fontshare"} class:fontsource={srcKey === "fontsource"} class:adobe={srcKey === "adobe_dev"} class:squirrel={srcKey === "fontsquirrel"}>{t("src." + srcKey)}</span>
+      <span class="pill src" class:fontshare={srcKey === "fontshare"} class:fontsource={srcKey === "fontsource"} class:adobe={srcKey === "adobe_dev"} class:squirrel={srcKey === "fontsquirrel"} class:custom={srcKey.startsWith("custom:")}>{srcKey.startsWith("custom:") ? (g.source_label || t("src.custom")) : t("src." + srcKey)}</span>
       {#if g.is_variable}<span class="pill vf">VF</span>{/if}
       {#if notInstalled}<span class="missing"> · {t("g.notInstalled")}</span>{/if}
     </span>
@@ -87,6 +87,7 @@
   .pill.src.fontsource { background: rgba(45, 212, 191, 0.14); color: var(--ok); }
   .pill.src.adobe { background: rgba(251, 113, 133, 0.16); color: var(--danger); }
   .pill.src.squirrel { background: rgba(245, 158, 11, 0.16); color: var(--warn); }
+  .pill.src.custom { background: var(--accent-soft); color: var(--accent); }
   .sample { line-height: 1.38; padding-top: 0.2em; white-space: nowrap; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; }
   .missing { color: var(--ink2); font-weight: 600; }
   .action { justify-self: end; }

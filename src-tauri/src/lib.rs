@@ -811,6 +811,48 @@ async fn google_install(app: AppHandle, family: String) -> Result<ToggleResponse
 }
 
 #[tauri::command]
+fn custom_sources_list(app: AppHandle) -> Vec<google::CustomFontSource> {
+    let data_dir = app.state::<AppState>().env.data_dir.clone();
+    google::list_custom_sources(&data_dir)
+}
+
+#[tauri::command]
+async fn custom_source_add(
+    app: AppHandle,
+    name: String,
+    url: String,
+    kind: String,
+) -> Result<Vec<google::CustomFontSource>, String> {
+    let data_dir = app.state::<AppState>().env.data_dir.clone();
+    google::add_custom_source(&data_dir, name, url, kind).await
+}
+
+#[tauri::command]
+fn custom_source_remove(app: AppHandle, id: String) -> Vec<google::CustomFontSource> {
+    let data_dir = app.state::<AppState>().env.data_dir.clone();
+    google::remove_custom_source(&data_dir, &id)
+}
+
+#[tauri::command]
+fn custom_source_toggle(
+    app: AppHandle,
+    id: String,
+    enabled: bool,
+) -> Vec<google::CustomFontSource> {
+    let data_dir = app.state::<AppState>().env.data_dir.clone();
+    google::toggle_custom_source(&data_dir, &id, enabled)
+}
+
+#[tauri::command]
+async fn custom_source_sync(
+    app: AppHandle,
+    id: String,
+) -> Result<Vec<google::CustomFontSource>, String> {
+    let data_dir = app.state::<AppState>().env.data_dir.clone();
+    google::sync_custom_source(&data_dir, &id).await
+}
+
+#[tauri::command]
 async fn install_forged_font(
     app: AppHandle,
     file_name: String,
@@ -1154,6 +1196,11 @@ pub fn run() {
             project_manifests,
             google_catalog,
             google_install,
+            custom_sources_list,
+            custom_source_add,
+            custom_source_remove,
+            custom_source_toggle,
+            custom_source_sync,
             install_forged_font,
             sync_choose_folder,
             sync_manifest_now,

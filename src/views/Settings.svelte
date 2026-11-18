@@ -1,6 +1,7 @@
 <script>
-  import { SlidersHorizontal, RefreshCw, Keyboard, Info, X, ArrowUpRight, FolderSync, Download, Upload, Sparkles } from "@lucide/svelte";
+  import { SlidersHorizontal, RefreshCw, Keyboard, Info, X, ArrowUpRight, FolderSync, Download, Upload, Sparkles, Bot } from "@lucide/svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
+  import AgentHub from "./AgentHub.svelte";
   import { settings, currentTheme, setTheme, setLanguage, version, DEFAULT_SHORTCUTS, inTauri } from "../lib/settings.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
   import { notify } from "../lib/toasts.svelte.js";
@@ -28,12 +29,15 @@
             : t("set.updatesHint"),
   );
 
-  const TABS = [
+  const TABS = $derived([
     { id: "settings", label: () => t("settings"), icon: SlidersHorizontal },
     { id: "sync", label: () => t("syncAndExport"), icon: FolderSync },
     { id: "shortcuts", label: () => t("shortcuts"), icon: Keyboard },
     { id: "about", label: () => t("about"), icon: Info },
-  ];
+    ...(settings.showAgentTab || tab === "agent"
+      ? [{ id: "agent", label: () => t("sec.agent"), icon: Bot, badge: "MCP" }]
+      : []),
+  ]);
 
   // Windows Startup
   let winStartup = $state(false);
@@ -74,6 +78,7 @@
     { label: t("set.system"), hint: t("set.systemHint"), value: settings.systemUnlocked, select: unlockSystem, options: [[false, t("set.locked")], [true, t("set.unlock")]] },
     { label: t("set.showLocked"), hint: t("set.showLockedHint"), value: settings.showLocked, select: (v) => (settings.showLocked = v), options: [[false, t("set.hidden")], [true, t("set.shown")]] },
     { label: t("set.checkUpdates"), hint: t("set.checkUpdatesHint"), value: settings.checkUpdates, select: (v) => (settings.checkUpdates = v), options: [[true, t("set.yes")], [false, t("set.no")]] },
+    { label: t("set.agentTab"), hint: t("set.agentTabHint"), value: settings.showAgentTab, select: (v) => (settings.showAgentTab = v), options: [[false, t("set.hidden")], [true, t("set.shown")]] },
     { label: t("set.language"), hint: "", value: settings.language, select: setLanguage, options: [["en", "English"], ["es", "Español"]] },
   ]);
 
@@ -227,19 +232,37 @@
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div class="veil" onclick={onclose}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="modal" role="dialog" aria-modal="true" aria-label={t("settings")} tabindex="-1" onclick={(e) => e.stopPropagation()}>
+  <div class="modal" class:wide={tab === "agent"} role="dialog" aria-modal="true" aria-label={t("settings")} tabindex="-1" onclick={(e) => e.stopPropagation()}>
     <div class="side">
       <span class="brand">Font Foundry<i>.</i></span>
       {#each TABS as tb (tb.id)}
         <button type="button" class="tab" class:active={tab === tb.id} onclick={() => ((tab = tb.id), (recording = null))}>
-          <tb.icon size={14} strokeWidth={1.9} />{tb.label()}
+          <tb.icon size={14} strokeWidth={1.9} />
+          <span class="tab-lbl">{tb.label()}</span>
+          {#if tb.badge}<span class="tab-badge">{tb.badge}</span>{/if}
         </button>
       {/each}
+      <div class="side-spacer"></div>
+      {#if !(settings.showAgentTab || tab === "agent")}
+        <button
+          type="button"
+          class="secret-tab-btn"
+          title={t("set.agentTabHint")}
+          onclick={() => {
+            settings.showAgentTab = true;
+            tab = "agent";
+            recording = null;
+          }}
+        >
+          <Bot size={12} strokeWidth={1.8} />
+          <span>{t("set.mcpSecretBtn")}</span>
+        </button>
+      {/if}
     </div>
 
     <div class="body">
       <div class="head">
-        <h2>{tab === "settings" ? t("settings") : tab === "sync" ? t("syncAndExport") : tab === "shortcuts" ? t("shortcuts") : t("about")}</h2>
+        <h2>{tab === "settings" ? t("settings") : tab === "sync" ? t("syncAndExport") : tab === "shortcuts" ? t("shortcuts") : tab === "agent" ? t("sec.agent") : t("about")}</h2>
         <button type="button" class="close" title={t("close")} aria-label={t("close")} onclick={onclose}>
           <X size={13} strokeWidth={2} />
         </button>
@@ -369,6 +392,8 @@
           {#if shortcutsChanged}
             <button type="button" class="btn self-start" onclick={resetShortcuts}>{t("keys.reset")}</button>
           {/if}
+        {:else if tab === "agent"}
+          <AgentHub {notify} embedded />
         {:else}
           <div class="about-head">
             <img src="/icon.svg" width="64" height="64" alt="" draggable="false" />
@@ -418,10 +443,20 @@
 
 <style>
   .veil { position: fixed; inset: 0; z-index: 20; background: var(--velo); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; animation: cf-fade 0.16s ease-out; }
-  .modal { width: 700px; height: 550px; border-radius: 14px; background: var(--win); color: var(--ink); box-shadow: var(--float-shadow); overflow: hidden; display: grid; grid-template-columns: 192px minmax(0, 1fr); }
+  .modal { width: 700px; height: 550px; border-radius: 14px; background: var(--win); color: var(--ink); box-shadow: var(--float-shadow); overflow: hidden; display: grid; grid-template-columns: 192px minmax(0, 1fr); transition: width 0.16s ease, height 0.16s ease; }
+  .modal.wide { width: min(960px, 94vw); height: min(640px, 90vh); }
   .side { background: var(--side); border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 4px; }
   .brand { font-size: 15.5px; padding: 0 10px 14px; white-space: nowrap; }
   .tab { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink2); font: 500 13px var(--sans); display: flex; align-items: center; gap: 9px; text-align: left; }
+  .tab-lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab-badge { font: 700 9px var(--mono); padding: 1px 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); }
+  .side-spacer { flex: 1; }
+  .secret-tab-btn {
+    border: 0; border-radius: 7px; padding: 6px 9px; background: transparent;
+    color: var(--ink3); opacity: 0.6; font: 500 11px var(--mono);
+    display: flex; align-items: center; gap: 6px; transition: opacity 0.15s, background-color 0.15s, color 0.15s;
+  }
+  .secret-tab-btn:hover { opacity: 1; background: var(--hov); color: var(--accent); }
   .tab:hover { background: var(--hov); color: var(--ink); }
   .tab.active { background: var(--chip); color: var(--ink); font-weight: 600; }
 
