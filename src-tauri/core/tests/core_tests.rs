@@ -154,6 +154,97 @@ fn detects_exact_duplicates_conflicts_and_corrupt_files() {
 }
 
 #[test]
+fn ignores_format_pairs_and_same_dir_companion_builds() {
+    let dir = Path::new(r"C:\Windows\Fonts");
+    let entries = vec![
+        FontEntry {
+            path: dir.join("Lato-Regular.ttf"),
+            origin: Origin::System,
+            active: true,
+            value: None,
+        },
+        FontEntry {
+            path: dir.join("LatoWeb-Regular.ttf"),
+            origin: Origin::System,
+            active: true,
+            value: None,
+        },
+        FontEntry {
+            path: dir.join("Lato-Bold.ttf"),
+            origin: Origin::System,
+            active: true,
+            value: None,
+        },
+        FontEntry {
+            path: dir.join("LatoWeb-Bold.ttf"),
+            origin: Origin::System,
+            active: true,
+            value: None,
+        },
+        FontEntry {
+            path: dir.join("Madina.otf"),
+            origin: Origin::User,
+            active: true,
+            value: None,
+        },
+        FontEntry {
+            path: dir.join("Madina.ttf"),
+            origin: Origin::User,
+            active: true,
+            value: None,
+        },
+    ];
+
+    let grouped = group_families(&entries, &|p| {
+        let name = p.file_name().unwrap().to_string_lossy();
+        let is_madina = name.starts_with("Madina");
+        let is_bold = name.contains("Bold");
+        let sha = format!("sha-{name}");
+        Ok(FileReadResult {
+            sha256: sha,
+            faces: vec![FontFace {
+                family: if is_madina { "Madina" } else { "Lato" }.into(),
+                win_family: if is_madina { "Madina" } else { "Lato" }.into(),
+                style: if is_bold { "Bold" } else { "Regular" }.into(),
+                full_name: if is_madina {
+                    "Madina Regular"
+                } else if is_bold {
+                    "Lato Bold"
+                } else {
+                    "Lato Regular"
+                }
+                .into(),
+                postscript_name: if is_madina {
+                    "Madina"
+                } else if is_bold {
+                    "Lato-Bold"
+                } else {
+                    "Lato-Regular"
+                }
+                .into(),
+                weight: if is_bold { 700 } else { 400 },
+                italic: false,
+                category: "sans".into(),
+                scripts: vec!["Latin".into()],
+                axes: vec![],
+                opentype_features: vec![],
+                foundry: None,
+                designer: None,
+                license: None,
+                license_url: None,
+            }],
+        })
+    });
+
+    let diag = summarize_diagnostics(&grouped);
+    assert_eq!(diag.style_conflicts, 0);
+    assert_eq!(diag.exact_duplicates, 0);
+    assert!(grouped
+        .iter()
+        .all(|f| !f.has_conflicts && f.duplicates.is_empty()));
+}
+
+#[test]
 fn sync_manifest_resolves_and_packages_collection_zip() {
     let tmp = tempfile::tempdir().unwrap();
     let src = fixture_font();

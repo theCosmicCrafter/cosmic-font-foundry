@@ -185,8 +185,8 @@ pub fn group_families(
 
     // Track (sha256 -> first path) to identify exact binary duplicates across different files.
     let mut seen_hashes: HashMap<String, String> = HashMap::new();
-    // Track per-family style signature -> (file_key, sha256) to identify style collisions.
-    let mut seen_styles: HashMap<String, (String, String)> = HashMap::new();
+    // Track per-family style signature -> (file_key, dir_key, origin, sha256) to identify cross-folder/cross-origin style collisions.
+    let mut seen_styles: HashMap<String, (String, String, Origin, String)> = HashMap::new();
 
     for entry in sorted {
         let file = entry.path.to_string_lossy().into_owned();
@@ -309,36 +309,53 @@ pub fn group_families(
                         f.postscript_name = face.postscript_name.clone();
                     }
 
+                    let ext = entry
+                        .path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|s| s.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    let dir_key = entry.path.parent().map(path_key).unwrap_or_default();
                     let style_sig = format!(
-                        "{}::{}::{}::{}",
+                        "{}::{}::{}::{}::{}::{}::{}",
                         fam_key,
+                        face.win_family.to_lowercase(),
+                        face.postscript_name.to_lowercase(),
                         face.style.to_lowercase(),
                         face.weight,
-                        face.italic
+                        face.italic,
+                        ext
                     );
-                    if let Some((prev_file_k, prev_sha)) = seen_styles.get(&style_sig) {
+                    if let Some((prev_file_k, prev_dir_k, prev_origin, prev_sha)) =
+                        seen_styles.get(&style_sig)
+                    {
                         if prev_file_k != &file_k {
-                            let kind = if is_exact_dup || prev_sha == &sha {
-                                "exact"
-                            } else {
-                                "conflict"
-                            };
-                            if !f
-                                .duplicates
-                                .iter()
-                                .any(|d| path_key(Path::new(&d.path)) == file_k)
-                            {
-                                f.duplicates.push(DuplicateEntry {
-                                    path: file.clone(),
-                                    kind: kind.into(),
-                                    sha256: sha.clone(),
-                                    origin: entry.origin,
-                                });
-                                f.has_conflicts = true;
+                            let is_exact = is_exact_dup || prev_sha == &sha;
+                            // Different formats (.otf vs .ttf) already have distinct `style_sig`s;
+                            // companion builds in the same folder & origin with different filenames/hashes
+                            // (e.g. Lato vs LatoWeb) are not flagged as cross-folder/cross-origin collisions.
+                            if is_exact || prev_origin != &entry.origin || prev_dir_k != &dir_key {
+                                let kind = if is_exact { "exact" } else { "conflict" };
+                                if !f
+                                    .duplicates
+                                    .iter()
+                                    .any(|d| path_key(Path::new(&d.path)) == file_k)
+                                {
+                                    f.duplicates.push(DuplicateEntry {
+                                        path: file.clone(),
+                                        kind: kind.into(),
+                                        sha256: sha.clone(),
+                                        origin: entry.origin,
+                                    });
+                                    f.has_conflicts = true;
+                                }
                             }
                         }
                     } else {
-                        seen_styles.insert(style_sig, (file_k.clone(), sha.clone()));
+                        seen_styles.insert(
+                            style_sig,
+                            (file_k.clone(), dir_key, entry.origin, sha.clone()),
+                        );
                         if is_exact_dup
                             && !f
                                 .duplicates

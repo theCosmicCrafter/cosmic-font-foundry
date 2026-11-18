@@ -31,7 +31,7 @@ pub struct Cache {
     pub families: Vec<FontFamily>,
 }
 
-pub const CACHE_VERSION: u32 = 3;
+pub const CACHE_VERSION: u32 = 4;
 
 fn stamp(path: &Path) -> Option<(u64, u64)> {
     let meta = fs::metadata(path).ok()?;
