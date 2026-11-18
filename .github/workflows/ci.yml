@@ -12,12 +12,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+      - name: SPDX License Compliance (REUSE)
+        uses: fsfe/reuse-action@v5
       - name: Secret Scan (Gitleaks)
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: SPDX License Compliance (REUSE)
-        uses: fsfe/reuse-action@v5
 
   core-linux:
     runs-on: ubuntu-latest
