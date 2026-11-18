@@ -1130,6 +1130,7 @@
       <div class="splash-brand">
         <span class="brand-kicker">COSMIC</span>
         <span class="brand">Font Foundry<i>.</i></span>
+        <span class="brand-sub">ORGANIZE · DOWNLOAD · GENERATE</span>
       </div>
     </div>
   {/if}
@@ -1259,6 +1260,14 @@
   .splash { position: absolute; inset: 0; z-index: 40; background-color: var(--win); background-image: var(--win-glow); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
   .splash img { display: block; animation: cf-key 0.55s cubic-bezier(0.3, 1.2, 0.5, 1) both; filter: drop-shadow(0 18px 34px rgba(242, 107, 33, 0.34)); }
   .splash-brand { display: flex; flex-direction: column; align-items: center; gap: 5px; animation: cf-fade 0.3s ease-out 0.35s both; }
-  .splash .brand-kicker { font: 700 10.5px/1 var(--mono); letter-spacing: 0.24em; color: var(--accent-2); }
+  .splash .brand-kicker {
+    font: 700 10.5px/1 var(--mono);
+    letter-spacing: 0.28em;
+    background: linear-gradient(90deg, #ffd166, #ff7b47, #d946ef);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
   .splash .brand { font-size: 28px; }
+  .splash .brand-sub { font: 600 9.5px/1 var(--mono); letter-spacing: 0.22em; color: var(--ink3); margin-top: 4px; }
 </style>
