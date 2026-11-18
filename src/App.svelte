@@ -90,13 +90,15 @@
   const inFolder = (f, folderPath) =>
     f.files.some((p) => p.toLowerCase().startsWith(folderPath.toLowerCase() + "\\"));
   const favSet = $derived(new Set(library.favorites));
+  const activeColSet = $derived(activeCollection ? new Set(activeCollection.fonts.map((n) => n.toLowerCase())) : null);
+  const activeStateMap = $derived(new Map(fonts.list.map((f) => [f.name.toLowerCase(), f.active])));
 
   // ---- Filtered lists ----
   const baseList = $derived.by(() => {
     const l = fonts.list;
     if (section === "favorites") return l.filter((f) => favSet.has(f.name));
     if (section === "diagnostics") return l.filter((f) => f.error || f.has_conflicts || (f.duplicates?.length ?? 0) > 0);
-    if (activeCollection) return l.filter((f) => activeCollection.fonts.includes(f.name));
+    if (activeColSet) return l.filter((f) => activeColSet.has(f.name.toLowerCase()));
     if (activeFolder) return l.filter((f) => inFolder(f, activeFolder));
     return l.filter((f) => f.origin !== "dir" && isVisible(f));
   });
@@ -445,7 +447,7 @@
         fonts: [...c.fonts],
         all_active:
           c.fonts.length > 0 &&
-          c.fonts.every((name) => fonts.list.find((f) => f.name === name)?.active ?? false),
+          c.fonts.every((name) => activeStateMap.get(name.toLowerCase()) ?? false),
       }));
     const payload = {
       status,

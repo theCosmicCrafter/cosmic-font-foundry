@@ -517,6 +517,8 @@ struct OsFontReport {
     discovered_folders: Vec<DiscoveredFontFolder>,
 }
 
+const MAX_SCAN_DIRS: usize = 1500;
+
 fn should_skip_scan_dir(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.starts_with('.')
@@ -528,6 +530,20 @@ fn should_skip_scan_dir(name: &str) -> bool {
                 | "windows"
                 | "$recycle.bin"
                 | "system volume information"
+                | "dist"
+                | "build"
+                | "out"
+                | "venv"
+                | "env"
+                | "__pycache__"
+                | "vendor"
+                | "packages"
+                | "bin"
+                | "obj"
+                | "appdata"
+                | "temp"
+                | "tmp"
+                | "cache"
         )
 }
 
@@ -535,11 +551,25 @@ fn scan_dir_for_fonts(
     root: &Path,
     origin_kind: &str,
     max_depth: usize,
+    excluded_roots: &[String],
+    known_families: &std::collections::HashMap<String, String>,
     out: &mut Vec<DiscoveredFontFolder>,
 ) {
     use std::collections::BTreeSet;
     let mut stack = vec![(root.to_path_buf(), 0usize)];
+    let mut visited_dirs = 0usize;
     while let Some((dir, depth)) = stack.pop() {
+        if visited_dirs >= MAX_SCAN_DIRS {
+            break;
+        }
+        let dir_key = fonts::path_key(&dir);
+        if excluded_roots
+            .iter()
+            .any(|ex| dir_key == *ex || dir_key.starts_with(&format!("{ex}\\")))
+        {
+            continue;
+        }
+        visited_dirs += 1;
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
@@ -558,7 +588,10 @@ fn scan_dir_for_fonts(
                     }
                 }
             } else if ft.is_file() && fonts::is_font_file(&path) {
-                if let Ok(faces) = fonts::reader::read_faces(&path) {
+                let pkey = fonts::path_key(&path);
+                if let Some(fam) = known_families.get(&pkey) {
+                    families.insert(fam.clone());
+                } else if let Ok(faces) = fonts::reader::read_faces(&path) {
                     for face in faces {
                         families.insert(face.family);
                     }
@@ -595,7 +628,12 @@ async fn scan_computer_fonts(
             state.env.system_fonts.to_string_lossy().into_owned(),
             state.env.user_fonts.to_string_lossy().into_owned(),
         );
-        let (system_font_count, user_font_count) = {
+        let excluded_roots = vec![
+            fonts::path_key(&state.env.system_fonts),
+            fonts::path_key(&state.env.user_fonts),
+            fonts::path_key(&state.env.data_dir),
+        ];
+        let (system_font_count, user_font_count, known_families) = {
             let cache = state.cache.lock().unwrap();
             let sys = cache
                 .families
@@ -607,14 +645,27 @@ async fn scan_computer_fonts(
                 .iter()
                 .filter(|f| f.origin == Origin::User || f.origin == Origin::Library)
                 .count();
-            (sys, usr)
+            let mut map = std::collections::HashMap::new();
+            for fam in &cache.families {
+                for fpath in &fam.files {
+                    map.insert(fonts::path_key(Path::new(fpath)), fam.name.clone());
+                }
+            }
+            (sys, usr, map)
         };
 
         let mut discovered_folders = Vec::new();
         if let Some(dir) = custom_dir.filter(|s| !s.trim().is_empty()) {
             let p = PathBuf::from(dir);
             if p.is_dir() {
-                scan_dir_for_fonts(&p, "Custom Folder", 4, &mut discovered_folders);
+                scan_dir_for_fonts(
+                    &p,
+                    "Custom Folder",
+                    4,
+                    &excluded_roots,
+                    &known_families,
+                    &mut discovered_folders,
+                );
             }
         } else {
             let mut roots: Vec<(PathBuf, &str, usize)> = Vec::new();
@@ -641,7 +692,14 @@ async fn scan_computer_fonts(
             let mut seen_paths = HashSet::new();
             for (root, kind, depth) in roots {
                 if root.is_dir() && seen_paths.insert(fonts::path_key(&root)) {
-                    scan_dir_for_fonts(&root, kind, depth, &mut discovered_folders);
+                    scan_dir_for_fonts(
+                        &root,
+                        kind,
+                        depth,
+                        &excluded_roots,
+                        &known_families,
+                        &mut discovered_folders,
+                    );
                 }
             }
         }
@@ -1195,4 +1253,49 @@ pub fn run() {
             app.state::<AppState>().unload_all_folder_fonts();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scanner_discovers_fonts_and_skips_ignored_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("GochiHand-Regular.ttf");
+
+        let valid_dir = tmp.path().join("ClientKit");
+        fs::create_dir_all(&valid_dir).unwrap();
+        fs::copy(&fixture, valid_dir.join("GochiHand-Regular.ttf")).unwrap();
+
+        let ignored_dir = tmp.path().join("node_modules").join("some-pkg");
+        fs::create_dir_all(&ignored_dir).unwrap();
+        fs::copy(&fixture, ignored_dir.join("GochiHand-Regular.ttf")).unwrap();
+
+        let excluded_dir = tmp.path().join("ExcludedRoot");
+        fs::create_dir_all(&excluded_dir).unwrap();
+        fs::copy(&fixture, excluded_dir.join("GochiHand-Regular.ttf")).unwrap();
+
+        let excluded_roots = vec![fonts::path_key(&excluded_dir)];
+        let known_families = std::collections::HashMap::new();
+        let mut out = Vec::new();
+
+        scan_dir_for_fonts(
+            tmp.path(),
+            "Downloads",
+            4,
+            &excluded_roots,
+            &known_families,
+            &mut out,
+        );
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].label, "ClientKit");
+        assert_eq!(out[0].origin_kind, "Downloads");
+        assert_eq!(out[0].font_count, 1);
+        assert_eq!(out[0].families, vec!["Gochi Hand".to_string()]);
+    }
 }

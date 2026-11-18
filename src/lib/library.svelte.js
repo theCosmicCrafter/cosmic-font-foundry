@@ -78,14 +78,17 @@ export function deleteCollection(id) {
 export function addFontsToCollection(id, names) {
   const col = library.collections.find((c) => c.id === id);
   if (!col) return 0;
-  let count = 0;
+  const seen = new Set(col.fonts.map((n) => n.toLowerCase()));
+  const toAdd = [];
   for (const name of names) {
-    if (!col.fonts.includes(name)) {
-      col.fonts.push(name);
-      count++;
+    const key = String(name || "").toLowerCase();
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      toAdd.push(name);
     }
   }
-  return count;
+  if (toAdd.length) col.fonts.push(...toAdd);
+  return toAdd.length;
 }
 
 export function upsertCollectionWithFonts(name, fontNames, pinned = false) {
@@ -104,15 +107,47 @@ export function upsertCollectionWithFonts(name, fontNames, pinned = false) {
 
 export function autoCreateOsCollections(fontsList = []) {
   if (!fontsList.length) return 0;
+  const buckets = {
+    sys: [],
+    user: [],
+    variable: [],
+    sans: [],
+    serif: [],
+    mono: [],
+    displayScript: [],
+  };
+  const installedLowerSet = new Set();
+
+  for (const f of fontsList) {
+    installedLowerSet.add(f.name.toLowerCase());
+    if (f.origin === "sys") buckets.sys.push(f.name);
+    else if (f.origin === "usr" || f.origin === "lib") buckets.user.push(f.name);
+    if (f.is_variable) buckets.variable.push(f.name);
+    if (f.category === "sans") buckets.sans.push(f.name);
+    else if (f.category === "serif") buckets.serif.push(f.name);
+    else if (f.category === "mono") buckets.mono.push(f.name);
+    else if (f.category === "display" || f.category === "script") buckets.displayScript.push(f.name);
+  }
+
   const groups = [
-    ["OS Default Fonts", fontsList.filter((f) => f.origin === "sys").map((f) => f.name)],
-    ["My Installed Fonts", fontsList.filter((f) => f.origin === "usr" || f.origin === "lib").map((f) => f.name)],
-    ["Monospace & Coding", fontsList.filter((f) => f.category === "mono").map((f) => f.name)],
-    ["Display & Script", fontsList.filter((f) => f.category === "display" || f.category === "script").map((f) => f.name)],
+    ["OS Default Fonts", buckets.sys],
+    ["My Installed Fonts", buckets.user],
+    ["Variable Fonts", buckets.variable],
+    ["Sans & UI", buckets.sans],
+    ["Serif & Editorial", buckets.serif],
+    ["Monospace & Coding", buckets.mono],
+    ["Display & Script", buckets.displayScript],
   ];
+
   let created = 0;
   for (const [label, names] of groups) {
-    if (names.length && upsertCollectionWithFonts(label, names)) created++;
+    if (!names.length) continue;
+    const existing = library.collections.find((c) => c.name.toLowerCase() === label.toLowerCase());
+    if (existing) {
+      const pruned = existing.fonts.filter((n) => installedLowerSet.has(n.toLowerCase()));
+      if (pruned.length !== existing.fonts.length) existing.fonts = pruned;
+    }
+    if (upsertCollectionWithFonts(label, names)) created++;
   }
   return created;
 }
