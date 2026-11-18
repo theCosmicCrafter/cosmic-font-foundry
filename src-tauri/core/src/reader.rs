@@ -27,6 +27,80 @@ pub struct VariableAxis {
     pub hidden: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LicenseTier {
+    FreeCommercial,
+    PersonalOnly,
+    Commercial,
+    #[default]
+    Unknown,
+}
+
+/// Classifies OpenType license text/URL into a practical commercial-use tier.
+pub fn classify_license(license: Option<&str>, license_url: Option<&str>) -> LicenseTier {
+    let combined = format!(
+        "{} {}",
+        license.unwrap_or_default(),
+        license_url.unwrap_or_default()
+    )
+    .to_lowercase();
+    let trimmed = combined.trim();
+    if trimmed.is_empty() {
+        return LicenseTier::Unknown;
+    }
+    if [
+        "personal use",
+        "non-commercial",
+        "noncommercial",
+        "demo only",
+        "evaluation only",
+        "free for personal",
+        "not for commercial",
+    ]
+    .iter()
+    .any(|kw| trimmed.contains(kw))
+    {
+        return LicenseTier::PersonalOnly;
+    }
+    if [
+        "open font license",
+        "scripts.sil.org/ofl",
+        "ofl",
+        "apache",
+        "mit license",
+        "mit ",
+        "ubuntu font",
+        "public domain",
+        "cc0",
+        "unlicense",
+        "gpl",
+        "free for commercial",
+    ]
+    .iter()
+    .any(|kw| trimmed.contains(kw))
+    {
+        return LicenseTier::FreeCommercial;
+    }
+    if [
+        "all rights reserved",
+        "eula",
+        "commercial",
+        "proprietary",
+        "monotype",
+        "linotype",
+        "myfonts",
+        "fontspring",
+        "adobe",
+    ]
+    .iter()
+    .any(|kw| trimmed.contains(kw))
+    {
+        return LicenseTier::Commercial;
+    }
+    LicenseTier::Unknown
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FontFace {
     /// Typographic family (name ID 16, falling back to 1).
@@ -57,6 +131,10 @@ pub struct FontFace {
     pub license: Option<String>,
     #[serde(default)]
     pub license_url: Option<String>,
+    #[serde(default)]
+    pub license_tier: LicenseTier,
+    #[serde(default)]
+    pub panose: [u8; 10],
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -344,6 +422,8 @@ pub fn read_faces(path: &Path) -> Result<Vec<FontFace>, String> {
         let opentype_features = parse_gsub_features(t[3].as_deref());
         let category = category::classify(&data).into();
 
+        let license_tier = classify_license(license.as_deref(), license_url.as_deref());
+
         out.push(FontFace {
             family,
             win_family,
@@ -360,6 +440,8 @@ pub fn read_faces(path: &Path) -> Result<Vec<FontFace>, String> {
             designer,
             license,
             license_url,
+            license_tier,
+            panose: data.panose,
         });
     }
     if out.is_empty() {

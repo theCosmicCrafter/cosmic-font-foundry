@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::reader::{FileReadResult, VariableAxis};
+use super::reader::{FileReadResult, LicenseTier, VariableAxis};
 
 pub const EXTENSIONS: [&str; 4] = ["ttf", "otf", "ttc", "otc"];
 
@@ -136,6 +136,10 @@ pub struct FontFamily {
     #[serde(default)]
     pub license_url: Option<String>,
     #[serde(default)]
+    pub license_tier: LicenseTier,
+    #[serde(default)]
+    pub panose: [u8; 10],
+    #[serde(default)]
     pub sha256: String,
     #[serde(default)]
     pub postscript_name: String,
@@ -218,6 +222,8 @@ pub fn group_families(
                         designer: None,
                         license: None,
                         license_url: None,
+                        license_tier: LicenseTier::Unknown,
+                        panose: [0; 10],
                         sha256: String::new(),
                         postscript_name: String::new(),
                         duplicates: vec![],
@@ -258,6 +264,8 @@ pub fn group_families(
                             designer: face.designer.clone(),
                             license: face.license.clone(),
                             license_url: face.license_url.clone(),
+                            license_tier: face.license_tier,
+                            panose: face.panose,
                             sha256: sha.clone(),
                             postscript_name: face.postscript_name.clone(),
                             duplicates: vec![],
@@ -300,6 +308,14 @@ pub fn group_families(
                     if f.license_url.is_none() {
                         f.license_url = face.license_url.clone();
                     }
+                    if f.license_tier == LicenseTier::Unknown
+                        && face.license_tier != LicenseTier::Unknown
+                    {
+                        f.license_tier = face.license_tier;
+                    }
+                    if f.panose == [0; 10] && face.panose != [0; 10] {
+                        f.panose = face.panose;
+                    }
 
                     let normal = !face.italic && face.weight == 400;
                     if normal && !f.styles.iter().any(|s| !s.italic && s.weight == 400) {
@@ -307,6 +323,9 @@ pub fn group_families(
                         f.category = face.category.clone();
                         f.sha256 = sha.clone();
                         f.postscript_name = face.postscript_name.clone();
+                        if face.panose != [0; 10] {
+                            f.panose = face.panose;
+                        }
                     }
 
                     let ext = entry

@@ -1,7 +1,8 @@
 <script>
   import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check, Sun, Moon } from "@lucide/svelte";
   import HeartIcon from "../components/HeartIcon.svelte";
-  import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont, installFamilyToWindows } from "../lib/fonts.svelte.js";
+  import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont, installFamilyToWindows, invokeCmd } from "../lib/fonts.svelte.js";
+  import { inTauri } from "../lib/settings.svelte.js";
   import { tagsForFamily, addTagToFamily, removeTagFromFamily } from "../lib/library.svelte.js";
   import { loadGoogleFullSpecimen, discover, installGoogleFont } from "../lib/discover.svelte.js";
   import { notify } from "../lib/toasts.svelte.js";
@@ -20,6 +21,7 @@
     ontoggle = null,
     onfav,
     onInstallGoogle = null,
+    onopenfamily = null,
   } = $props();
 
   let specBold = $state(false);
@@ -30,6 +32,18 @@
   let specSmallCaps = $state(false);
   let surface = $state("auto");
   let installingWin = $state(false);
+  let similarFonts = $state([]);
+
+  $effect(() => {
+    const name = f?.name;
+    similarFonts = [];
+    if (!name || !inTauri) return;
+    invokeCmd("find_similar_fonts", { family: name, limit: 8 })
+      .then((list) => {
+        if (f?.name === name) similarFonts = list ?? [];
+      })
+      .catch(() => {});
+  });
 
   async function installToWindows() {
     if (!f || installingWin) return;
@@ -352,9 +366,16 @@
       </div>
     </div>
 
-    {#if (f && (f.foundry || f.designer || f.license)) || (googleFont?.designers?.length)}
+    {#if (f && (f.foundry || f.designer || f.license || f.license_tier)) || (googleFont?.designers?.length)}
       <div class="meta-box wide">
-        <span class="label">{t("spec.credits")}</span>
+        <span class="label">
+          {t("spec.credits")}
+          {#if f?.license_tier}
+            <span class="lic-pill" class:safe={f.license_tier === "free_commercial"} class:warn={f.license_tier === "personal_only"}>
+              {t("lic." + f.license_tier)}
+            </span>
+          {/if}
+        </span>
         <div class="credits">
           {#if f?.foundry}<span><b>{t("spec.foundry")}:</b> {f.foundry}</span>{/if}
           {#if f?.designer || googleFont?.designers?.length}
@@ -368,6 +389,25 @@
               {/if}
             </span>
           {/if}
+        </div>
+      </div>
+    {/if}
+
+    {#if similarFonts.length}
+      <div class="meta-box wide">
+        <span class="label">{t("spec.similar")}</span>
+        <div class="badges">
+          {#each similarFonts as sim (sim.name)}
+            <button
+              type="button"
+              class="sim-chip"
+              title={sim.reason}
+              onclick={() => onopenfamily?.(sim.name)}
+            >
+              <span>{sim.name}</span>
+              <span class="sim-score num">{sim.score}%</span>
+            </button>
+          {/each}
         </div>
       </div>
     {/if}
@@ -660,6 +700,12 @@
   .ed-h2 { margin: 0; font-size: 16px; line-height: 1.4; opacity: 0.8; }
   .ed-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; font-size: 14.5px; line-height: 1.65; }
   .ed-cols p { margin: 0; }
+  .lic-pill { margin-left: 8px; padding: 2px 7px; border-radius: 999px; font: 600 10px var(--sans); background: var(--chip); color: var(--ink2); text-transform: none; letter-spacing: 0; }
+  .lic-pill.safe { background: rgba(45, 164, 78, 0.16); color: #2da44e; }
+  .lic-pill.warn { background: rgba(214, 56, 81, 0.16); color: var(--danger); }
+  .sim-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line2); background: var(--field); color: var(--ink); font: 500 12px var(--sans); transition: border-color 0.12s, background-color 0.12s; }
+  .sim-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .sim-score { font-size: 10.5px; color: var(--accent); }
 
   .matrix-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
   .matrix-card { padding: 10px 14px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; min-width: 0; }

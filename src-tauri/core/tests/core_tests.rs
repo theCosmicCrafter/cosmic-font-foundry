@@ -142,6 +142,8 @@ fn detects_exact_duplicates_conflicts_and_corrupt_files() {
                     designer: None,
                     license: Some("OFL".into()),
                     license_url: None,
+                    license_tier: Default::default(),
+                    panose: [0; 10],
                 }],
             })
         } else {
@@ -232,6 +234,8 @@ fn ignores_format_pairs_and_same_dir_companion_builds() {
                 designer: None,
                 license: None,
                 license_url: None,
+                license_tier: Default::default(),
+                panose: [0; 10],
             }],
         })
     });
@@ -436,4 +440,83 @@ fn detects_project_manifest_and_migrates_tuna_fonts() {
         .is_file());
     // Original tuna-fonts directory remains intact.
     assert!(deact_src.is_file());
+}
+
+#[test]
+fn license_similarity_pairing_and_design_kit() {
+    use cosmic_core::reader::{classify_license, LicenseTier};
+    use cosmic_core::similarity::{find_similar_families, suggest_pairings};
+    use cosmic_core::sync::export_design_kit_zip;
+
+    assert_eq!(
+        classify_license(Some("SIL Open Font License 1.1"), None),
+        LicenseTier::FreeCommercial
+    );
+    assert_eq!(
+        classify_license(Some("Free for personal use only"), None),
+        LicenseTier::PersonalOnly
+    );
+    assert_eq!(
+        classify_license(Some("Copyright Monotype. All rights reserved."), None),
+        LicenseTier::Commercial
+    );
+    assert_eq!(classify_license(None, None), LicenseTier::Unknown);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/GochiHand-Regular.ttf");
+    let entries = vec![FontEntry {
+        path: fixture.clone(),
+        origin: Origin::Library,
+        active: true,
+        value: None,
+    }];
+    let mut cache = Cache::default();
+    cache.update(&entries);
+
+    let mut families = cache.families.clone();
+    let mut serif = families[0].clone();
+    serif.name = "Cosmic Serif".into();
+    serif.category = "serif".into();
+    serif.license_tier = LicenseTier::FreeCommercial;
+    serif.panose = [2, 2, 6, 3, 5, 4, 5, 2, 3, 4];
+
+    let mut sans = families[0].clone();
+    sans.name = "Cosmic Sans".into();
+    sans.category = "sans".into();
+    sans.license_tier = LicenseTier::FreeCommercial;
+    sans.panose = [2, 11, 5, 2, 2, 2, 2, 2, 2, 4];
+
+    let mut sans2 = sans.clone();
+    sans2.name = "Nebula Sans".into();
+    sans2.panose = [2, 11, 5, 2, 2, 2, 2, 2, 2, 4];
+
+    families.push(serif);
+    families.push(sans);
+    families.push(sans2);
+
+    let similar = find_similar_families("Cosmic Sans", &families, 5);
+    assert_eq!(similar[0].name, "Nebula Sans");
+
+    let pairings = suggest_pairings("Cosmic Serif", &families, 5);
+    assert!(pairings.iter().any(|p| p.name == "Cosmic Sans"));
+
+    let kit_zip = tmp.path().join("design-kit.zip");
+    let pkg = export_design_kit_zip(
+        &kit_zip,
+        "Cosmic Serif",
+        "Cosmic Sans",
+        16.0,
+        1.25,
+        &families,
+    )
+    .unwrap();
+    assert_eq!(pkg.families_included, 2);
+    assert!(pkg.font_files >= 2);
+    let zip_bytes = std::fs::read(&kit_zip).unwrap();
+    assert!(zip_bytes.windows(9).any(|w| w == b"fonts.css"));
+    assert!(zip_bytes
+        .windows(23)
+        .any(|w| w == b"tailwind-typography.css"));
+    assert!(zip_bytes.windows(16).any(|w| w == b"FONTS-NOTICE.txt"));
 }

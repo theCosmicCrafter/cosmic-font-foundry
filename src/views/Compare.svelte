@@ -1,7 +1,8 @@
 <script>
-  import { ChevronLeft, X, ArrowLeftRight, Copy, Check } from "@lucide/svelte";
+  import { ChevronLeft, X, ArrowLeftRight, Copy, Check, Archive } from "@lucide/svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
-  import { fontStyle } from "../lib/fonts.svelte.js";
+  import { fontStyle, invokeCmd } from "../lib/fonts.svelte.js";
+  import { inTauri } from "../lib/settings.svelte.js";
   import { notify } from "../lib/toasts.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
 
@@ -14,6 +15,42 @@
   let bodyCopy = $state(t("cmp.bodySample"));
   let headingSize = $state(42);
   let bodySize = $state(16);
+  let scaleRatio = $state(1.25);
+  let exportingKit = $state(false);
+  let suggestedPairings = $state([]);
+
+  $effect(() => {
+    const hName = headingFont?.name;
+    suggestedPairings = [];
+    if (!hName || !inTauri) return;
+    invokeCmd("suggest_font_pairings", { family: hName, limit: 5 })
+      .then((list) => {
+        if (headingFont?.name === hName) suggestedPairings = list ?? [];
+      })
+      .catch(() => {});
+  });
+
+  async function exportDesignKit() {
+    if (!inTauri || exportingKit || !families.length) return;
+    exportingKit = true;
+    try {
+      const hName = headingFont?.name || families[0].name;
+      const bName = bodyFont?.name || hName;
+      const res = await invokeCmd("export_design_kit_zip", {
+        headingFamily: hName,
+        bodyFamily: bName,
+        basePx: bodySize,
+        ratio: scaleRatio,
+      });
+      if (res) {
+        notify("ok", t("cmp.exportedKit"), `${res.font_files} files · ${res.zip_path}`);
+      }
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      exportingKit = false;
+    }
+  }
 
   $effect(() => {
     if (headingIdx >= families.length) headingIdx = 0;
@@ -83,6 +120,11 @@
         <Copy size={12} strokeWidth={2} />{t("cmp.copyTokens")}
       {/if}
     </button>
+    {#if inTauri}
+      <button type="button" class="tokens-btn" disabled={exportingKit} onclick={exportDesignKit}>
+        <Archive size={12} strokeWidth={2} />{t("cmp.exportKit")}
+      </button>
+    {/if}
   </div>
 
   {#if mode === "pairing" && headingFont && bodyFont}
@@ -112,7 +154,26 @@
         <input type="range" min="12" max="28" bind:value={bodySize} />
         <span class="num">{bodySize}px</span>
       </label>
+
+      <label class="picker">
+        <span class="label">{t("cmp.scaleRatio")}</span>
+        <select bind:value={scaleRatio}>
+          <option value={1.2}>1.200 Minor Third</option>
+          <option value={1.25}>1.250 Major Third</option>
+          <option value={1.333}>1.333 Perfect Fourth</option>
+          <option value={1.618}>1.618 Golden Ratio</option>
+        </select>
+      </label>
     </div>
+
+    {#if suggestedPairings.length}
+      <div class="pair-suggest">
+        <span class="label">{t("cmp.suggestPairing")}:</span>
+        {#each suggestedPairings as sp (sp.name)}
+          <span class="pair-pill" title={sp.reason}>{sp.name} · {sp.category}</span>
+        {/each}
+      </div>
+    {/if}
 
     <div class="pair-canvas">
       <textarea
@@ -219,4 +280,6 @@
   .pair-canvas { display: flex; flex-direction: column; gap: 16px; padding: 24px; border-radius: 14px; border: 1px solid var(--line); background: var(--field); }
   .pair-heading, .pair-body { width: 100%; border: 0; background: transparent; resize: vertical; color: var(--ink); line-height: 1.25; }
   .pair-body { line-height: 1.6; color: var(--ink2); }
+  .pair-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 2px; }
+  .pair-pill { padding: 3px 9px; border-radius: 999px; background: var(--field); border: 1px solid var(--line); font: 500 11.5px var(--sans); color: var(--ink2); }
 </style>

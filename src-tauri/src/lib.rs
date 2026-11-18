@@ -6,7 +6,7 @@ mod tray;
 pub mod vault;
 pub mod win;
 
-use cosmic_core::{migrate, sync};
+use cosmic_core::{migrate, similarity, sync};
 use fonts::{
     cache::Cache, changes, summarize_diagnostics, Environment, FontFamily, InventoryDiagnostics,
     Origin,
@@ -1151,6 +1151,61 @@ async fn export_collection_zip(
 }
 
 #[tauri::command]
+fn find_similar_fonts(
+    state: State<AppState>,
+    family: String,
+    limit: Option<usize>,
+) -> Vec<similarity::SimilarMatch> {
+    let families = state.cache.lock().unwrap().families.clone();
+    similarity::find_similar_families(&family, &families, limit.unwrap_or(8))
+}
+
+#[tauri::command]
+fn suggest_font_pairings(
+    state: State<AppState>,
+    family: String,
+    limit: Option<usize>,
+) -> Vec<similarity::SimilarMatch> {
+    let families = state.cache.lock().unwrap().families.clone();
+    similarity::suggest_pairings(&family, &families, limit.unwrap_or(6))
+}
+
+#[tauri::command]
+async fn export_design_kit_zip(
+    app: AppHandle,
+    heading_family: String,
+    body_family: String,
+    base_px: f32,
+    ratio: f32,
+) -> Result<Option<sync::PackageResult>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_file_name("cosmic-design-kit.zip")
+        .add_filter("ZIP Archive", &["zip"])
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let dest = picked.into_path().map_err(err)?;
+    bg(move || {
+        let state = app.state::<AppState>();
+        let families = state.cache.lock().unwrap().families.clone();
+        let res = sync::export_design_kit_zip(
+            &dest,
+            &heading_family,
+            &body_family,
+            base_px,
+            ratio,
+            &families,
+        )?;
+        Ok(Some(res))
+    })
+    .await
+}
+
+#[tauri::command]
 fn detect_tuna_migration(state: State<AppState>) -> migrate::TunaMigrationStatus {
     let Some(tuna_dir) = migrate::default_tuna_dir(&state.env.data_dir) else {
         return migrate::TunaMigrationStatus::default();
@@ -1339,6 +1394,9 @@ pub fn run() {
             export_profile_bundle,
             import_profile_bundle,
             export_collection_zip,
+            find_similar_fonts,
+            suggest_font_pairings,
+            export_design_kit_zip,
             detect_tuna_migration,
             run_tuna_migration,
             set_global_shortcut,

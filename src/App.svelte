@@ -50,6 +50,7 @@
   let customSample = $state("");
   let filter = $state("all"); // all | active | inactive | variable
   let installedOnly = $state(false);
+  let commercialOnly = $state(false);
   let discoverInstallFilter = $state("all"); // all | installed | uninstalled
   let sort = $state("alpha");
   let discoverSource = $state("all"); // all | google | fontshare | fontsource
@@ -116,6 +117,7 @@
   const filteredLocal = $derived(
     baseList.filter((f) => {
       if (installedOnly && f.origin === "dir") return false;
+      if (commercialOnly && f.license_tier !== "free_commercial") return false;
       if (cat && f.category !== cat) return false;
       if (script && !(f.scripts ?? []).includes(script)) return false;
       if (!matchesQuery(f)) return false;
@@ -782,6 +784,17 @@
           >
             <Check size={11} strokeWidth={2.2} />{t("filter.installedOnly")}
           </button>
+          {#if !inDiscover}
+            <button
+              type="button"
+              class="pill"
+              class:accent={commercialOnly}
+              aria-pressed={commercialOnly}
+              onclick={() => (commercialOnly = !commercialOnly)}
+            >
+              <ShieldCheck size={11} strokeWidth={2.2} />{t("filter.commercialOnly")}
+            </button>
+          {/if}
         {/if}
         {#if isNormalView && !inDiscover && !inDiagnostics}
           <button type="button" class="pill scan-btn" onclick={() => (scanOpen = true)}>
@@ -962,6 +975,7 @@
         onback={() => (detailName = null)}
         ontoggle={() => toggleOne(detailFamily)}
         onfav={() => toggleFavorite(detailFamily.name)}
+        onopenfamily={(name) => (detailName = name)}
       />
     {:else if googleDetail}
       <Specimen
