@@ -93,8 +93,11 @@ fn write_json<T: Serialize>(path: &Path, val: &T) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, serde_json::to_vec_pretty(val).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    fs::write(
+        &tmp,
+        serde_json::to_vec_pretty(val).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
@@ -162,8 +165,10 @@ pub fn origin_in_system_dir(
 }
 
 fn is_bundled_app_font(env: &Environment, path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|n| env.app_bundled_fonts.contains(&n.to_string_lossy().to_lowercase()))
+    path.file_name().is_some_and(|n| {
+        env.app_bundled_fonts
+            .contains(&n.to_string_lossy().to_lowercase())
+    })
 }
 
 pub fn load_app_installed(env: &Environment) -> HashSet<String> {

@@ -59,7 +59,14 @@ impl AppState {
         list
     }
 
-    fn refresh(&self) -> (Vec<FontFamily>, usize, InventoryDiagnostics, Vec<sync::DetectedProject>) {
+    fn refresh(
+        &self,
+    ) -> (
+        Vec<FontFamily>,
+        usize,
+        InventoryDiagnostics,
+        Vec<sync::DetectedProject>,
+    ) {
         let entries = self.collect_entries();
         let mut cache = self.cache.lock().unwrap();
         let parsed = cache.update(&entries);
@@ -83,7 +90,8 @@ impl AppState {
         let mut changed = false;
         for entry in entries.iter().filter(|e| e.origin == Origin::Folder) {
             let key = fonts::path_key(&entry.path);
-            if wanted.contains(&key) && !loaded.contains(&key) && win::load_font(&entry.path, false) {
+            if wanted.contains(&key) && !loaded.contains(&key) && win::load_font(&entry.path, false)
+            {
                 loaded.insert(key);
                 changed = true;
             }
@@ -115,9 +123,7 @@ impl AppState {
 async fn bg<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(err)?
+    tauri::async_runtime::spawn_blocking(f).await.map_err(err)?
 }
 
 #[derive(Serialize)]
@@ -234,7 +240,9 @@ fn install_files(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         if !fonts::is_font_file(path) {
-            outcome.errors.push(format!("{name}: not a supported font file"));
+            outcome
+                .errors
+                .push(format!("{name}: not a supported font file"));
             continue;
         }
         let faces = match fonts::reader::read_faces(path) {
@@ -247,9 +255,14 @@ fn install_files(
         let family = faces[0].family.clone();
         if install_for_all {
             let dest = changes::unique_path(&state.env.system_fonts, &name);
-            let is_cff = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("otf"));
+            let is_cff = path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("otf"));
             let value = fonts::registry::format_value_name(
-                &faces.iter().map(|f| f.full_name.clone()).collect::<Vec<_>>(),
+                &faces
+                    .iter()
+                    .map(|f| f.full_name.clone())
+                    .collect::<Vec<_>>(),
                 is_cff,
             );
             let data = dest
@@ -679,7 +692,10 @@ async fn run_tuna_migration(app: AppHandle) -> Result<Value, String> {
         {
             let mut lock = state.folders.lock().unwrap();
             for f in &folders {
-                if !lock.iter().any(|x| fonts::path_key(x) == fonts::path_key(f)) {
+                if !lock
+                    .iter()
+                    .any(|x| fonts::path_key(x) == fonts::path_key(f))
+                {
                     lock.push(f.clone());
                     let _ = app.asset_protocol_scope().allow_directory(f, true);
                 }

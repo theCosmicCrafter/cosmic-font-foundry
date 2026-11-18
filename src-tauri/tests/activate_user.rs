@@ -49,7 +49,11 @@ fn install_deactivate_and_activate_user_font() {
     let mut cache = Cache::default();
     let entries = fonts::collect_entries(&env, &[]);
     cache.update(&entries);
-    let fam = cache.families.iter().find(|f| f.name == "Gochi Hand").unwrap();
+    let fam = cache
+        .families
+        .iter()
+        .find(|f| f.name == "Gochi Hand")
+        .unwrap();
     assert!(fam.active);
     assert_eq!(fam.origin, Origin::Library);
 
@@ -72,7 +76,14 @@ fn install_deactivate_and_activate_user_font() {
 
     let entries = fonts::collect_entries(&env, &[]);
     cache.update(&entries);
-    assert!(!cache.families.iter().find(|f| f.name == "Gochi Hand").unwrap().active);
+    assert!(
+        !cache
+            .families
+            .iter()
+            .find(|f| f.name == "Gochi Hand")
+            .unwrap()
+            .active
+    );
 
     let outcome = changes::toggle_families(
         &env,
@@ -108,7 +119,14 @@ fn install_deactivate_and_activate_user_font() {
 
     let entries = fonts::collect_entries(&env, &[]);
     cache.update(&entries);
-    assert!(cache.families.iter().find(|f| f.name == "Gochi Hand").unwrap().active);
+    assert!(
+        cache
+            .families
+            .iter()
+            .find(|f| f.name == "Gochi Hand")
+            .unwrap()
+            .active
+    );
 }
 
 #[test]
@@ -172,5 +190,8 @@ fn manual_all_users_fonts_are_classified_as_user_origin() {
 fn arial_is_owned_by_trusted_installer() {
     let windir = std::env::var_os("WINDIR").unwrap();
     let arial = Path::new(&windir).join("Fonts").join("arial.ttf");
-    assert_eq!(cosmic_fonts_lib::win::is_trusted_installer(&arial), Some(true));
+    assert_eq!(
+        cosmic_fonts_lib::win::is_trusted_installer(&arial),
+        Some(true)
+    );
 }

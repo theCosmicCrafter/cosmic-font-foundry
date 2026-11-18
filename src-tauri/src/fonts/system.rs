@@ -61,8 +61,11 @@ pub fn request_elevated(env: &Environment, ops: &[SystemOp]) -> Result<ElevatedR
         backup_dir: env.system_backup_dir(),
         ops: ops.to_vec(),
     };
-    fs::write(&req_path, serde_json::to_vec(&req).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    fs::write(
+        &req_path,
+        serde_json::to_vec(&req).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
 
     let code = win::run_elevated(&format!("--elevated \"{}\"", req_path.display()));
     let _ = fs::remove_file(&req_path);
@@ -76,8 +79,10 @@ pub fn request_elevated(env: &Environment, ops: &[SystemOp]) -> Result<ElevatedR
 }
 
 fn is_direct_child(path: &Path, dir: &Path) -> bool {
-    path.parent()
-        .is_some_and(|p| p.to_string_lossy().eq_ignore_ascii_case(&dir.to_string_lossy()))
+    path.parent().is_some_and(|p| {
+        p.to_string_lossy()
+            .eq_ignore_ascii_case(&dir.to_string_lossy())
+    })
 }
 
 fn is_protected(path: &Path) -> bool {

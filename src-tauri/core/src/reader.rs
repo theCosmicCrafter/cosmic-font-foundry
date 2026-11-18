@@ -70,7 +70,8 @@ fn be16(b: &[u8], i: usize) -> Option<u16> {
 }
 
 fn be32(b: &[u8], i: usize) -> Option<u32> {
-    b.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
+    b.get(i..i + 4)
+        .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
 }
 
 fn read_at(f: &mut File, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
@@ -80,7 +81,11 @@ fn read_at(f: &mut File, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
     Ok(v)
 }
 
-fn read_tables(f: &mut File, start: u64, wanted: &[&[u8; 4]]) -> Result<Vec<Option<Vec<u8>>>, String> {
+fn read_tables(
+    f: &mut File,
+    start: u64,
+    wanted: &[&[u8; 4]],
+) -> Result<Vec<Option<Vec<u8>>>, String> {
     let hdr = read_at(f, start, 12).map_err(|e| e.to_string())?;
     let num_tables = be16(&hdr, 4).ok_or("short SFNT header")? as usize;
     if num_tables == 0 || num_tables > 512 {
@@ -88,8 +93,10 @@ fn read_tables(f: &mut File, start: u64, wanted: &[&[u8; 4]]) -> Result<Vec<Opti
     }
     let dir = read_at(f, start + 12, num_tables * 16).map_err(|e| e.to_string())?;
     let mut out = vec![None; wanted.len()];
-    for rec in dir.chunks_exact(16) {
-        let Some(idx) = wanted.iter().position(|t| &rec[0..4] == *t) else { continue };
+    for rec in dir.as_chunks::<16>().0 {
+        let Some(idx) = wanted.iter().position(|t| &rec[0..4] == *t) else {
+            continue;
+        };
         let (off, len) = (be32(rec, 8).unwrap_or(0), be32(rec, 12).unwrap_or(0));
         if len == 0 || len > MAX_TABLE_BYTES {
             continue;
@@ -105,7 +112,12 @@ fn face_offsets(f: &mut File) -> Result<Vec<u64>, String> {
         b"ttcf" => {
             let n = be32(&hdr, 8).unwrap_or(0).min(MAX_FACES) as usize;
             let offs = read_at(f, 12, n * 4).map_err(|e| e.to_string())?;
-            Ok(offs.chunks_exact(4).map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]) as u64).collect())
+            Ok(offs
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| u32::from_be_bytes(*c) as u64)
+                .collect())
         }
         [0, 1, 0, 0] | b"OTTO" | b"true" => Ok(vec![0]),
         _ => Err("not a font file".into()),
@@ -136,7 +148,9 @@ fn pick_name(t: &ttf_parser::name::Table, id: u16) -> Option<String> {
 }
 
 fn stem(path: &Path) -> String {
-    path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn default_axis_label(tag: &str) -> String {
@@ -150,9 +164,16 @@ fn default_axis_label(tag: &str) -> String {
     }
 }
 
-fn parse_axes(fvar_bytes: Option<&[u8]>, name_table: &ttf_parser::name::Table) -> Vec<VariableAxis> {
-    let Some(bytes) = fvar_bytes else { return vec![] };
-    let Some(fvar) = ttf_parser::fvar::Table::parse(bytes) else { return vec![] };
+fn parse_axes(
+    fvar_bytes: Option<&[u8]>,
+    name_table: &ttf_parser::name::Table,
+) -> Vec<VariableAxis> {
+    let Some(bytes) = fvar_bytes else {
+        return vec![];
+    };
+    let Some(fvar) = ttf_parser::fvar::Table::parse(bytes) else {
+        return vec![];
+    };
     fvar.axes
         .into_iter()
         .map(|a| {
@@ -173,15 +194,21 @@ fn parse_axes(fvar_bytes: Option<&[u8]>, name_table: &ttf_parser::name::Table) -
 
 /// Reads OpenType GSUB FeatureList tags directly without decoding all lookups.
 fn parse_gsub_features(gsub_bytes: Option<&[u8]>) -> Vec<String> {
-    let Some(data) = gsub_bytes else { return vec![] };
+    let Some(data) = gsub_bytes else {
+        return vec![];
+    };
     if data.len() < 10 {
         return vec![];
     }
-    let Some(feat_list_off) = be16(data, 6).map(|v| v as usize) else { return vec![] };
+    let Some(feat_list_off) = be16(data, 6).map(|v| v as usize) else {
+        return vec![];
+    };
     if feat_list_off + 2 > data.len() {
         return vec![];
     }
-    let Some(count) = be16(data, feat_list_off).map(|v| v as usize) else { return vec![] };
+    let Some(count) = be16(data, feat_list_off).map(|v| v as usize) else {
+        return vec![];
+    };
     let records_start = feat_list_off + 2;
     let max_records = (data.len() - records_start) / 6;
     let n = count.min(max_records);
@@ -226,7 +253,8 @@ fn detect_scripts(u: &[u32; 4], codepages: Option<u32>) -> Vec<String> {
     if u[0] & (1 << 24) != 0 {
         scripts.push("Thai".into());
     }
-    if u[1] & (1 << (49 - 32)) != 0 || u[1] & (1 << (50 - 32)) != 0 || u[1] & (1 << (59 - 32)) != 0 {
+    if u[1] & (1 << (49 - 32)) != 0 || u[1] & (1 << (50 - 32)) != 0 || u[1] & (1 << (59 - 32)) != 0
+    {
         scripts.push("CJK".into());
     }
     if u[0] & (1 << 28) != 0 || u[1] & (1 << (56 - 32)) != 0 {
@@ -272,12 +300,17 @@ pub fn read_faces(path: &Path) -> Result<Vec<FontFace>, String> {
     let mut out = Vec::new();
     for offset in face_offsets(&mut f)? {
         let t = read_tables(&mut f, offset, &[b"name", b"OS/2", b"fvar", b"GSUB"])?;
-        let name = t[0].as_deref().and_then(ttf_parser::name::Table::parse).ok_or("missing name table")?;
+        let name = t[0]
+            .as_deref()
+            .and_then(ttf_parser::name::Table::parse)
+            .ok_or("missing name table")?;
         let os2 = t[1].as_deref();
 
         let win_family = pick_name(&name, 1).unwrap_or_else(|| stem(path));
         let family = pick_name(&name, 16).unwrap_or_else(|| win_family.clone());
-        let style = pick_name(&name, 17).or_else(|| pick_name(&name, 2)).unwrap_or_else(|| "Regular".into());
+        let style = pick_name(&name, 17)
+            .or_else(|| pick_name(&name, 2))
+            .unwrap_or_else(|| "Regular".into());
         let full_name = pick_name(&name, 4).unwrap_or_else(|| format!("{family} {style}"));
         let postscript_name = pick_name(&name, 6).unwrap_or_else(|| full_name.replace(' ', "-"));
 
@@ -286,7 +319,10 @@ pub fn read_faces(path: &Path) -> Result<Vec<FontFace>, String> {
         let license = pick_name(&name, 13);
         let license_url = pick_name(&name, 14);
 
-        let mut data = CategoryData { family: family.clone(), ..Default::default() };
+        let mut data = CategoryData {
+            family: family.clone(),
+            ..Default::default()
+        };
         let (mut weight, mut italic) = (400, style.to_lowercase().contains("italic"));
         if let Some(o) = os2 {
             weight = be16(o, 4).filter(|p| (1..=1000).contains(p)).unwrap_or(400);
@@ -337,7 +373,10 @@ pub fn characters(path: &Path, limit: usize) -> Result<Vec<u32>, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
     let start = *face_offsets(&mut f)?.first().ok_or("empty font")?;
     let t = read_tables(&mut f, start, &[b"cmap"])?;
-    let cmap = t[0].as_deref().and_then(ttf_parser::cmap::Table::parse).ok_or("missing cmap table")?;
+    let cmap = t[0]
+        .as_deref()
+        .and_then(ttf_parser::cmap::Table::parse)
+        .ok_or("missing cmap table")?;
     let mut set = BTreeSet::new();
     for sub in cmap.subtables {
         if !sub.is_unicode() {

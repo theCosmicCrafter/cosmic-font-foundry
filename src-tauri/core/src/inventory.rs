@@ -238,29 +238,31 @@ pub fn group_families(
 
                 for face in result.faces {
                     let fam_key = face.family.to_lowercase();
-                    let f = by_family.entry(fam_key.clone()).or_insert_with(|| FontFamily {
-                        name: face.family.clone(),
-                        category: face.category.clone(),
-                        origin: entry.origin,
-                        active: false,
-                        essential: is_essential(&face.family),
-                        styles: vec![],
-                        file: file.clone(),
-                        files: vec![],
-                        error: None,
-                        scripts: vec![],
-                        is_variable: false,
-                        axes: vec![],
-                        opentype_features: vec![],
-                        foundry: face.foundry.clone(),
-                        designer: face.designer.clone(),
-                        license: face.license.clone(),
-                        license_url: face.license_url.clone(),
-                        sha256: sha.clone(),
-                        postscript_name: face.postscript_name.clone(),
-                        duplicates: vec![],
-                        has_conflicts: false,
-                    });
+                    let f = by_family
+                        .entry(fam_key.clone())
+                        .or_insert_with(|| FontFamily {
+                            name: face.family.clone(),
+                            category: face.category.clone(),
+                            origin: entry.origin,
+                            active: false,
+                            essential: is_essential(&face.family),
+                            styles: vec![],
+                            file: file.clone(),
+                            files: vec![],
+                            error: None,
+                            scripts: vec![],
+                            is_variable: false,
+                            axes: vec![],
+                            opentype_features: vec![],
+                            foundry: face.foundry.clone(),
+                            designer: face.designer.clone(),
+                            license: face.license.clone(),
+                            license_url: face.license_url.clone(),
+                            sha256: sha.clone(),
+                            postscript_name: face.postscript_name.clone(),
+                            duplicates: vec![],
+                            has_conflicts: false,
+                        });
 
                     f.active |= entry.active;
                     if !f.files.contains(&file) {
@@ -272,7 +274,8 @@ pub fn group_families(
                     script_set.extend(face.scripts.iter().cloned());
                     f.scripts = script_set.into_iter().collect();
 
-                    let mut feat_set: BTreeSet<String> = f.opentype_features.iter().cloned().collect();
+                    let mut feat_set: BTreeSet<String> =
+                        f.opentype_features.iter().cloned().collect();
                     feat_set.extend(face.opentype_features.iter().cloned());
                     f.opentype_features = feat_set.into_iter().collect();
 
@@ -320,7 +323,11 @@ pub fn group_families(
                             } else {
                                 "conflict"
                             };
-                            if !f.duplicates.iter().any(|d| path_key(Path::new(&d.path)) == file_k) {
+                            if !f
+                                .duplicates
+                                .iter()
+                                .any(|d| path_key(Path::new(&d.path)) == file_k)
+                            {
                                 f.duplicates.push(DuplicateEntry {
                                     path: file.clone(),
                                     kind: kind.into(),
@@ -333,7 +340,10 @@ pub fn group_families(
                     } else {
                         seen_styles.insert(style_sig, (file_k.clone(), sha.clone()));
                         if is_exact_dup
-                            && !f.duplicates.iter().any(|d| path_key(Path::new(&d.path)) == file_k)
+                            && !f
+                                .duplicates
+                                .iter()
+                                .any(|d| path_key(Path::new(&d.path)) == file_k)
                         {
                             f.duplicates.push(DuplicateEntry {
                                 path: file.clone(),

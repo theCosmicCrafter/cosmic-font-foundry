@@ -576,6 +576,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "cosmic-core"
+version = "0.3.0"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ttf-parser",
+]
+
+[[package]]
+name = "cosmic-font-foundry"
+version = "0.3.0"
+dependencies = [
+ "cosmic-core",
+ "futures-util",
+ "notify",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tauri-plugin-updater",
+ "tempfile",
+ "windows-sys 0.61.2",
+ "winreg",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4639,30 +4675,6 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
-
-[[package]]
-name = "tuna-fonts"
-version = "0.2.3"
-dependencies = [
- "futures-util",
- "notify",
- "rayon",
- "reqwest",
- "rustls",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tauri-plugin-updater",
- "tempfile",
- "ttf-parser",
- "windows-sys 0.61.2",
- "winreg",
-]
 
 [[package]]
 name = "typed-path"

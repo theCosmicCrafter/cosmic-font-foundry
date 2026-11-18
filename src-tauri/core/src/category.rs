@@ -22,25 +22,79 @@ fn contains_word(name: &str, words: &[&str]) -> bool {
 }
 
 const SCRIPT_NAMES: &[&str] = &[
-    "arabic", "hebrew", "devanagari", "bengali", "tamil", "telugu", "kannada", "malayalam", "gujarati",
-    "gurmukhi", "oriya", "sinhala", "thai", "lao", "khmer", "myanmar", "tibetan", "ethiopic", "georgian",
-    "armenian", "mongolian", "naskh", "kufi", "nastaliq", "mincho", "hangul", "batang", "gulim", "dotum",
-    "gungsuh", "malgun", "meiryo", "simsun", "simhei", "nsimsun", "mingliu", "pmingliu", "kaiti", "fangsong",
-    "dengxian", "yahei", "jhenghei", "nirmala", "ebrima", "gadugi", "leelawadee", "javanese", "yi baiti",
-    "himalaya", "estrangelo", "mangal", "kokila", "aparajita", "utsaah", "vani", "vijaya",
+    "arabic",
+    "hebrew",
+    "devanagari",
+    "bengali",
+    "tamil",
+    "telugu",
+    "kannada",
+    "malayalam",
+    "gujarati",
+    "gurmukhi",
+    "oriya",
+    "sinhala",
+    "thai",
+    "lao",
+    "khmer",
+    "myanmar",
+    "tibetan",
+    "ethiopic",
+    "georgian",
+    "armenian",
+    "mongolian",
+    "naskh",
+    "kufi",
+    "nastaliq",
+    "mincho",
+    "hangul",
+    "batang",
+    "gulim",
+    "dotum",
+    "gungsuh",
+    "malgun",
+    "meiryo",
+    "simsun",
+    "simhei",
+    "nsimsun",
+    "mingliu",
+    "pmingliu",
+    "kaiti",
+    "fangsong",
+    "dengxian",
+    "yahei",
+    "jhenghei",
+    "nirmala",
+    "ebrima",
+    "gadugi",
+    "leelawadee",
+    "javanese",
+    "yi baiti",
+    "himalaya",
+    "estrangelo",
+    "mangal",
+    "kokila",
+    "aparajita",
+    "utsaah",
+    "vani",
+    "vijaya",
 ];
 
 /// ulCodePageRange1 bits for Latin, Greek, and Cyrillic.
-const CP_LATIN_LIKE: u32 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 7) | (1 << 8);
+const CP_LATIN_LIKE: u32 =
+    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 7) | (1 << 8);
 /// ulCodePageRange1 bits for Thai, CJK, Arabic, Hebrew, etc.
-const CP_OTHER_SCRIPTS: u32 = (1 << 5) | (1 << 6) | (1 << 16) | (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20) | (1 << 21);
+const CP_OTHER_SCRIPTS: u32 =
+    (1 << 5) | (1 << 6) | (1 << 16) | (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20) | (1 << 21);
 
 pub fn classify(d: &CategoryData) -> &'static str {
     let n = d.family.to_lowercase();
     let panose_family = d.panose[0];
     let class_id = (d.family_class >> 8) as u8;
 
-    let non_latin_cp = d.codepages.is_some_and(|c| c & CP_LATIN_LIKE == 0 && c & CP_OTHER_SCRIPTS != 0);
+    let non_latin_cp = d
+        .codepages
+        .is_some_and(|c| c & CP_LATIN_LIKE == 0 && c & CP_OTHER_SCRIPTS != 0);
     let unicode_latin = d.unicode_ranges[0] & 0b11 != 0;
     if contains_any(&n, SCRIPT_NAMES)
         || contains_word(&n, &["jp", "kr", "sc", "tc", "hk", "cjk", "yu"])
@@ -60,13 +114,37 @@ pub fn classify(d: &CategoryData) -> &'static str {
         return "mono";
     }
 
-    if panose_family == 5 || class_id == 12 || contains_any(&n, &["dings", "symbol", "icons", "mdl2", "marlett", "webdings", "emoji"]) {
+    if panose_family == 5
+        || class_id == 12
+        || contains_any(
+            &n,
+            &[
+                "dings", "symbol", "icons", "mdl2", "marlett", "webdings", "emoji",
+            ],
+        )
+    {
         return "display";
     }
 
     if panose_family == 3
         || class_id == 10
-        || contains_any(&n, &["script", "hand", "brush", "marker", "caveat", "pacifico", "signature", "cursive", "kalam", "calligraph", "chancery", "gochi"])
+        || contains_any(
+            &n,
+            &[
+                "script",
+                "hand",
+                "brush",
+                "marker",
+                "caveat",
+                "pacifico",
+                "signature",
+                "cursive",
+                "kalam",
+                "calligraph",
+                "chancery",
+                "gochi",
+            ],
+        )
     {
         return "script";
     }
@@ -87,10 +165,42 @@ pub fn classify(d: &CategoryData) -> &'static str {
         _ => {}
     }
 
-    if contains_any(&n, &["sans", "grotesk", "grotesque", "gothic", "helvetica", "arial", "verdana", "segoe", "inter", "roboto", "calibri", "tahoma"]) {
+    if contains_any(
+        &n,
+        &[
+            "sans",
+            "grotesk",
+            "grotesque",
+            "gothic",
+            "helvetica",
+            "arial",
+            "verdana",
+            "segoe",
+            "inter",
+            "roboto",
+            "calibri",
+            "tahoma",
+        ],
+    ) {
         return "sans";
     }
-    if contains_any(&n, &["serif", "roman", "garamond", "baskerville", "times", "georgia", "bodoni", "caslon", "didot", "slab", "antiqua", "book"]) {
+    if contains_any(
+        &n,
+        &[
+            "serif",
+            "roman",
+            "garamond",
+            "baskerville",
+            "times",
+            "georgia",
+            "bodoni",
+            "caslon",
+            "didot",
+            "slab",
+            "antiqua",
+            "book",
+        ],
+    ) {
         return "serif";
     }
     "display"
@@ -101,7 +211,12 @@ mod tests {
     use super::*;
 
     fn sample(family: &str) -> CategoryData {
-        CategoryData { family: family.into(), codepages: Some(1), unicode_ranges: [3, 0, 0, 0], ..Default::default() }
+        CategoryData {
+            family: family.into(),
+            codepages: Some(1),
+            unicode_ranges: [3, 0, 0, 0],
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -165,7 +280,11 @@ mod tests {
         assert_eq!(classify(&sample("Malgun Gothic")), "other");
         assert_eq!(classify(&sample("MS Gothic")), "other");
         assert_eq!(classify(&sample("Microsoft YaHei")), "other");
-        let x = CategoryData { family: "Mystery".into(), codepages: Some(1 << 17), ..Default::default() };
+        let x = CategoryData {
+            family: "Mystery".into(),
+            codepages: Some(1 << 17),
+            ..Default::default()
+        };
         assert_eq!(classify(&x), "other");
     }
 

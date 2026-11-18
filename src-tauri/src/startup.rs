@@ -10,7 +10,8 @@ use winreg::{
 use crate::err;
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const APPROVED_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+const APPROVED_KEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 /// Matches `productName` so the NSIS uninstaller cleans this value automatically.
 const VALUE_NAME: &str = "Cosmic Font Foundry";
 pub const HIDDEN_ARG: &str = "--hidden";
@@ -33,11 +34,15 @@ fn is_disabled_in_task_manager(hkcu: &RegKey) -> bool {
 
 pub fn is_enabled() -> bool {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let Ok(val) = hkcu.open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>(VALUE_NAME)) else {
+    let Ok(val) = hkcu
+        .open_subkey(RUN_KEY)
+        .and_then(|k| k.get_value::<String, _>(VALUE_NAME))
+    else {
         return false;
     };
     let Ok(exe) = exe_path() else { return false };
-    val.to_lowercase().contains(&exe.to_string_lossy().to_lowercase())
+    val.to_lowercase()
+        .contains(&exe.to_string_lossy().to_lowercase())
         && !is_disabled_in_task_manager(&hkcu)
 }
 
@@ -45,7 +50,8 @@ pub fn set_enabled(enable: bool) -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if enable {
         let (run, _) = hkcu.create_subkey(RUN_KEY).map_err(err)?;
-        run.set_value(VALUE_NAME, &startup_command(&exe_path()?)).map_err(err)?;
+        run.set_value(VALUE_NAME, &startup_command(&exe_path()?))
+            .map_err(err)?;
         if let Ok(k) = hkcu.open_subkey_with_flags(APPROVED_KEY, KEY_READ | KEY_WRITE) {
             let _ = k.delete_value(VALUE_NAME);
         }

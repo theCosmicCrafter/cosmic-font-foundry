@@ -193,7 +193,10 @@ fn sync_manifest_resolves_and_packages_collection_zip() {
     // Push & merge BYO-Sync manifest.
     let sync_dir = tmp.path().join("sync");
     let mut tags = BTreeMap::new();
-    tags.insert("gochi hand".into(), vec!["handwriting".into(), "display".into()]);
+    tags.insert(
+        "gochi hand".into(),
+        vec!["handwriting".into(), "display".into()],
+    );
     let local = LibraryState {
         favorites: vec!["Gochi Hand".into()],
         collections: vec![LocalCollection {
@@ -213,7 +216,8 @@ fn sync_manifest_resolves_and_packages_collection_zip() {
     // Import onto an empty machine profile.
     let bundle_path = tmp.path().join("profile.json");
     export_profile_json(&bundle_path, &local, &cache.families, "WORKSTATION-A").unwrap();
-    let imported = import_profile_json(&bundle_path, &LibraryState::default(), &cache.families).unwrap();
+    let imported =
+        import_profile_json(&bundle_path, &LibraryState::default(), &cache.families).unwrap();
     assert_eq!(imported.library.favorites, vec!["Gochi Hand"]);
     assert_eq!(imported.library.collections.len(), 1);
     assert!(imported.library.collections[0].pinned);
@@ -234,7 +238,9 @@ fn sync_manifest_resolves_and_packages_collection_zip() {
     let zip_bytes = fs::read(&zip_path).unwrap();
     assert_eq!(&zip_bytes[0..4], b"PK\x03\x04");
     assert!(zip_bytes.windows(12).any(|w| w == b"LICENSES.txt"));
-    assert!(zip_bytes.windows(27).any(|w| w == b"fonts/GochiHand-Regular.ttf"));
+    assert!(zip_bytes
+        .windows(27)
+        .any(|w| w == b"fonts/GochiHand-Regular.ttf"));
 
     // Verify ZIP round-trip decompression on a minimal synthetic ZipBuilder payload.
     let mut zb = ZipBuilder::new();
@@ -328,7 +334,10 @@ fn detects_project_manifest_and_migrates_tuna_fonts() {
     assert!(report.imported_settings);
     assert_eq!(lib.favorites, vec!["Gochi Hand"]);
     assert_eq!(folders.len(), 1);
-    assert!(cosmic_dir.join("deactivated").join("GochiHand-Regular.ttf").is_file());
+    assert!(cosmic_dir
+        .join("deactivated")
+        .join("GochiHand-Regular.ttf")
+        .is_file());
     // Original tuna-fonts directory remains intact.
     assert!(deact_src.is_file());
 }

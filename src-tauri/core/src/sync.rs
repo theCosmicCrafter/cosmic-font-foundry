@@ -392,6 +392,7 @@ struct ZipEntryRecord {
     local_header_offset: u32,
 }
 
+#[derive(Default)]
 pub struct ZipBuilder {
     buf: Vec<u8>,
     records: Vec<ZipEntryRecord>,
@@ -461,15 +462,18 @@ impl ZipBuilder {
             self.buf.extend_from_slice(&0u16.to_le_bytes()); // mod time
             self.buf.extend_from_slice(&0x5421u16.to_le_bytes()); // mod date
             self.buf.extend_from_slice(&rec.crc.to_le_bytes());
-            self.buf.extend_from_slice(&rec.compressed_size.to_le_bytes());
-            self.buf.extend_from_slice(&rec.uncompressed_size.to_le_bytes());
+            self.buf
+                .extend_from_slice(&rec.compressed_size.to_le_bytes());
+            self.buf
+                .extend_from_slice(&rec.uncompressed_size.to_le_bytes());
             self.buf.extend_from_slice(&name_len.to_le_bytes());
             self.buf.extend_from_slice(&0u16.to_le_bytes()); // extra len
             self.buf.extend_from_slice(&0u16.to_le_bytes()); // comment len
             self.buf.extend_from_slice(&0u16.to_le_bytes()); // disk start
             self.buf.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
             self.buf.extend_from_slice(&0x20u32.to_le_bytes()); // external attrs (archive)
-            self.buf.extend_from_slice(&rec.local_header_offset.to_le_bytes());
+            self.buf
+                .extend_from_slice(&rec.local_header_offset.to_le_bytes());
             self.buf.extend_from_slice(&rec.name);
         }
         let cd_size = u32::try_from(self.buf.len())
@@ -509,9 +513,8 @@ pub fn package_collection_zip(
     let mut font_files = 0usize;
     let mut families_included = 0usize;
     let mut missing_families = Vec::new();
-    let mut licenses = format!(
-        "Cosmic Font Foundry — Client Handoff Bundle\nCollection: {collection_name}\n\n"
-    );
+    let mut licenses =
+        format!("Cosmic Font Foundry — Client Handoff Bundle\nCollection: {collection_name}\n\n");
 
     for name in font_names {
         let Some(fam) = families.iter().find(|f| f.name.eq_ignore_ascii_case(name)) else {
@@ -529,7 +532,9 @@ pub fn package_collection_zip(
         if let Some(ref license) = fam.license {
             licenses.push_str(&format!("License: {license}\n"));
         } else {
-            licenses.push_str("License: Not embedded in font metadata (verify before commercial use)\n");
+            licenses.push_str(
+                "License: Not embedded in font metadata (verify before commercial use)\n",
+            );
         }
         if let Some(ref url) = fam.license_url {
             licenses.push_str(&format!("License URL: {url}\n"));

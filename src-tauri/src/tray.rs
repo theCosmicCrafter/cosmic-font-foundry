@@ -18,7 +18,9 @@ use tauri::{
 use windows_sys::Win32::{
     Foundation::POINT,
     UI::{
-        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_ESCAPE, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
+        },
         WindowsAndMessaging::{GetCursorPos, GetForegroundWindow, IsWindowVisible},
     },
 };

@@ -63,12 +63,7 @@ pub fn is_trusted_installer(path: &Path) -> Option<bool> {
     };
     static SEEN: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
     let key = path.to_string_lossy().to_lowercase();
-    if let Some(&v) = SEEN
-        .lock()
-        .ok()?
-        .get_or_insert_with(HashMap::new)
-        .get(&key)
-    {
+    if let Some(&v) = SEEN.lock().ok()?.get_or_insert_with(HashMap::new).get(&key) {
         return Some(v);
     }
     let wide_path = wide(path);
@@ -142,7 +137,13 @@ pub fn wide(s: impl AsRef<OsStr>) -> Vec<u16> {
 /// Loads a font into the current Windows session (`private` restricts visibility to this process).
 pub fn load_font(path: &Path, private: bool) -> bool {
     let w = wide(path);
-    unsafe { AddFontResourceExW(w.as_ptr(), if private { FR_PRIVATE } else { 0 }, std::ptr::null()) > 0 }
+    unsafe {
+        AddFontResourceExW(
+            w.as_ptr(),
+            if private { FR_PRIVATE } else { 0 },
+            std::ptr::null(),
+        ) > 0
+    }
 }
 
 /// Unloads a font from the Windows session, draining Windows' internal load reference count.
@@ -150,7 +151,11 @@ pub fn unload_font(path: &Path, private: bool) {
     let w = wide(path);
     for _ in 0..16 {
         if unsafe {
-            RemoveFontResourceExW(w.as_ptr(), if private { FR_PRIVATE } else { 0 }, std::ptr::null())
+            RemoveFontResourceExW(
+                w.as_ptr(),
+                if private { FR_PRIVATE } else { 0 },
+                std::ptr::null(),
+            )
         } == 0
         {
             break;

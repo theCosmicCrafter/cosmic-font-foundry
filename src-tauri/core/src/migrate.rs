@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::sync::{LocalCollection, LibraryState};
+use super::sync::{LibraryState, LocalCollection};
 
 pub const TUNA_APP_IDENTIFIER: &str = "es.atunfrito.tunafonts";
 
@@ -120,7 +120,10 @@ pub fn import_from_tuna_fonts(
     dest_dir: &Path,
 ) -> Result<(TunaMigrationReport, LibraryState, Vec<PathBuf>), String> {
     if !source_dir.is_dir() {
-        return Err(format!("tuna-fonts data folder not found: {}", source_dir.display()));
+        return Err(format!(
+            "tuna-fonts data folder not found: {}",
+            source_dir.display()
+        ));
     }
     fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
 
@@ -193,24 +196,24 @@ pub fn import_from_tuna_fonts(
         if let Ok(old_saved) = serde_json::from_slice::<Vec<TunaGuardada>>(&bytes) {
             let dest_deact_dir = dest_dir.join("deactivated");
             fs::create_dir_all(&dest_deact_dir).map_err(|e| e.to_string())?;
-            let mut dest_list: Vec<MigratedSavedEntry> = fs::read(dest_dir.join("deactivated.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-                .unwrap_or_default();
+            let mut dest_list: Vec<MigratedSavedEntry> =
+                fs::read(dest_dir.join("deactivated.json"))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or_default();
 
             for g in old_saved {
                 let Some(fname) = g.archivo.file_name() else {
                     continue;
                 };
                 let target_file = dest_deact_dir.join(fname);
-                if g.archivo.is_file() && !target_file.exists() {
-                    if fs::copy(&g.archivo, &target_file).is_ok() {
-                        report.copied_deactivated_files += 1;
-                    }
-                }
-                if target_file.is_file()
-                    && !dest_list.iter().any(|d| d.file == target_file)
+                if g.archivo.is_file()
+                    && !target_file.exists()
+                    && fs::copy(&g.archivo, &target_file).is_ok()
                 {
+                    report.copied_deactivated_files += 1;
+                }
+                if target_file.is_file() && !dest_list.iter().any(|d| d.file == target_file) {
                     dest_list.push(MigratedSavedEntry {
                         file: target_file,
                         original: g.original,

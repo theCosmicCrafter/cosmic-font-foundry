@@ -8,10 +8,10 @@ use std::{
 };
 
 use super::{
-    cache::Cache, is_essential, load_app_installed, load_deactivated,
-    load_recorded_windows_fonts, load_system_backups, origin_in_system_dir, path_key,
-    reader::FontFace, registry, save_app_installed, save_deactivated, save_recorded_windows_fonts,
-    save_system_backups, system, Environment, FontEntry, Origin, SavedFont,
+    cache::Cache, is_essential, load_app_installed, load_deactivated, load_recorded_windows_fonts,
+    load_system_backups, origin_in_system_dir, path_key, reader::FontFace, registry,
+    save_app_installed, save_deactivated, save_recorded_windows_fonts, save_system_backups, system,
+    Environment, FontEntry, Origin, SavedFont,
 };
 use crate::win;
 
@@ -75,7 +75,8 @@ fn in_use_err(e: std::io::Error) -> String {
 }
 
 fn is_otf(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("otf"))
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("otf"))
 }
 
 pub fn deactivate_user(env: &Environment, entry: &FontEntry) -> Result<(), String> {
@@ -135,7 +136,10 @@ pub fn activate_user(
 
     let value = if prev_value.is_empty() {
         registry::format_value_name(
-            &faces.iter().map(|f| f.full_name.clone()).collect::<Vec<_>>(),
+            &faces
+                .iter()
+                .map(|f| f.full_name.clone())
+                .collect::<Vec<_>>(),
             is_otf(&dest_path),
         )
     } else {
@@ -163,7 +167,10 @@ pub fn install_user(env: &Environment, src: &Path, faces: &[FontFace]) -> Result
     fs::create_dir_all(&env.user_fonts).map_err(|e| e.to_string())?;
     fs::copy(src, &dest).map_err(|e| e.to_string())?;
     let value = registry::format_value_name(
-        &faces.iter().map(|f| f.full_name.clone()).collect::<Vec<_>>(),
+        &faces
+            .iter()
+            .map(|f| f.full_name.clone())
+            .collect::<Vec<_>>(),
         is_otf(&dest),
     );
     if let Err(e) = registry::set_value(
@@ -189,7 +196,10 @@ pub fn quarantine_corrupt_file(env: &Environment, target: &Path) -> Result<PathB
         return Err("file does not exist".into());
     }
     if target.starts_with(&env.system_fonts) {
-        return Err("system folder files cannot be quarantined directly without administrator recovery".into());
+        return Err(
+            "system folder files cannot be quarantined directly without administrator recovery"
+                .into(),
+        );
     }
     if env.touch_windows {
         win::unload_font(target, false);
@@ -236,7 +246,10 @@ pub fn toggle_families(
         if !fams.iter().any(|f| wanted.contains(&f.to_lowercase())) || entry.active == activate {
             continue;
         }
-        let label = fams.first().cloned().unwrap_or_else(|| filename(&entry.path));
+        let label = fams
+            .first()
+            .cloned()
+            .unwrap_or_else(|| filename(&entry.path));
         let res = match entry.origin {
             Origin::User | Origin::Library
                 if entry.path.starts_with(&env.system_fonts) || is_in_system_backup(env, entry) =>
@@ -300,7 +313,11 @@ fn is_in_system_backup(env: &Environment, entry: &FontEntry) -> bool {
     entry.path.starts_with(env.system_backup_dir())
 }
 
-fn build_system_op(env: &Environment, entry: &FontEntry, activate: bool) -> Option<system::SystemOp> {
+fn build_system_op(
+    env: &Environment,
+    entry: &FontEntry,
+    activate: bool,
+) -> Option<system::SystemOp> {
     let (value, data) = entry.value.clone().unwrap_or_default();
     if activate {
         let saved = load_system_backups(env)
