@@ -34,8 +34,8 @@ No subscriptions, no accounts, no telemetry—built to outshine bloated commerci
 Requires [Node 22+](https://nodejs.org), [Rust](https://rustup.rs) stable, and the Windows WebView2 runtime.
 
 ```bash
-git clone https://github.com/theCosmicCrafter/tuna-fonts.git
-cd tuna-fonts
+git clone https://github.com/theCosmicCrafter/cosmic-font-foundry.git
+cd cosmic-font-foundry
 npm ci
 npm run installer
 ```

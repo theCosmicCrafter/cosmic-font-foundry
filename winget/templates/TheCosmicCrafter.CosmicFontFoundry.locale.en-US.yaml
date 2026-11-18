@@ -4,11 +4,11 @@ PackageVersion: {VERSION}
 PackageLocale: en-US
 Publisher: theCosmicCrafter
 PublisherUrl: https://github.com/theCosmicCrafter
-PublisherSupportUrl: https://github.com/theCosmicCrafter/tuna-fonts/issues
+PublisherSupportUrl: https://github.com/theCosmicCrafter/cosmic-font-foundry/issues
 PackageName: Cosmic Font Foundry
-PackageUrl: https://github.com/theCosmicCrafter/tuna-fonts
+PackageUrl: https://github.com/theCosmicCrafter/cosmic-font-foundry
 License: MIT
-LicenseUrl: https://github.com/theCosmicCrafter/tuna-fonts/blob/main/LICENSE
+LicenseUrl: https://github.com/theCosmicCrafter/cosmic-font-foundry/blob/main/LICENSE
 ShortDescription: Open-source, local-first font studio for Windows. Fast, private, zero cloud lock-in.
 Description: |-
   Inspect, organize, and activate Windows fonts with variable axes sliders, live OpenType feature toggles,
@@ -21,6 +21,6 @@ Tags:
   - typography
   - variable-fonts
   - google-fonts
-ReleaseNotesUrl: https://github.com/theCosmicCrafter/tuna-fonts/releases/tag/v{VERSION}
+ReleaseNotesUrl: https://github.com/theCosmicCrafter/cosmic-font-foundry/releases/tag/v{VERSION}
 ManifestType: defaultLocale
 ManifestVersion: 1.10.0

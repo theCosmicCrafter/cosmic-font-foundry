@@ -717,9 +717,9 @@ fn is_portable() -> bool {
 #[tauri::command]
 fn open_web(target: String) -> Result<(), String> {
     let url = match target.as_str() {
-        "release" => "https://github.com/theCosmicCrafter/tuna-fonts/releases/latest",
-        "issue" => "https://github.com/theCosmicCrafter/tuna-fonts/issues/new/choose",
-        "repo" => "https://github.com/theCosmicCrafter/tuna-fonts",
+        "release" => "https://github.com/theCosmicCrafter/cosmic-font-foundry/releases/latest",
+        "issue" => "https://github.com/theCosmicCrafter/cosmic-font-foundry/issues/new/choose",
+        "repo" => "https://github.com/theCosmicCrafter/cosmic-font-foundry",
         "upstream" => "https://github.com/atunfrito/tuna-fonts",
         _ => return Err(format!("unknown web target: {target}")),
     };

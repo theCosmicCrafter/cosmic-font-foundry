@@ -395,7 +395,7 @@
           <div class="links">
             <div class="link-row">
               <span>{t("about.repo")}</span>
-              <button type="button" class="link" onclick={() => openWeb("repo")}>theCosmicCrafter/tuna-fonts<ArrowUpRight size={12} strokeWidth={2} /></button>
+              <button type="button" class="link" onclick={() => openWeb("repo")}>theCosmicCrafter/cosmic-font-foundry<ArrowUpRight size={12} strokeWidth={2} /></button>
             </div>
             <div class="link-row">
               <span>{t("about.issue")}</span>
