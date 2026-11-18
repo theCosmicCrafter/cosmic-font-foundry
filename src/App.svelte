@@ -52,7 +52,8 @@
   let installedOnly = $state(false);
   let commercialOnly = $state(false);
   let discoverInstallFilter = $state("all"); // all | installed | uninstalled
-  let sort = $state("alpha");
+  let localSort = $state("alpha");
+  let discoverSort = $state("popularity");
   let discoverSource = $state("all"); // all | google | fontshare | fontsource
   const sel = new SvelteSet();
   let detailName = $state(null);
@@ -128,7 +129,9 @@
     }),
   );
 
-  const installedNamesLower = $derived(new Set(fonts.list.map((f) => f.name.toLowerCase())));
+  const installedNamesLower = $derived(
+    new Set(fonts.list.filter((f) => f.origin !== "dir").map((f) => f.name.toLowerCase())),
+  );
   const discoverMetaMap = $derived(new Map(discover.list.map((g) => [g.name.toLowerCase(), g])));
 
   const favGoogle = $derived(
@@ -150,14 +153,14 @@
     const items = favGoogle.length
       ? [...filteredLocal, ...favGoogle.map((g) => ({ google: g, name: g.name }))]
       : [...filteredLocal];
-    if (sort === "popularity") {
+    if (localSort === "popularity") {
       return items.sort((a, b) => {
         const pa = a.google?.popularity ?? discoverMetaMap.get(a.name.toLowerCase())?.popularity ?? 999999;
         const pb = b.google?.popularity ?? discoverMetaMap.get(b.name.toLowerCase())?.popularity ?? 999999;
         return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
       });
     }
-    if (sort === "recent") {
+    if (localSort === "recent") {
       return items.sort((a, b) => {
         const da = a.google?.date ?? discoverMetaMap.get(a.name.toLowerCase())?.date ?? "";
         const db = b.google?.date ?? discoverMetaMap.get(b.name.toLowerCase())?.date ?? "";
@@ -204,8 +207,8 @@
         (!ql || g.name.toLowerCase().includes(ql))
       );
     });
-    if (sort === "popularity") return [...l].sort((a, b) => a.popularity - b.popularity);
-    if (sort === "recent") return [...l].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
+    if (discoverSort === "popularity") return [...l].sort((a, b) => a.popularity - b.popularity);
+    if (discoverSort === "recent") return [...l].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
     return [...l].sort((a, b) => a.name.localeCompare(b.name));
   });
 
@@ -812,8 +815,8 @@
           <SegmentedControl
             label={t("sort.popularity")}
             options={["popularity", "recent", "alpha"].map((v) => ({ value: v, label: t("sort." + v) }))}
-            value={sort}
-            onselect={(v) => (sort = v)}
+            value={localSort}
+            onselect={(v) => (localSort = v)}
             width={64}
             height={22}
             font="600 11px"
@@ -872,8 +875,8 @@
           <SegmentedControl
             label={t("sort.popularity")}
             options={["popularity", "recent", "alpha"].map((v) => ({ value: v, label: t("sort." + v) }))}
-            value={sort}
-            onselect={(v) => (sort = v)}
+            value={discoverSort}
+            onselect={(v) => (discoverSort = v)}
             width={68}
             height={22}
             font="600 11px"
