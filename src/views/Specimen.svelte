@@ -11,6 +11,7 @@
     f = null,
     googleFont = null,
     sample,
+    fmt = { bold: false, italic: false, underline: false, strike: false, uppercase: false },
     fav,
     locked = false,
     installed = true,
@@ -20,6 +21,25 @@
     onfav,
     onInstallGoogle = null,
   } = $props();
+
+  let specBold = $state(false);
+  let specItalic = $state(false);
+  let specUnderline = $state(false);
+  let specStrike = $state(false);
+  let specUpper = $state(false);
+  let specSmallCaps = $state(false);
+
+  $effect(() => {
+    specBold = Boolean(fmt?.bold);
+    specItalic = Boolean(fmt?.italic);
+    specUnderline = Boolean(fmt?.underline);
+    specStrike = Boolean(fmt?.strike);
+    specUpper = Boolean(fmt?.uppercase);
+  });
+
+  const specDec = $derived(
+    [specUnderline && "underline", specStrike && "line-through"].filter(Boolean).join(" ") || "none",
+  );
 
   const isGoogle = $derived(!f && Boolean(googleFont));
   const familyName = $derived(f ? f.name : (googleFont?.name ?? ""));
@@ -182,8 +202,11 @@
       <span
         class="title"
         style:font-family={previewStyle.family}
-        style:font-weight={axisValues.wght ?? previewStyle.weight}
-        style:font-style={previewStyle.italic ? "italic" : "normal"}
+        style:font-weight={specBold ? 700 : (axisValues.wght ?? previewStyle.weight)}
+        style:font-style={specItalic || previewStyle.italic ? "italic" : "normal"}
+        style:text-decoration={specDec}
+        style:text-transform={specUpper ? "uppercase" : "none"}
+        style:font-variant-caps={specSmallCaps ? "small-caps" : "normal"}
         style:font-variation-settings={variationCss}
         style:font-feature-settings={featureCss}>{familyName}</span
       >
@@ -211,6 +234,19 @@
     {:else}
       <button type="button" class="chip" class:primary={!f.active} onclick={ontoggle}>{f.active ? t("deactivate") : t("activate")}</button>
     {/if}
+  </div>
+
+  <!-- Formatting Sampler Bar -->
+  <div class="fmt-bar">
+    <span class="label">{t("spec.formatSampler")}</span>
+    <div class="fmt-pills">
+      <button type="button" class="fmt-btn bold" class:on={specBold} onclick={() => (specBold = !specBold)}>{t("fmt.bold")}</button>
+      <button type="button" class="fmt-btn italic" class:on={specItalic} onclick={() => (specItalic = !specItalic)}>{t("fmt.italic")}</button>
+      <button type="button" class="fmt-btn underline" class:on={specUnderline} onclick={() => (specUnderline = !specUnderline)}>{t("fmt.underline")}</button>
+      <button type="button" class="fmt-btn strike" class:on={specStrike} onclick={() => (specStrike = !specStrike)}>{t("fmt.strike")}</button>
+      <button type="button" class="fmt-btn" class:on={specUpper} onclick={() => (specUpper = !specUpper)}>{t("fmt.upper")}</button>
+      <button type="button" class="fmt-btn" class:on={specSmallCaps} onclick={() => (specSmallCaps = !specSmallCaps)}>{t("fmt.smallCaps")}</button>
+    </div>
   </div>
 
   <!-- Variable axes & OpenType inspector -->
@@ -338,6 +374,37 @@
     </section>
   {/if}
 
+  <!-- Standard Formatting Matrix -->
+  <div class="block format-matrix">
+    <span class="label">{t("spec.formatMatrix")}</span>
+    <div class="matrix-grid">
+      {#each [
+        { lbl: t("fmt.regular"), w: 400, it: false, dec: "none", tr: "none", ls: "normal" },
+        { lbl: t("fmt.bold"), w: 700, it: false, dec: "none", tr: "none", ls: "normal" },
+        { lbl: t("fmt.italic"), w: 400, it: true, dec: "none", tr: "none", ls: "normal" },
+        { lbl: t("fmt.boldItalic"), w: 700, it: true, dec: "none", tr: "none", ls: "normal" },
+        { lbl: t("fmt.underline"), w: 400, it: false, dec: "underline", tr: "none", ls: "normal" },
+        { lbl: t("fmt.strike"), w: 400, it: false, dec: "line-through", tr: "none", ls: "normal" },
+        { lbl: t("fmt.boldUnderline"), w: 700, it: false, dec: "underline", tr: "none", ls: "normal" },
+        { lbl: t("fmt.upperTracked"), w: 600, it: false, dec: "none", tr: "uppercase", ls: "0.08em" },
+      ] as row (row.lbl)}
+        <div class="matrix-card">
+          <span class="matrix-lbl">{row.lbl}</span>
+          <span
+            class="matrix-sample"
+            style:font-family={previewStyle.family}
+            style:font-weight={row.w}
+            style:font-style={row.it ? "italic" : "normal"}
+            style:text-decoration={row.dec}
+            style:text-transform={row.tr}
+            style:letter-spacing={row.ls}
+            style:font-feature-settings={featureCss}>{sample}</span
+          >
+        </div>
+      {/each}
+    </div>
+  </div>
+
   <!-- Waterfall -->
   <div class="waterfall">
     {#each [12, 18, 24, 36, 48, 72] as n (n)}
@@ -346,8 +413,11 @@
         <span
           class="line"
           style:font-family={previewStyle.family}
-          style:font-weight={axisValues.wght ?? previewStyle.weight}
-          style:font-style={previewStyle.italic ? "italic" : "normal"}
+          style:font-weight={specBold ? 700 : (axisValues.wght ?? previewStyle.weight)}
+          style:font-style={specItalic || previewStyle.italic ? "italic" : "normal"}
+          style:text-decoration={specDec}
+          style:text-transform={specUpper ? "uppercase" : "none"}
+          style:font-variant-caps={specSmallCaps ? "small-caps" : "normal"}
           style:font-variation-settings={variationCss}
           style:font-feature-settings={featureCss}
           style:font-size="{n}px">{sample}</span
@@ -364,8 +434,11 @@
         <span
           class="chars"
           style:font-family={previewStyle.family}
-          style:font-weight={axisValues.wght ?? previewStyle.weight}
-          style:font-style={previewStyle.italic ? "italic" : "normal"}
+          style:font-weight={specBold ? 700 : (axisValues.wght ?? previewStyle.weight)}
+          style:font-style={specItalic || previewStyle.italic ? "italic" : "normal"}
+          style:text-decoration={specDec}
+          style:text-transform={specUpper ? "uppercase" : "none"}
+          style:font-variant-caps={specSmallCaps ? "small-caps" : "normal"}
           style:font-variation-settings={variationCss}
           style:font-feature-settings={featureCss}>{cs.chars}</span
         >
@@ -516,6 +589,21 @@
   .dup-kind.exact { background: rgba(214, 56, 81, 0.16); color: var(--danger); }
   .dup-path { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; text-align: left; font: 400 11.5px var(--mono); color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dup-path:hover { color: var(--ink); text-decoration: underline; }
+
+  .fmt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; background: var(--side); border: 1px solid var(--line); }
+  .fmt-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fmt-btn { height: 26px; padding: 0 11px; border: 1px solid var(--line2); border-radius: 7px; background: var(--field); color: var(--ink2); font: 600 11.5px var(--sans); transition: all 0.12s; }
+  .fmt-btn.bold { font-weight: 800; }
+  .fmt-btn.italic { font-style: italic; }
+  .fmt-btn.underline { text-decoration: underline; }
+  .fmt-btn.strike { text-decoration: line-through; }
+  .fmt-btn:hover { border-color: var(--accent-2); color: var(--ink); }
+  .fmt-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: var(--glow); }
+
+  .matrix-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .matrix-card { padding: 10px 14px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .matrix-lbl { font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent-2); }
+  .matrix-sample { font-size: 20px; line-height: 1.35; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   .waterfall { display: flex; flex-direction: column; }
   .step { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: baseline; gap: 12px; padding: 4px 0; }

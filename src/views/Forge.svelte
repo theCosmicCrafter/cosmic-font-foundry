@@ -32,6 +32,10 @@
   let activeChar = $state("A");
   let testPhrase = $state("");
   let testSize = $state(38);
+  let forgeFmt = $state({ bold: false, italic: false, underline: false, strike: false, uppercase: false });
+  const forgeDec = $derived(
+    [forgeFmt.underline && "underline", forgeFmt.strike && "line-through"].filter(Boolean).join(" ") || "none",
+  );
   let painting = $state(null); // 1 | 0 | null while dragging
   let installing = $state(false);
   let liveFamilyId = $state("ForgePreview");
@@ -310,6 +314,13 @@
         <div class="panel-head">
           <span class="label">{t("forge.livePreview")}</span>
           <div class="test-controls">
+            <div class="fmt-mini">
+              <button type="button" class="f-pill b" class:on={forgeFmt.bold} title={t("fmt.bold")} onclick={() => (forgeFmt.bold = !forgeFmt.bold)}>B</button>
+              <button type="button" class="f-pill i" class:on={forgeFmt.italic} title={t("fmt.italic")} onclick={() => (forgeFmt.italic = !forgeFmt.italic)}>I</button>
+              <button type="button" class="f-pill u" class:on={forgeFmt.underline} title={t("fmt.underline")} onclick={() => (forgeFmt.underline = !forgeFmt.underline)}>U</button>
+              <button type="button" class="f-pill s" class:on={forgeFmt.strike} title={t("fmt.strike")} onclick={() => (forgeFmt.strike = !forgeFmt.strike)}>S</button>
+              <button type="button" class="f-pill" class:on={forgeFmt.uppercase} title={t("fmt.upper")} onclick={() => (forgeFmt.uppercase = !forgeFmt.uppercase)}>AA</button>
+            </div>
             <input class="test-input" bind:value={testPhrase} placeholder={t("forge.typeTest")} spellcheck="false" />
             <input class="test-size" type="range" min="18" max="72" bind:value={testSize} aria-label="Preview size" />
             <span class="num size-val">{testSize}px</span>
@@ -321,6 +332,10 @@
         <div
           class="live-stage"
           style:font-family={`"${liveFamilyId}", var(--sans)`}
+          style:font-weight={forgeFmt.bold ? 700 : 400}
+          style:font-style={forgeFmt.italic ? "italic" : "normal"}
+          style:text-decoration={forgeDec}
+          style:text-transform={forgeFmt.uppercase ? "uppercase" : "none"}
           style:font-size="{testSize}px"
         >
           {effectivePhrase}
@@ -491,7 +506,14 @@
   .slider-row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); cursor: pointer; }
 
   .specimen-panel { flex: 1; min-height: 180px; }
-  .test-controls { display: flex; align-items: center; gap: 8px; }
+  .test-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .fmt-mini { display: flex; gap: 3px; }
+  .f-pill { height: 24px; min-width: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--field); color: var(--ink2); font: 600 10.5px var(--sans); }
+  .f-pill.b { font-weight: 800; }
+  .f-pill.i { font-style: italic; }
+  .f-pill.u { text-decoration: underline; }
+  .f-pill.s { text-decoration: line-through; }
+  .f-pill.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .test-input {
     height: 24px; width: 190px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--field); color: var(--ink); font: 500 11.5px var(--sans);

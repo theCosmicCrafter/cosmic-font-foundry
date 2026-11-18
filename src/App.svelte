@@ -18,6 +18,7 @@
   import EmptyState from "./components/EmptyState.svelte";
   import SkeletonList from "./components/SkeletonList.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
+  import SmartScanModal from "./components/SmartScanModal.svelte";
   import Settings from "./views/Settings.svelte";
   import Specimen from "./views/Specimen.svelte";
   import Compare from "./views/Compare.svelte";
@@ -34,7 +35,7 @@
   import {
     library, initLibrary, toggleFavorite, addToFavorites, createCollection,
     renameCollection, togglePinCollection, deleteCollection, addFontsToCollection,
-    tagsForFamily,
+    tagsForFamily, autoCreateOsCollections,
   } from "./lib/library.svelte.js";
   import { discover, loadCatalog, requestGooglePreviews, preloadDiscover, installGoogleFont } from "./lib/discover.svelte.js";
   import { drag, startDrag } from "./lib/drag.svelte.js";
@@ -54,6 +55,8 @@
   let googleDetailName = $state(null);
   let compareNames = $state([]);
   let settingsTab = $state(null);
+  let scanOpen = $state(false);
+  let fmt = $state({ bold: false, italic: false, underline: false, strike: false, uppercase: false });
   let colOpen = $state(false);
   let renaming = $state(null);
   let confirmingDelete = $state(null);
@@ -391,6 +394,10 @@
   // ---- Keyboard shortcuts ----
   function onKeyDown(e) {
     if (settingsTab || splash) return;
+    if (scanOpen) {
+      if (e.key === "Escape") scanOpen = false;
+      return;
+    }
     const combo = shortcutCombo(e) ?? "";
     const tag = e.target?.tagName ?? "";
     const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
@@ -452,6 +459,16 @@
     return () => clearTimeout(timer);
   });
 
+  let osSeeded = false;
+  $effect(() => {
+    if (!osSeeded && library.ready && !fonts.loading && fonts.list.length > 0) {
+      osSeeded = true;
+      if (library.collections.length === 0) {
+        autoCreateOsCollections(fonts.list);
+      }
+    }
+  });
+
   // ---- Startup ----
   onMount(() => {
     initLibrary();
@@ -511,6 +528,7 @@
     style={fontStyle(f)}
     {sample}
     {size}
+    {fmt}
     selected={sel.has(f.name)}
     fav={favSet.has(f.name)}
     locked={isLocked(f)}
@@ -544,6 +562,7 @@
     {g}
     {sample}
     {size}
+    {fmt}
     installed={installedNamesLower.has(g.name.toLowerCase())}
     pct={discover.downloads[g.name]}
     fav={favSet.has(g.name)}
@@ -559,6 +578,7 @@
       g={item.google}
       {sample}
       {size}
+      {fmt}
       notInstalled
       installed={false}
       pct={discover.downloads[item.name]}
@@ -606,6 +626,7 @@
     oncreateCollection={onCreateCollection}
     onrenameCollection={renameCollection}
     onaddFolder={addFolder}
+    onscan={() => (scanOpen = true)}
     onsettings={() => (settingsTab = "settings")}
     onabout={() => (settingsTab = "about")}
   />
@@ -629,6 +650,13 @@
           <input class="range" type="range" min="10" max="96" bind:value={settings.size} aria-label={t("size")} />
           <span class="a lg">A</span>
           <span class="num n">{size}</span>
+        </div>
+        <div class="fmt-group" role="group" aria-label={t("spec.formatSampler")}>
+          <button type="button" class="fmt-tog b" class:on={fmt.bold} title={t("fmt.bold")} onclick={() => (fmt.bold = !fmt.bold)}>B</button>
+          <button type="button" class="fmt-tog i" class:on={fmt.italic} title={t("fmt.italic")} onclick={() => (fmt.italic = !fmt.italic)}>I</button>
+          <button type="button" class="fmt-tog u" class:on={fmt.underline} title={t("fmt.underline")} onclick={() => (fmt.underline = !fmt.underline)}>U</button>
+          <button type="button" class="fmt-tog s" class:on={fmt.strike} title={t("fmt.strike")} onclick={() => (fmt.strike = !fmt.strike)}>S</button>
+          <button type="button" class="fmt-tog" class:on={fmt.uppercase} title={t("fmt.upper")} onclick={() => (fmt.uppercase = !fmt.uppercase)}>AA</button>
         </div>
       {/if}
       <div class="spacer" data-tauri-drag-region></div>
@@ -655,6 +683,9 @@
       {#if isNormalView}<span class="count num">{inDiscover ? googleList.length : viewList.length}</span>{/if}
       <div class="right">
         {#if isNormalView && !inDiscover && !inDiagnostics}
+          <button type="button" class="pill scan-btn" onclick={() => (scanOpen = true)}>
+            <Search size={12} strokeWidth={2} />{t("scan.sidebarBtn")}
+          </button>
           <SegmentedControl
             label={t("filter.all")}
             options={["all", "active", "inactive", "variable"].map((v) => ({ value: v, label: t("filter." + v) }))}
@@ -745,6 +776,7 @@
       <Specimen
         f={detailFamily}
         {sample}
+        {fmt}
         fav={favSet.has(detailFamily.name)}
         locked={isLocked(detailFamily)}
         backLabel={section === "favorites" ? t("favorites") : activeCollection ? activeCollection.name : inDiagnostics ? t("sec.diagnostics") : t("sec.installed")}
@@ -756,6 +788,7 @@
       <Specimen
         googleFont={googleDetail}
         {sample}
+        {fmt}
         fav={favSet.has(googleDetail.name)}
         installed={installedNamesLower.has(googleDetail.name.toLowerCase())}
         backLabel={inDiscover ? t("discoverCatalog") : t("favorites")}
@@ -875,6 +908,14 @@
     />
   {/if}
 
+  {#if scanOpen}
+    <SmartScanModal
+      onclose={() => (scanOpen = false)}
+      onImported={() => {}}
+      onFoldersChanged={(l) => (folders = l)}
+    />
+  {/if}
+
   <Toasts />
 
   {#if splash}
@@ -904,17 +945,27 @@
     box-shadow: 0 0 0 1px var(--line);
     color: var(--ink3);
   }
-  .search { flex: 0 0 190px; }
-  .sample-box { flex: 1 1 auto; min-width: 0; max-width: 340px; }
+  .search { flex: 0 1 175px; min-width: 120px; }
+  .sample-box { flex: 1 1 180px; min-width: 110px; max-width: 280px; }
   .field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 500 12.5px var(--sans); color: var(--ink); }
   .a { font: 700 12px var(--sans); color: var(--ink3); }
   .reset { width: 16px; height: 16px; border: 0; border-radius: 50%; background: var(--line2); color: var(--win); padding: 0; display: flex; align-items: center; justify-content: center; flex: none; }
-  .size-ctrl { flex: none; display: flex; align-items: center; gap: 8px; margin-left: 6px; }
+  .size-ctrl { flex: none; display: flex; align-items: center; gap: 6px; margin-left: 4px; }
   .size-ctrl .sm { font: 600 10px var(--sans); }
   .size-ctrl .lg { font: 600 15px var(--sans); }
   .size-ctrl .n { width: 22px; font-size: 11.5px; color: var(--ink3); }
-  .range { -webkit-appearance: none; appearance: none; width: 88px; height: 2px; background: var(--line2); border-radius: 2px; outline: none; }
+  .range { -webkit-appearance: none; appearance: none; width: 72px; height: 2px; background: var(--line2); border-radius: 2px; outline: none; }
   .range::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 0; cursor: pointer; }
+  .fmt-group { flex: none; display: flex; align-items: center; gap: 3px; padding: 2px; border-radius: 7px; background: var(--chip); }
+  .fmt-tog { height: 22px; min-width: 23px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: var(--ink2); font: 600 11px var(--sans); transition: background-color 0.14s, color 0.14s; }
+  .fmt-tog.b { font-weight: 800; }
+  .fmt-tog.i { font-style: italic; }
+  .fmt-tog.u { text-decoration: underline; }
+  .fmt-tog.s { text-decoration: line-through; }
+  .fmt-tog:hover { color: var(--ink); background: var(--hov); }
+  .fmt-tog.on { background: var(--accent); color: #fff; box-shadow: var(--pill-shadow); }
+  .scan-btn { background: var(--cyan-soft); color: var(--accent-2); }
+  .scan-btn:hover { background: var(--accent-2); color: #090b12; }
   .view-mode { margin-right: 12px; display: flex; }
 
   .title-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 24px 8px; min-height: 46px; }

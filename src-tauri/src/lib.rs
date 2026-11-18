@@ -496,6 +496,201 @@ fn project_manifests(state: State<AppState>) -> Vec<sync::DetectedProject> {
     sync::scan_project_manifests(&folders)
 }
 
+#[derive(Serialize, Clone)]
+struct DiscoveredFontFolder {
+    path: String,
+    label: String,
+    origin_kind: String,
+    font_count: usize,
+    families: Vec<String>,
+    files: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct OsFontReport {
+    os_name: String,
+    arch: String,
+    system_fonts_dir: String,
+    user_fonts_dir: String,
+    system_font_count: usize,
+    user_font_count: usize,
+    discovered_folders: Vec<DiscoveredFontFolder>,
+}
+
+fn should_skip_scan_dir(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with('.')
+        || matches!(
+            lower.as_str(),
+            "node_modules"
+                | "target"
+                | ".git"
+                | "windows"
+                | "$recycle.bin"
+                | "system volume information"
+        )
+}
+
+fn scan_dir_for_fonts(
+    root: &Path,
+    origin_kind: &str,
+    max_depth: usize,
+    out: &mut Vec<DiscoveredFontFolder>,
+) {
+    use std::collections::BTreeSet;
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut files = Vec::new();
+        let mut families = BTreeSet::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(ft) = entry.file_type() else {
+                continue;
+            };
+            if ft.is_dir() {
+                if depth < max_depth {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !should_skip_scan_dir(&name) {
+                        stack.push((path, depth + 1));
+                    }
+                }
+            } else if ft.is_file() && fonts::is_font_file(&path) {
+                if let Ok(faces) = fonts::reader::read_faces(&path) {
+                    for face in faces {
+                        families.insert(face.family);
+                    }
+                }
+                files.push(path.to_string_lossy().into_owned());
+            }
+        }
+        if !files.is_empty() {
+            let label = dir
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| dir.to_string_lossy().into_owned());
+            out.push(DiscoveredFontFolder {
+                path: dir.to_string_lossy().into_owned(),
+                label,
+                origin_kind: origin_kind.to_string(),
+                font_count: files.len(),
+                families: families.into_iter().collect(),
+                files,
+            });
+        }
+    }
+}
+
+#[tauri::command]
+async fn scan_computer_fonts(
+    app: AppHandle,
+    custom_dir: Option<String>,
+) -> Result<OsFontReport, String> {
+    bg(move || {
+        let state = app.state::<AppState>();
+        let (system_fonts_dir, user_fonts_dir) = (
+            state.env.system_fonts.to_string_lossy().into_owned(),
+            state.env.user_fonts.to_string_lossy().into_owned(),
+        );
+        let (system_font_count, user_font_count) = {
+            let cache = state.cache.lock().unwrap();
+            let sys = cache
+                .families
+                .iter()
+                .filter(|f| f.origin == Origin::System)
+                .count();
+            let usr = cache
+                .families
+                .iter()
+                .filter(|f| f.origin == Origin::User || f.origin == Origin::Library)
+                .count();
+            (sys, usr)
+        };
+
+        let mut discovered_folders = Vec::new();
+        if let Some(dir) = custom_dir.filter(|s| !s.trim().is_empty()) {
+            let p = PathBuf::from(dir);
+            if p.is_dir() {
+                scan_dir_for_fonts(&p, "Custom Folder", 4, &mut discovered_folders);
+            }
+        } else {
+            let mut roots: Vec<(PathBuf, &str, usize)> = Vec::new();
+            if let Some(profile) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+                roots.push((profile.join("Downloads"), "Downloads", 3));
+                roots.push((profile.join("Desktop"), "Desktop", 3));
+                roots.push((profile.join("Documents"), "Documents", 3));
+                roots.push((profile.join("OneDrive"), "OneDrive", 3));
+            }
+            if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+                roots.push((local.join("Adobe"), "Adobe", 3));
+            }
+            if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
+                roots.push((
+                    roaming
+                        .join("Adobe")
+                        .join("CoreSync")
+                        .join("plugins")
+                        .join("livetype"),
+                    "Adobe Fonts",
+                    3,
+                ));
+            }
+            let mut seen_paths = HashSet::new();
+            for (root, kind, depth) in roots {
+                if root.is_dir() && seen_paths.insert(fonts::path_key(&root)) {
+                    scan_dir_for_fonts(&root, kind, depth, &mut discovered_folders);
+                }
+            }
+        }
+        discovered_folders.sort_by_key(|f| std::cmp::Reverse(f.font_count));
+
+        let os_name = if cfg!(target_os = "windows") {
+            "Windows".to_string()
+        } else {
+            std::env::consts::OS.to_string()
+        };
+        Ok(OsFontReport {
+            os_name,
+            arch: std::env::consts::ARCH.to_string(),
+            system_fonts_dir,
+            user_fonts_dir,
+            system_font_count,
+            user_font_count,
+            discovered_folders,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn watch_folder_path(app: AppHandle, path: String) -> Result<Vec<FolderInfo>, String> {
+    bg(move || {
+        let p = PathBuf::from(&path);
+        if !p.is_dir() {
+            return Err(format!("not a folder: {path}"));
+        }
+        let state = app.state::<AppState>();
+        {
+            let mut folders = state.folders.lock().unwrap();
+            if !folders
+                .iter()
+                .any(|x| fonts::path_key(x) == fonts::path_key(&p))
+            {
+                folders.push(p.clone());
+            }
+        }
+        let _ = app.asset_protocol_scope().allow_directory(&p, true);
+        save_folders(&state);
+        watch_folders(&app);
+        let _ = state.refresh();
+        Ok(folder_list(&state))
+    })
+    .await
+}
+
 // ---- Google Fonts Discover ----
 
 #[tauri::command]
@@ -888,6 +1083,8 @@ pub fn run() {
             watched_folders,
             add_watched_folder,
             remove_watched_folder,
+            watch_folder_path,
+            scan_computer_fonts,
             project_manifests,
             google_catalog,
             google_install,

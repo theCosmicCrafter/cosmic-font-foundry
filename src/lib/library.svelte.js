@@ -53,8 +53,9 @@ export function addToFavorites(names) {
   }
 }
 
+let nextColSeq = 1;
 export function createCollection(name) {
-  const id = "c" + Date.now().toString(36);
+  const id = "c" + Date.now().toString(36) + (nextColSeq++).toString(36);
   library.collections.push({ id, name, fonts: [], pinned: false });
   return id;
 }
@@ -85,6 +86,35 @@ export function addFontsToCollection(id, names) {
     }
   }
   return count;
+}
+
+export function upsertCollectionWithFonts(name, fontNames, pinned = false) {
+  const clean = String(name || "").trim();
+  if (!clean || !fontNames?.length) return null;
+  let col = library.collections.find((c) => c.name.toLowerCase() === clean.toLowerCase());
+  if (!col) {
+    const id = createCollection(clean);
+    col = library.collections.find((c) => c.id === id);
+    if (col && pinned) col.pinned = true;
+  }
+  if (!col) return null;
+  addFontsToCollection(col.id, fontNames);
+  return col.id;
+}
+
+export function autoCreateOsCollections(fontsList = []) {
+  if (!fontsList.length) return 0;
+  const groups = [
+    ["OS Default Fonts", fontsList.filter((f) => f.origin === "sys").map((f) => f.name)],
+    ["My Installed Fonts", fontsList.filter((f) => f.origin === "usr" || f.origin === "lib").map((f) => f.name)],
+    ["Monospace & Coding", fontsList.filter((f) => f.category === "mono").map((f) => f.name)],
+    ["Display & Script", fontsList.filter((f) => f.category === "display" || f.category === "script").map((f) => f.name)],
+  ];
+  let created = 0;
+  for (const [label, names] of groups) {
+    if (names.length && upsertCollectionWithFonts(label, names)) created++;
+  }
+  return created;
 }
 
 export function tagsForFamily(familyName) {

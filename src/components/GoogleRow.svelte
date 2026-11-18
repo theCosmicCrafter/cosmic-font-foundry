@@ -3,8 +3,21 @@
   import HeartIcon from "./HeartIcon.svelte";
   import { t } from "../lib/i18n.svelte.js";
 
-  let { g, sample, size, installed, pct, fav, onfav, oninstall, oninspect = null, notInstalled = false } = $props();
+  let {
+    g,
+    sample,
+    size,
+    fmt = { bold: false, italic: false, underline: false, strike: false, uppercase: false },
+    installed,
+    pct,
+    fav,
+    onfav,
+    oninstall,
+    oninspect = null,
+    notInstalled = false,
+  } = $props();
   const srcKey = $derived(g.source ?? "google");
+  const textDec = $derived([fmt.underline && "underline", fmt.strike && "line-through"].filter(Boolean).join(" ") || "none");
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -16,7 +29,15 @@
       {#if g.is_variable}<span class="pill vf">VF</span>{/if}
       {#if notInstalled}<span class="missing"> · {t("g.notInstalled")}</span>{/if}
     </span>
-    <span class="sample" style:font-family={`"${g.name}", var(--sans)`} style:font-size="{size}px">{sample}</span>
+    <span
+      class="sample"
+      style:font-family={`"${g.name}", var(--sans)`}
+      style:font-weight={fmt.bold ? 700 : 400}
+      style:font-style={fmt.italic ? "italic" : "normal"}
+      style:text-decoration={textDec}
+      style:text-transform={fmt.uppercase ? "uppercase" : "none"}
+      style:font-size="{size}px">{sample}</span
+    >
   </div>
   <button
     type="button"

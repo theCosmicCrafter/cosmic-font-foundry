@@ -180,6 +180,8 @@ export const applyExternalList = (res) => setFonts(res.families, res.diagnostics
 export const backedUpCount = () => invokeCmd("backed_up_count");
 export const fontCharacters = (path) => invokeCmd("font_characters", { path });
 export const revealInExplorer = (path) => invokeCmd("show_in_explorer", { path }).catch(() => {});
+export const scanComputerFonts = (customDir = null) => invokeCmd("scan_computer_fonts", { customDir });
+export const watchFolderByPath = (path) => invokeCmd("watch_folder_path", { path });
 
 export async function installForgedFont(familyName, styleName, bytes, installForAll = false) {
   const cleanName = String(familyName || "Cosmic Forge").trim() || "Cosmic Forge";
@@ -249,7 +251,10 @@ export async function installForgedFont(familyName, styleName, bytes, installFor
   }
 }
 
-function demoResponse(cmd) {
+const demoWatched = [];
+const demoExtraFamilies = [];
+
+function demoResponse(cmd, args = {}) {
   const mk = (name, category, origin, active, extra = {}) => ({
     name,
     category,
@@ -286,7 +291,7 @@ function demoResponse(cmd) {
     has_conflicts: false,
   });
 
-  const list = [
+  const baseList = [
     mk("Archivo", "sans", "lib", true, {
       axes: [
         { tag: "wght", name: "Weight", min: 100, default: 400, max: 900, hidden: false },
@@ -304,6 +309,7 @@ function demoResponse(cmd) {
     mk("Consolas", "mono", "sys", true),
     mk("Impact", "display", "sys", false),
   ];
+  const list = [...demoExtraFamilies, ...baseList];
 
   if (cmd === "saved_fonts") return Promise.resolve(list);
   if (cmd === "refresh_fonts") {
@@ -314,7 +320,77 @@ function demoResponse(cmd) {
       projects: [],
     });
   }
-  if (cmd === "watched_folders") return Promise.resolve([]);
+  if (cmd === "watched_folders") return Promise.resolve([...demoWatched]);
+  if (cmd === "watch_folder_path") {
+    const p = args?.path;
+    if (p && !demoWatched.some((d) => d.path === p)) {
+      const parts = p.split(/[/\\]+/).filter(Boolean);
+      demoWatched.push({ path: p, name: parts.slice(-2).join("\\") || p });
+    }
+    return Promise.resolve([...demoWatched]);
+  }
+  if (cmd === "scan_computer_fonts") {
+    return Promise.resolve({
+      os_name: "Windows 11",
+      arch: "x86_64",
+      system_fonts_dir: "C:\\Windows\\Fonts",
+      user_fonts_dir: "C:\\Users\\User\\AppData\\Local\\Microsoft\\Windows\\Fonts",
+      system_font_count: baseList.filter((f) => f.origin === "sys").length,
+      user_font_count: baseList.filter((f) => f.origin !== "sys").length + demoExtraFamilies.length,
+      discovered_folders: [
+        {
+          path: "C:\\Users\\User\\Downloads\\Brand-Typography-Kit",
+          label: "Brand-Typography-Kit",
+          origin_kind: "Downloads",
+          font_count: 3,
+          families: ["Space Grotesk", "Clash Display", "Satoshi"],
+          files: [
+            "C:\\Users\\User\\Downloads\\Brand-Typography-Kit\\SpaceGrotesk-Variable.ttf",
+            "C:\\Users\\User\\Downloads\\Brand-Typography-Kit\\ClashDisplay-Variable.ttf",
+            "C:\\Users\\User\\Downloads\\Brand-Typography-Kit\\Satoshi-Variable.ttf",
+          ],
+        },
+        {
+          path: "C:\\Users\\User\\Desktop\\Client-Fonts",
+          label: "Client-Fonts",
+          origin_kind: "Desktop",
+          font_count: 2,
+          families: ["Outfit", "Syne"],
+          files: [
+            "C:\\Users\\User\\Desktop\\Client-Fonts\\Outfit-Regular.ttf",
+            "C:\\Users\\User\\Desktop\\Client-Fonts\\Syne-Bold.ttf",
+          ],
+        },
+        {
+          path: "C:\\Users\\User\\Documents\\Code-Fonts",
+          label: "Code-Fonts",
+          origin_kind: "Documents",
+          font_count: 2,
+          families: ["Fira Code", "Source Code Pro"],
+          files: [
+            "C:\\Users\\User\\Documents\\Code-Fonts\\FiraCode-Regular.ttf",
+            "C:\\Users\\User\\Documents\\Code-Fonts\\SourceCodePro-Regular.ttf",
+          ],
+        },
+      ],
+    });
+  }
+  if (cmd === "install_fonts") {
+    const paths = args?.paths ?? [];
+    for (const rawPath of paths) {
+      const stem = rawPath.split(/[/\\]+/).pop()?.replace(/\.(ttf|otf|ttc|otc)$/i, "") || "Custom Font";
+      const fam = stem.replace(/-(Regular|Bold|Italic|Variable)$/i, "").replace(/([a-z])([A-Z])/g, "$1 $2");
+      if (!list.some((f) => f.name.toLowerCase() === fam.toLowerCase())) {
+        demoExtraFamilies.unshift(mk(fam, fam.includes("Code") ? "mono" : "sans", "usr", true));
+      }
+    }
+    const updated = [...demoExtraFamilies, ...baseList];
+    return Promise.resolve({
+      families: updated,
+      outcome: { changed: paths.length, errors: [], cancelled: false },
+      diagnostics: { total_families: updated.length, exact_duplicates: 0, style_conflicts: 0, corrupt_files: 0 },
+    });
+  }
   if (cmd === "backed_up_count") return Promise.resolve(0);
   if (cmd === "font_characters") return Promise.resolve([...Array(94)].map((_, i) => 33 + i));
   if (cmd === "detect_tuna_migration") return Promise.resolve({ available: false });

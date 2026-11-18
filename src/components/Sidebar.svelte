@@ -25,6 +25,7 @@
     oncreateCollection,
     onrenameCollection,
     onaddFolder,
+    onscan = () => {},
     onsettings,
     onabout,
   } = $props();
@@ -166,6 +167,7 @@
 
     <div class="group">
       {@render header(t("group.folders"), t("folder.add"), onaddFolder)}
+      {@render item(t("scan.sidebarBtn"), false, onscan, null, { accent: true })}
       {#each folders as f (f.path)}
         {@render item(f.name, section === "dir:" + f.path, () => onsection("dir:" + f.path), f.count, {
           title: f.path,

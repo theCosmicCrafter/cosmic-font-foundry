@@ -4,9 +4,25 @@
   import HeartIcon from "./HeartIcon.svelte";
   import { t } from "../lib/i18n.svelte.js";
 
-  let { f, style, sample, size, selected, fav, locked, reason, onselect, onopen, ontoggle, onfav, ondrag } = $props();
+  let {
+    f,
+    style,
+    sample,
+    size,
+    fmt = { bold: false, italic: false, underline: false, strike: false, uppercase: false },
+    selected,
+    fav,
+    locked,
+    reason,
+    onselect,
+    onopen,
+    ontoggle,
+    onfav,
+    ondrag,
+  } = $props();
 
   const on = $derived(f.active || locked);
+  const textDec = $derived([fmt.underline && "underline", fmt.strike && "line-through"].filter(Boolean).join(" ") || "none");
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -23,8 +39,10 @@
       class="sample"
       class:off={!on}
       style:font-family={style.family}
-      style:font-weight={style.weight}
-      style:font-style={style.italic ? "italic" : "normal"}
+      style:font-weight={fmt.bold ? 700 : style.weight}
+      style:font-style={fmt.italic || style.italic ? "italic" : "normal"}
+      style:text-decoration={textDec}
+      style:text-transform={fmt.uppercase ? "uppercase" : "none"}
       style:font-size="{size}px">{sample}</span
     >
   </div>
