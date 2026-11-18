@@ -1,4 +1,5 @@
 <script>
+  import { ShieldCheck, ShieldAlert, Lock, CircleHelp } from "@lucide/svelte";
   import ToggleSwitch from "./ToggleSwitch.svelte";
   import HeartIcon from "./HeartIcon.svelte";
   import { t } from "../lib/i18n.svelte.js";
@@ -27,6 +28,15 @@
   <div class="foot">
     <ToggleSwitch active={f.active} {locked} title={locked ? reason : f.active ? t("deactivate") : t("activate")} onclick={ontoggle} size={16} />
     <span class="name">{f.name}</span>
+    {#if f.license_tier === "free_commercial"}
+      <span class="lic safe" title={t("lic.free_commercial")}><ShieldCheck size={12} strokeWidth={2.2} /></span>
+    {:else if f.license_tier === "personal_only"}
+      <span class="lic personal" title={t("lic.personal_only")}><ShieldAlert size={12} strokeWidth={2.2} /></span>
+    {:else if f.license_tier === "commercial"}
+      <span class="lic comm" title={t("lic.commercial")}><Lock size={11} strokeWidth={2.2} /></span>
+    {:else if f.license_tier === "unknown"}
+      <span class="lic unk" title={t("lic.unknown")}><CircleHelp size={11} strokeWidth={2} /></span>
+    {/if}
     <button
       type="button"
       class="heart"
@@ -82,6 +92,11 @@
   .aa.off { color: var(--off); }
   .foot { display: flex; align-items: center; gap: 8px; }
   .name { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lic { display: inline-flex; align-items: center; flex: none; opacity: 0.9; }
+  .lic.safe { color: #2da44e; }
+  .lic.personal { color: var(--danger); }
+  .lic.comm { color: var(--warn); }
+  .lic.unk { color: var(--ink3); opacity: 0.6; }
   .heart {
     width: 22px;
     height: 22px;

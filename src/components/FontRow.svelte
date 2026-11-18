@@ -1,5 +1,5 @@
 <script>
-  import { ChevronRight } from "@lucide/svelte";
+  import { ChevronRight, ShieldCheck, ShieldAlert, Lock, CircleHelp } from "@lucide/svelte";
   import ToggleSwitch from "./ToggleSwitch.svelte";
   import HeartIcon from "./HeartIcon.svelte";
   import { t } from "../lib/i18n.svelte.js";
@@ -31,6 +31,15 @@
   <div class="txt">
     <span class="name">
       <span>{f.name}</span>
+      {#if f.license_tier === "free_commercial"}
+        <span class="lic safe" title={t("lic.free_commercial")}><ShieldCheck size={11} strokeWidth={2.2} /></span>
+      {:else if f.license_tier === "personal_only"}
+        <span class="lic personal" title={t("lic.personal_only")}><ShieldAlert size={11} strokeWidth={2.2} /></span>
+      {:else if f.license_tier === "commercial"}
+        <span class="lic comm" title={t("lic.commercial")}><Lock size={10} strokeWidth={2.2} /></span>
+      {:else if f.license_tier === "unknown"}
+        <span class="lic unk" title={t("lic.unknown")}><CircleHelp size={10} strokeWidth={2} /></span>
+      {/if}
       {#if f.is_variable}<span class="pill vf">VF</span>{/if}
       {#if f.has_conflicts}<span class="pill warn">!</span>{/if}
       {#if f.error}<span class="broken"> · {t("err.unreadable")}</span>{/if}
@@ -86,6 +95,11 @@
   .pill { font: 700 9px var(--mono); padding: 1px 4px; border-radius: 4px; letter-spacing: 0.04em; flex: none; }
   .pill.vf { background: var(--accent-soft); color: var(--accent); }
   .pill.warn { background: rgba(196, 125, 23, 0.16); color: var(--warn); }
+  .lic { display: inline-flex; align-items: center; flex: none; opacity: 0.9; }
+  .lic.safe { color: #2da44e; }
+  .lic.personal { color: var(--danger); }
+  .lic.comm { color: var(--warn); }
+  .lic.unk { color: var(--ink3); opacity: 0.6; }
   .broken { color: var(--danger); font-weight: 600; }
   .sample {
     line-height: 1.38;
