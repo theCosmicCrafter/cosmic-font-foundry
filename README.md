@@ -38,14 +38,14 @@ You **never** need to browse the Vault folder from inside Word or Illustrator:
 
 - **Instant Inventory & Menu Decluttering:** View every system, user, Vault, and watched-folder font grouped by family in list or grid view. Filter by **Installed only**, **Commercial-safe**, **Active / Inactive / Variable**, and sort by **Popular / Newest / A–Z**.
 - **License & Commercial-Use Auditor:** Automatically classifies embedded OpenType license metadata (`Commercial-Safe`, `Personal Use Only`, `Commercial / Proprietary`, `Unverified`) with color-coded icons next to every font name and generates `FONTS-NOTICE.txt` inside exported bundles.
-- **Offline PANOSE "Find Similar" & Smart Pairings:** Ranks visually similar fonts across your library using PANOSE proportions, category, scripts, and variable axes, and suggests complementary `Heading + Body` pairings.
+- **Offline PANOSE, Visual & Typographic DNA Vibe Search:** Match fonts from a glyph image or SVG outline, rank fonts using natural-language typographic vibe queries, compare PANOSE proportions, suggest `Heading + Body` pairings, detect canonical outline duplicates, and run sandboxed `.zip`/folder license triage.
 - **One-Click Web & Design Kit Export:** In **Compare**, configure a modular **Type Scale** (`1.200`–`1.618`) and export a ready-to-drop `.zip` containing font files, `@font-face` `fonts.css` with CSS variables, `tailwind-typography.css` (`@theme`), and `FONTS-NOTICE.txt`.
 - **Tranquil Nebula UI & Editorial Specimen:** Warm obsidian dark mode and alabaster light mode, formatting sampler (`B / I / U / S / AA`), Light/Dark specimen surface toggle, 2-column Editorial Article Preview, Waterfall, and character map.
-- **Multi-Foundry Discover & Custom Feed Subscriptions:** Browse **Google Fonts**, **Fontshare**, **Fontsource Open Foundry**, **Adobe & Dev Originals**, and **Font Squirrel** (with **All / Installed / Uninstalled** filters), or subscribe to **RSS / Atom XML, JSON Catalogs, and GitHub Releases**.
-- **Forge Studio (Modular Font Creator):** Design custom fonts on a `7×9` or `14×18` grid with `A–Z`, `a–z`, `ÁÉÑ`, `0–9`, and symbol glyphs, parametric DNA sliders, live `.ttf` binary compilation, export, and one-click Windows installation.
+- **Multi-Foundry Discover & Custom Feed Subscriptions:** Browse **Google Fonts**, **Bunny Fonts**, **Fontshare**, **Fontsource Open Foundry**, **Adobe & Dev Originals**, **Font Squirrel**, and **Nerd Fonts** (with **All / Installed / Uninstalled** filters), search **GitHub** font repositories, or subscribe to **RSS / Atom XML, JSON Catalogs, and 13 curated presets**.
+- **Vector Foundry Studio & `cosmic-foundry` CLI:** Full pure-Rust font engineering workspace (**Draw**, **Space & Kern**, **Composites & OT**, **Styles & Var**, and **QA Audit** tabs) featuring a cubic Bézier canvas, bitmap tracing, knife slicing, optical auto-spacing and 24-band auto-kerning, OpenType `GSUB` ligatures, 7 style derivatives, `fvar`/`gvar` variable font compilation, UFO v3 import/export, and Fontspector-style QA auto-fix—plus the headless `cosmic-foundry` CLI (`trace-sheet`, `svg-dir`, `qa`, `autofix`, `style`, `dedup`, `triage`, `vibe`).
 - **Variable Font Playground & OpenType Inspector:** Live sliders for `wght`, `wdth`, `opsz`, `slnt`, and custom `fvar` axes; toggle `liga`, `dlig`, `smcp`, `onum`, `tnum`, `ss01`–`ss20`; inspect scripts and SHA-256 duplicates/conflicts.
 - **Global Quick-Switcher (`Ctrl+Shift+F`), Project Auto-Detection & BYO-Sync:** Detect `.cosmicfonts.json` and Adobe `Document fonts/` folders, sync collections via any cloud/Syncthing folder (`cosmic-manifest.json`), or export client `.zip` bundles.
-- **Optional Local MCP & Agent Control (Hidden in Settings):** Reveal **Agent Hub** in Settings for a localhost-only (`127.0.0.1:17420`) MCP JSON-RPC 2.0 + REST control plane, read-only monitoring mode, deterministic command director, or BYO-AI (Ollama / OpenAI-compatible).
+- **Optional Local MCP & Agent Control (Hidden in Settings):** Reveal **Agent Hub** in Settings for a localhost-only (`127.0.0.1:17420`) MCP JSON-RPC 2.0 + REST control plane exposing 15 tools, read-only monitoring mode, deterministic command director, or BYO-AI (Ollama / OpenAI-compatible).
 
 ## Privacy & System Safety
 
@@ -69,10 +69,13 @@ Run checks & tests:
 
 ```bash
 cargo fmt --manifest-path src-tauri/core/Cargo.toml -- --check
+cargo fmt --manifest-path src-tauri/foundry/Cargo.toml -- --check
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/core/Cargo.toml --all-targets -- -D warnings
+cargo clippy --manifest-path src-tauri/foundry/Cargo.toml --all-targets -- -D warnings
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/core/Cargo.toml
+cargo test --manifest-path src-tauri/foundry/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 

@@ -4,6 +4,16 @@ All notable changes to **Cosmic Font Foundry** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Pure-Rust Vector Foundry Studio (`cosmic-foundry`):** Full vector font engineering suite in Forge (`Draw`, `Space & Kern`, `Composites & OT`, `Styles & Var`, and `QA Audit` tabs) with a cubic Bézier canvas, bitmap tracing, knife slicing, optical auto-spacing and 24-band auto-kerning, OpenType `GSUB` ligatures, 7 parametric style derivatives (`bold`, `light`, `condensed`, `extended`, `small_caps`, `oblique`, `inline`), `fvar`/`gvar` variable font compilation, UFO v3 import/export, and Fontspector-style QA audit and auto-fix.
+- **Headless `cosmic-foundry` CLI Binary:** Command-line tooling with `--json` output for `trace-sheet`, `svg-dir`, `qa`, `autofix`, `style`, `dedup`, `triage`, and `vibe`.
+- **Offline Visual & Typographic DNA Vibe Search:** Match fonts from raster glyph images or SVG outlines (`cosmic_visual_match_font`) and rank cached libraries by natural-language typographic vibe queries (`cosmic_vibe_search_fonts`, `vibe`) with zero external ML dependencies.
+- **Safe Archive Triage & Canonical Outline Deduplication:** Sandboxed `.zip`, folder, and font file license/safety scanning (`triage`) plus canonical outline geometry hashing (`dedup`, `cosmic_find_outline_duplicates`) to catch renamed or relocated duplicates.
+- **Expanded Multi-Foundry Discover:** Added **Bunny Fonts**, **Nerd Fonts**, live **GitHub** font repository search, and **13 curated catalog presets** alongside existing Google Fonts, Fontshare, Fontsource, Adobe & Dev Originals, Font Squirrel, and RSS/Atom/JSON feed support.
+- **15 Localhost MCP Tools:** Expanded the local MCP JSON-RPC 2.0 server to 15 tools, adding outline inspection, GitHub font search, Foundry QA audit/autofix, image tracing, style generation, visual matching, vibe search, and outline deduplication.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added
