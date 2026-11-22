@@ -32,6 +32,76 @@ export const COMMUNITY_PRESETS = [
     kind: "preset",
     descKey: "cs.presetIndie",
   },
+  {
+    key: "nerd_fonts",
+    url: "preset:nerd_fonts",
+    name: "Nerd Fonts Patched",
+    kind: "preset",
+    descKey: "cs.presetNerd",
+  },
+  {
+    key: "historical",
+    url: "preset:historical",
+    name: "Historical & Editorial Serif",
+    kind: "preset",
+    descKey: "cs.presetHistorical",
+  },
+  {
+    key: "retro_pixel",
+    url: "preset:retro_pixel",
+    name: "Retro, Pixel & Bitmap",
+    kind: "preset",
+    descKey: "cs.presetRetro",
+  },
+  {
+    key: "global_scripts",
+    url: "preset:global_scripts",
+    name: "Global Multi-Script",
+    kind: "preset",
+    descKey: "cs.presetGlobal",
+  },
+  {
+    key: "sil_scripts",
+    url: "preset:sil_scripts",
+    name: "SIL International Scripts",
+    kind: "preset",
+    descKey: "cs.presetSil",
+  },
+  {
+    key: "collletttivo",
+    url: "preset:collletttivo",
+    name: "Collletttivo & Experimental",
+    kind: "preset",
+    descKey: "cs.presetCollletttivo",
+  },
+  {
+    key: "use_modify",
+    url: "preset:use_modify",
+    name: "Use & Modify Editorial",
+    kind: "preset",
+    descKey: "cs.presetUseModify",
+  },
+  {
+    key: "oldschool_pc",
+    url: "preset:oldschool_pc",
+    name: "Oldschool PC & CRT Mono",
+    kind: "preset",
+    descKey: "cs.presetOldschool",
+  },
+  {
+    key: "indestructible",
+    url: "preset:indestructible",
+    name: "Indestructible Type",
+    kind: "preset",
+    descKey: "cs.presetIndestructible",
+  },
+  {
+    key: "open_foundry",
+    url: "preset:open_foundry",
+    name: "Open Foundry & Uncut",
+    kind: "preset",
+    descKey: "cs.presetOpenFoundry",
+  },
 ];
 
 const CUSTOM_SOURCES_STORAGE_KEY = "cosmic.customSources.v1";
@@ -116,10 +186,11 @@ function normalizeUrl(raw) {
 }
 
 async function fetchWebCatalog() {
-  const [fsRes, srcRes, sqRes] = await Promise.allSettled([
+  const [fsRes, srcRes, sqRes, bunnyRes] = await Promise.allSettled([
     fetch("https://api.fontshare.com/v2/fonts?offset=0&limit=100").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
     fetch("https://api.fontsource.org/v1/fonts").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
     fetch("https://www.fontsquirrel.com/api/fontlist/all").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
+    fetch("https://fonts.bunny.net/list").then((r) => (r.ok ? r.json() : Promise.reject(r.status))),
   ]);
 
   const fontshareEntries =
@@ -209,9 +280,37 @@ async function fetchWebCatalog() {
           }))
       : [];
 
+  const bunnyEntries =
+    bunnyRes.status === "fulfilled" && bunnyRes.value && typeof bunnyRes.value === "object" && !Array.isArray(bunnyRes.value)
+      ? Object.entries(bunnyRes.value).map(([slug, f], idx) => {
+          const weights = f?.weights?.length ? f.weights : [400];
+          const styles = f?.styles?.length ? f.styles : ["normal"];
+          const defSubset = f?.defSubset || "latin";
+          const name = (f?.familyName || slug.replace(/-/g, " ")).trim();
+          return {
+            name,
+            category: mapCategory(f?.category || ""),
+            styles: Math.max(1, weights.length * styles.length),
+            popularity: 50000 + idx,
+            date: "",
+            scripts: ["Latin"],
+            designers: [],
+            is_variable: Boolean(f?.isVariable),
+            axes: [],
+            variants: weights.map(String),
+            source: "bunny",
+            source_id: slug,
+            preview_url: null,
+            download_urls: weights.map(
+              (w) => `https://cdn.jsdelivr.net/fontsource/fonts/${slug}@latest/${defSubset}-${w}-normal.ttf`,
+            ),
+          };
+        })
+      : [];
+
   const seen = new Set();
   const combined = [];
-  for (const entry of [...fontshareEntries, ...fontsourceEntries, ...fontsquirrelEntries]) {
+  for (const entry of [...fontshareEntries, ...fontsourceEntries, ...fontsquirrelEntries, ...bunnyEntries]) {
     const key = entry.name.toLowerCase();
     if (!seen.has(key)) {
       seen.add(key);
@@ -281,6 +380,17 @@ function ensureDirectFace(entry) {
   } catch {}
 }
 
+const loadedBunny = new Set();
+function ensureBunnyStylesheet(entry) {
+  const slug = entry?.source_id;
+  if (!slug || loadedBunny.has(slug)) return;
+  loadedBunny.add(slug);
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = `https://fonts.bunny.net/css?family=${encodeURIComponent(slug)}:400,700&display=swap`;
+  document.head.appendChild(link);
+}
+
 const requestedChars = new Map();
 const BATCH_SIZE = 15;
 
@@ -289,11 +399,15 @@ export function requestGooglePreviews(items, text) {
   const googleNames = [];
   for (const item of items) {
     if (item && typeof item === "object") {
+      if (item.source === "bunny") {
+        ensureBunnyStylesheet(item);
+        continue;
+      }
       if (item.preview_url) {
         ensureDirectFace(item);
         continue;
       }
-      if (item.source === "fontsquirrel" || item.source?.startsWith("custom:")) continue;
+      if (item.source === "fontsquirrel" || item.source === "nerdfonts" || item.source?.startsWith("custom:")) continue;
       const fam = item.name;
       const prev = requestedChars.get(fam) ?? new Set();
       if ([...chars].some((c) => !prev.has(c))) googleNames.push(fam);
@@ -324,6 +438,10 @@ const loadedFull = new Set();
 export function loadGoogleFullSpecimen(entry) {
   if (!entry || loadedFull.has(entry.name)) return;
   loadedFull.add(entry.name);
+  if (entry.source === "bunny" && entry.source_id) {
+    ensureBunnyStylesheet(entry);
+    return;
+  }
   if (entry.source === "fontshare" && entry.source_id) {
     ensureDirectFace(entry);
     const link = document.createElement("link");
@@ -336,7 +454,7 @@ export function loadGoogleFullSpecimen(entry) {
     ensureDirectFace(entry);
     return;
   }
-  if (entry.source === "fontsquirrel" || entry.source?.startsWith("custom:")) return;
+  if (entry.source === "fontsquirrel" || entry.source === "nerdfonts" || entry.source?.startsWith("custom:")) return;
   let familyQuery = encodeURIComponent(entry.name).replace(/%20/g, "+");
   if (entry.is_variable && entry.axes?.length) {
     const sorted = [...entry.axes].sort((a, b) => a.tag.localeCompare(b.tag));
@@ -469,35 +587,138 @@ function webUrlHasExt(raw, ext) {
   return String(raw || "").split(/[?#]/)[0].toLowerCase().endsWith(ext);
 }
 
+const fsPreset = (name, category, designer, styles, is_variable, slug, subset = "latin", weight = 400, scripts = ["Latin"]) => [
+  name,
+  category,
+  designer,
+  styles,
+  is_variable,
+  scripts,
+  `https://cdn.jsdelivr.net/fontsource/fonts/${slug}@latest/${subset}-${weight}-normal.woff2`,
+  `https://cdn.jsdelivr.net/fontsource/fonts/${slug}@latest/${subset}-${weight}-normal.ttf`,
+];
+
+const nfPreset = (name, stem, previewSlug = null) => [
+  name,
+  "mono",
+  "Nerd Fonts",
+  1,
+  false,
+  ["Latin", "Symbols"],
+  previewSlug ? `https://cdn.jsdelivr.net/fontsource/fonts/${previewSlug}@latest/latin-400-normal.woff2` : null,
+  `https://github.com/ryanoasis/nerd-fonts/releases/latest/download/${stem}.zip`,
+];
+
 function webPresetEntries(presetKey, sourceIdKey, sourceName) {
   const srcTag = `custom:${sourceIdKey}`;
   const table = {
     velvetyne: [
-      ["Syne", "display", "Bonjour Monde", 5, true, "https://cdn.jsdelivr.net/fontsource/fonts/syne@latest/latin-700-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/syne@latest/latin-700-normal.ttf"],
-      ["Silkscreen", "display", "Jason Kottke / Velvetyne", 2, false, "https://cdn.jsdelivr.net/fontsource/fonts/silkscreen@latest/latin-400-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/silkscreen@latest/latin-400-normal.ttf"],
-      ["Unbounded", "display", "Studio Koto", 8, true, "https://cdn.jsdelivr.net/fontsource/fonts/unbounded@latest/latin-600-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/unbounded@latest/latin-600-normal.ttf"],
-      ["Bricolage Grotesque", "sans", "Mathieu Triay", 8, true, "https://cdn.jsdelivr.net/fontsource/fonts/bricolage-grotesque@latest/latin-500-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/bricolage-grotesque@latest/latin-500-normal.ttf"],
+      fsPreset("Syne", "display", "Bonjour Monde", 5, true, "syne", "latin", 700),
+      fsPreset("Silkscreen", "display", "Jason Kottke / Velvetyne", 2, false, "silkscreen", "latin", 400),
+      fsPreset("Unbounded", "display", "Studio Koto", 8, true, "unbounded", "latin", 600),
+      fsPreset("Bricolage Grotesque", "sans", "Mathieu Triay", 8, true, "bricolage-grotesque", "latin", 500),
     ],
     leagueof: [
-      ["League Spartan", "sans", "Matt Bailey & Tyler Finck", 9, true, "https://cdn.jsdelivr.net/fontsource/fonts/league-spartan@latest/latin-600-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/league-spartan@latest/latin-600-normal.ttf"],
-      ["Orbitron", "display", "Matt McInerney", 6, true, "https://cdn.jsdelivr.net/fontsource/fonts/orbitron@latest/latin-600-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/orbitron@latest/latin-600-normal.ttf"],
-      ["League Gothic", "display", "Micah Rich & Caroline Hadilaksono", 2, true, "https://cdn.jsdelivr.net/fontsource/fonts/league-gothic@latest/latin-400-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/league-gothic@latest/latin-400-normal.ttf"],
-      ["League Mono", "mono", "Tyler Finck", 8, true, "https://cdn.jsdelivr.net/fontsource/fonts/league-mono@latest/latin-400-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/league-mono@latest/latin-400-normal.ttf"],
+      fsPreset("League Spartan", "sans", "Matt Bailey & Tyler Finck", 9, true, "league-spartan", "latin", 600),
+      fsPreset("Orbitron", "display", "Matt McInerney", 6, true, "orbitron", "latin", 600),
+      fsPreset("League Gothic", "display", "Micah Rich & Caroline Hadilaksono", 2, true, "league-gothic", "latin", 400),
+      fsPreset("League Mono", "mono", "Tyler Finck", 8, true, "league-mono", "latin", 400),
     ],
     indie_mono: [
-      ["Fira Code", "mono", "Nikita Prokopov", 5, true, "https://cdn.jsdelivr.net/fontsource/fonts/fira-code@latest/latin-400-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/fira-code@latest/latin-400-normal.ttf"],
-      ["JetBrains Mono", "mono", "JetBrains", 16, true, "https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono@latest/latin-400-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono@latest/latin-400-normal.ttf"],
-      ["Victor Mono", "mono", "Rune B", 14, false, "https://cdn.jsdelivr.net/fontsource/fonts/victor-mono@latest/latin-400-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/victor-mono@latest/latin-400-normal.ttf"],
-      ["Space Mono", "mono", "Colophon Foundry", 4, false, "https://cdn.jsdelivr.net/fontsource/fonts/space-mono@latest/latin-400-normal.woff2", "https://cdn.jsdelivr.net/fontsource/fonts/space-mono@latest/latin-400-normal.ttf"],
+      fsPreset("Fira Code", "mono", "Nikita Prokopov", 5, true, "fira-code"),
+      fsPreset("JetBrains Mono", "mono", "JetBrains", 16, true, "jetbrains-mono"),
+      fsPreset("Victor Mono", "mono", "Rune B", 14, false, "victor-mono"),
+      fsPreset("Space Mono", "mono", "Colophon Foundry", 4, false, "space-mono"),
+      fsPreset("Commit Mono", "mono", "Eigil Nikolajsen", 4, false, "commit-mono"),
+      fsPreset("Monaspace Neon", "mono", "GitHub Next", 8, true, "monaspace-neon"),
+      fsPreset("Geist Mono", "mono", "Vercel", 9, true, "geist-mono"),
+      fsPreset("Iosevka", "mono", "Belleve Invis", 18, false, "iosevka"),
+    ],
+    nerd_fonts: [
+      nfPreset("JetBrainsMono Nerd Font", "JetBrainsMono", "jetbrains-mono"),
+      nfPreset("FiraCode Nerd Font", "FiraCode", "fira-code"),
+      nfPreset("Hack Nerd Font", "Hack", "hack"),
+      nfPreset("CascadiaCode Nerd Font", "CascadiaCode", "cascadia-code"),
+      nfPreset("Meslo Nerd Font", "Meslo", null),
+      nfPreset("Monaspace Nerd Font", "Monaspace", "monaspace-neon"),
+    ],
+    historical: [
+      fsPreset("EB Garamond", "serif", "Georg Duffner", 10, true, "eb-garamond"),
+      fsPreset("Cormorant Garamond", "serif", "Christian Thalmann", 10, false, "cormorant-garamond"),
+      fsPreset("Libre Baskerville", "serif", "Impallari Type", 3, false, "libre-baskerville"),
+      fsPreset("IM Fell English", "serif", "Igino Marini", 2, false, "im-fell-english"),
+      fsPreset("Fraunces", "serif", "Undercase Type", 14, true, "fraunces"),
+      fsPreset("Spectral", "serif", "Production Type", 14, false, "spectral"),
+      fsPreset("Bodoni Moda", "serif", "Indestructible Type", 12, true, "bodoni-moda"),
+    ],
+    retro_pixel: [
+      fsPreset("Silkscreen", "display", "Jason Kottke", 2, false, "silkscreen"),
+      fsPreset("Press Start 2P", "display", "CodeMan38", 1, false, "press-start-2p"),
+      fsPreset("VT323", "mono", "Peter Hull", 1, false, "vt323"),
+      fsPreset("Pixelify Sans", "display", "Stefie Justprince", 4, true, "pixelify-sans"),
+      fsPreset("Jersey 10", "display", "Sarah Cadigan-Fried", 1, false, "jersey-10"),
+      fsPreset("Tiny5", "display", "Gisselle Trejos", 1, false, "tiny5"),
+    ],
+    global_scripts: [
+      fsPreset("Vazirmatn", "sans", "Saber Rastikerdar", 9, true, "vazirmatn", "arabic", 400, ["Arabic", "Latin"]),
+      fsPreset("Cairo", "sans", "Mohamed Gaber", 8, true, "cairo", "arabic", 400, ["Arabic", "Latin"]),
+      fsPreset("Rubik", "sans", "Hubert & Fischer", 14, true, "rubik", "latin", 400, ["Latin", "Cyrillic", "Hebrew", "Arabic"]),
+      fsPreset("Noto Sans JP", "other", "Google / Monotype", 9, true, "noto-sans-jp", "japanese", 400, ["Japanese", "Latin"]),
+      fsPreset("Noto Sans Arabic", "other", "Google / Monotype", 9, true, "noto-sans-arabic", "arabic", 400, ["Arabic"]),
+      fsPreset("Shippori Mincho", "serif", "Fontdasu", 5, false, "shippori-mincho", "japanese", 400, ["Japanese", "Latin"]),
+    ],
+    sil_scripts: [
+      fsPreset("Gentium Plus", "serif", "SIL International", 4, false, "gentium-plus", "latin", 400, ["Latin", "Greek", "Cyrillic"]),
+      fsPreset("Charis SIL", "serif", "SIL International", 4, false, "charis-sil", "latin", 400, ["Latin", "Cyrillic"]),
+      fsPreset("Andika", "sans", "SIL International", 4, false, "andika", "latin", 400, ["Latin", "Cyrillic"]),
+      fsPreset("Scheherazade New", "other", "SIL International", 4, false, "scheherazade-new", "arabic", 400, ["Arabic", "Latin"]),
+      fsPreset("Abyssinica SIL", "other", "SIL International", 1, false, "abyssinica-sil", "latin", 400, ["Latin"]),
+      fsPreset("Padauk", "other", "SIL International", 4, false, "padauk", "latin", 400, ["Latin"]),
+    ],
+    collletttivo: [
+      fsPreset("Instrument Serif", "serif", "Rodrigo Fuenzalida", 2, false, "instrument-serif"),
+      fsPreset("Climate Crisis", "display", "Daniel Coull", 1, true, "climate-crisis"),
+      fsPreset("Plus Jakarta Sans", "sans", "Tokotype", 14, true, "plus-jakarta-sans"),
+      fsPreset("Rubik Glitch", "display", "Meir Sadan", 1, false, "rubik-glitch"),
+      fsPreset("Archivo Black", "display", "Omnibus-Type", 1, false, "archivo-black"),
+    ],
+    use_modify: [
+      fsPreset("Work Sans", "sans", "Wei Huang", 18, true, "work-sans"),
+      fsPreset("Epilogue", "sans", "Tyler Finck", 18, true, "epilogue"),
+      fsPreset("Space Grotesk", "sans", "Florian Karsten", 5, true, "space-grotesk"),
+      fsPreset("Fraunces", "serif", "Undercase Type", 14, true, "fraunces"),
+      fsPreset("Commissioner", "sans", "Kostas Bartsokas", 18, true, "commissioner"),
+    ],
+    oldschool_pc: [
+      fsPreset("IBM Plex Mono", "mono", "Mike Abbink / Bold Monday", 14, false, "ibm-plex-mono"),
+      fsPreset("VT323", "mono", "Peter Hull", 1, false, "vt323"),
+      fsPreset("Press Start 2P", "display", "CodeMan38", 1, false, "press-start-2p"),
+      fsPreset("Silkscreen", "display", "Jason Kottke", 2, false, "silkscreen"),
+      fsPreset("Share Tech Mono", "mono", "Ralph du Carrois", 1, false, "share-tech-mono"),
+      fsPreset("Cousine", "mono", "Steve Matteson", 4, false, "cousine"),
+    ],
+    indestructible: [
+      fsPreset("Jost", "sans", "Owen Earl (indestructible type*)", 9, true, "jost"),
+      fsPreset("Besley", "serif", "Owen Earl (indestructible type*)", 12, true, "besley"),
+      fsPreset("Bodoni Moda", "serif", "Owen Earl (indestructible type*)", 12, true, "bodoni-moda"),
+      fsPreset("Libre Bodoni", "serif", "Pablo Impallari", 4, true, "libre-bodoni"),
+      fsPreset("Newsreader", "serif", "Production Type", 14, true, "newsreader"),
+    ],
+    open_foundry: [
+      fsPreset("Inter", "sans", "Rasmus Andersson", 18, true, "inter"),
+      fsPreset("Instrument Sans", "sans", "Rodrigo Fuenzalida", 8, true, "instrument-sans"),
+      fsPreset("Archivo", "sans", "Omnibus-Type", 18, true, "archivo"),
+      fsPreset("DM Sans", "sans", "Colophon Foundry", 12, true, "dm-sans"),
+      fsPreset("Manrope", "sans", "Mikhail Sharanda", 7, true, "manrope"),
     ],
   };
-  return (table[presetKey] || []).map(([name, category, designer, styles, is_variable, woff2, ttf], idx) => ({
+  return (table[presetKey] || []).map(([name, category, designer, styles, is_variable, scripts, woff2, ttf], idx) => ({
     name,
     category,
     styles,
     popularity: idx + 1,
     date: "2026-01-01",
-    scripts: ["Latin"],
+    scripts,
     designers: [designer],
     is_variable,
     axes: [],
@@ -739,4 +960,40 @@ export async function syncCustomSource(id) {
   discover.customSources = updated;
   await reloadMergedCatalog();
   return updated;
+}
+
+export async function searchGithubFonts(query = "") {
+  const trimmed = String(query || "").trim();
+  if (inTauri) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("discover_search_github_fonts", { query: trimmed });
+  }
+  const q = trimmed ? `${trimmed} topic:font` : "topic:font license:ofl-1.1";
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&per_page=18`;
+  const resp = await fetch(url, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (!resp.ok) {
+    throw new Error(`GitHub search failed (HTTP ${resp.status})`);
+  }
+  const data = await resp.json();
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items.map((item) => {
+    const htmlUrl = item.html_url || "";
+    const rawDesc = String(item.description || "").trim();
+    const description = rawDesc.length > 180 ? `${rawDesc.slice(0, 177)}...` : rawDesc;
+    const releasesUrl =
+      (item.releases_url ? String(item.releases_url).replace("{/id}", "") : "") ||
+      (htmlUrl ? `${htmlUrl.replace(/\/+$/, "")}/releases` : "");
+    return {
+      full_name: item.full_name || "",
+      name: item.name || item.full_name || "",
+      description,
+      stars: Number(item.stargazers_count || 0),
+      license: item.license?.spdx_id || "Unknown",
+      html_url: htmlUrl,
+      releases_url: releasesUrl,
+      updated_at: item.updated_at || "",
+    };
+  });
 }

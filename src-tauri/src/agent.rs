@@ -665,7 +665,7 @@ fn handle_mcp_post(
                 Some(app),
                 "mcp",
                 "tools/list",
-                "Listed 6 MCP font tools",
+                format!("Listed {} MCP font tools", mcp_tools_list().len()),
                 true,
             );
         },
@@ -759,6 +759,123 @@ pub fn mcp_tools_list() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "name": "cosmic_inspect_glyph_outline",
+            "description": "Extract vector Bezier contours, SVG path data, bounding box, and sidebearing metrics for a specific Unicode codepoint from an installed font family or file path.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "family": { "type": "string", "description": "Installed/cached font family name (used if path is omitted)." },
+                    "path": { "type": "string", "description": "Direct path to a .ttf or .otf file." },
+                    "codepoint": { "type": "integer", "description": "Unicode codepoint integer (e.g. 65 for 'A')." },
+                    "char": { "type": "string", "description": "Single character alternative to codepoint (e.g. 'A')." }
+                }
+            }
+        }),
+        json!({
+            "name": "cosmic_search_github_fonts",
+            "description": "Search open-source font repositories on GitHub by keyword (with star counts, SPDX license, and release URLs).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query (e.g. 'mono', 'serif', 'arabic', 'pixel'). Leave empty for top OFL fonts." }
+                }
+            }
+        }),
+        json!({
+            "name": "cosmic_foundry_audit_font",
+            "description": "Load a .ttf/.otf font file, UFO directory, or installed font family and run Foundry QA checks (winding, extrema, coordinate rounding, metrics, and OpenType features).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Direct path to a .ttf/.otf file or UFO directory." },
+                    "family": { "type": "string", "description": "Installed/cached font family name (used if path is omitted)." }
+                }
+            }
+        }),
+        json!({
+            "name": "cosmic_foundry_autofix_and_compile",
+            "description": "Load a .ttf/.otf font file or UFO directory, run automated QA repairs (winding normalization, missing extrema, coordinate rounding), compile to TrueType .ttf, and write to out_path.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Source .ttf/.otf file or UFO directory path." },
+                    "out_path": { "type": "string", "description": "Destination .ttf file path to write." }
+                },
+                "required": ["path", "out_path"]
+            }
+        }),
+        json!({
+            "name": "cosmic_foundry_trace_image",
+            "description": "Vectorize a monochrome or high-contrast glyph image file into cubic Bezier contours, SVG path data, and bounding box summary.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "image_path": { "type": "string", "description": "Path to the raster image file (PNG/JPEG/BMP/WebP)." },
+                    "threshold": { "type": "integer", "description": "Luminance threshold (0-255, default 140)." }
+                },
+                "required": ["image_path"]
+            }
+        }),
+        json!({
+            "name": "cosmic_foundry_generate_style",
+            "description": "Generate a derived style variant (bold, light, condensed, extended, small_caps, oblique, or inline) from an installed font, .ttf/.otf file, or UFO directory and compile to out_path.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Direct path to a .ttf/.otf file or UFO directory." },
+                    "family": { "type": "string", "description": "Installed/cached font family name (used if path is omitted)." },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["bold", "light", "condensed", "extended", "small_caps", "oblique", "inline"],
+                        "description": "Style variant kind to generate."
+                    },
+                    "amount": { "type": "number", "description": "Optional strength, scale factor, or slant angle (uses kind-specific default if omitted)." },
+                    "out_path": { "type": "string", "description": "Destination .ttf file path to write." }
+                },
+                "required": ["kind", "out_path"]
+            }
+        }),
+        json!({
+            "name": "cosmic_visual_match_font",
+            "description": "Visually identify fonts from a glyph raster image file or SVG path/XML by matching traced outlines against cached installed fonts.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "image_path": { "type": "string", "description": "Path to a raster glyph image file." },
+                    "svg_text": { "type": "string", "description": "SVG markup or raw SVG path 'd' string (used if image_path is omitted)." },
+                    "sample_chars": { "type": "string", "description": "Candidate characters to probe (default 'AHMNOORSTaeon')." },
+                    "top_k": { "type": "integer", "description": "Maximum number of top matching fonts to return (default 8)." }
+                }
+            }
+        }),
+        json!({
+            "name": "cosmic_vibe_search_fonts",
+            "description": "Search cached fonts using natural-language typographic vibe queries (e.g. 'chunky industrial stencil', 'editorial high contrast serif', 'distressed horror') without external ML.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Natural-language typographic style or mood description." },
+                    "top_k": { "type": "integer", "description": "Maximum number of top matches to return (default 10)." }
+                },
+                "required": ["query"]
+            }
+        }),
+        json!({
+            "name": "cosmic_find_outline_duplicates",
+            "description": "Detect renamed or relocated font duplicates across explicit paths, a directory, or the cached library by hashing canonical outline geometry.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "dir": { "type": "string", "description": "Optional directory path to scan recursively for duplicate fonts." },
+                    "paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional list of font file paths to deduplicate."
+                    }
+                }
+            }
+        }),
     ]
 }
 
@@ -769,6 +886,8 @@ fn is_mutating_tool(name: &str) -> bool {
             | "cosmic_scan_pc_fonts"
             | "cosmic_ui_navigate"
             | "cosmic_auto_organize"
+            | "cosmic_foundry_autofix_and_compile"
+            | "cosmic_foundry_generate_style"
     )
 }
 
@@ -952,6 +1071,229 @@ fn execute_tool(
                 }))
             }
         }
+        "cosmic_inspect_glyph_outline" => {
+            let cp = args["codepoint"]
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .or_else(|| {
+                    args["char"]
+                        .as_str()
+                        .and_then(|s| s.chars().next())
+                        .map(|c| c as u32)
+                })
+                .ok_or_else(|| "Provide 'codepoint' (u32) or 'char' (string).".to_string())?;
+            let resolved_path =
+                resolve_font_path(app, args, "Provide 'family' or 'path' to inspect a glyph.")?;
+            let info = cosmic_foundry::import::inspect_glyph_outline(
+                std::path::Path::new(&resolved_path),
+                cp,
+            )?;
+            serde_json::to_value(info).map_err(|e| e.to_string())
+        }
+        "cosmic_search_github_fonts" => {
+            let q = args["query"].as_str().unwrap_or("");
+            let repos = tauri::async_runtime::block_on(crate::google::search_github_fonts(q))?;
+            Ok(json!({
+                "query": q,
+                "count": repos.len(),
+                "repositories": repos,
+            }))
+        }
+        "cosmic_foundry_audit_font" => {
+            let resolved_path =
+                resolve_font_path(app, args, "Provide 'family' or 'path' to audit a font.")?;
+            let family_hint = args["family"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let project = load_foundry_project(&resolved_path, family_hint)?;
+            let report = cosmic_foundry::qa::audit_project(&project);
+            serde_json::to_value(report).map_err(|e| e.to_string())
+        }
+        "cosmic_foundry_autofix_and_compile" => {
+            let path = args["path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    "Provide non-empty 'path' to font file or UFO directory.".to_string()
+                })?;
+            let out_path = args["out_path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    "Provide non-empty 'out_path' for compiled .ttf output.".to_string()
+                })?;
+            let mut project = load_foundry_project(path, None)?;
+            let (fixed_count, report) = cosmic_foundry::qa::autofix_project(&mut project);
+            let compiled = cosmic_foundry::compiler::compile_ttf(&project, true)?;
+            write_compiled_ttf(out_path, &compiled.ttf_bytes)?;
+            Ok(json!({
+                "ok": true,
+                "fixed": fixed_count,
+                "out_path": out_path,
+                "bytes": compiled.ttf_bytes.len(),
+                "report": report,
+            }))
+        }
+        "cosmic_foundry_trace_image" => {
+            let image_path = args["image_path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "Provide non-empty 'image_path' to trace.".to_string())?;
+            let bytes = fs::read(image_path)
+                .map_err(|e| format!("Failed to read image '{image_path}': {e}"))?;
+            let default_opts = cosmic_foundry::trace::TraceOptions::default();
+            let threshold = args["threshold"]
+                .as_i64()
+                .map(|t| t.clamp(0, 255) as u8)
+                .unwrap_or(default_opts.threshold);
+            let opts = cosmic_foundry::trace::TraceOptions {
+                threshold,
+                ..default_opts
+            };
+            let contours = cosmic_foundry::trace::trace_image_bytes(&bytes, &opts)?;
+            let svg_d = cosmic_foundry::model::contours_to_svg_d(&contours, opts.upm as f64 * 0.8);
+            let bbox = cosmic_foundry::model::compute_bbox(&contours);
+            let point_count: usize = contours.iter().map(|c| c.anchors.len()).sum();
+            Ok(json!({
+                "contour_count": contours.len(),
+                "point_count": point_count,
+                "svg_d": &svg_d,
+                "svg_path": format!(r#"<path d="{svg_d}" />"#),
+                "bbox": {
+                    "x_min": bbox[0],
+                    "y_min": bbox[1],
+                    "x_max": bbox[2],
+                    "y_max": bbox[3],
+                    "width": bbox[2] - bbox[0],
+                    "height": bbox[3] - bbox[1],
+                },
+                "threshold": threshold,
+            }))
+        }
+        "cosmic_foundry_generate_style" => {
+            let resolved_path = resolve_font_path(
+                app,
+                args,
+                "Provide 'family' or 'path' to generate a style variant.",
+            )?;
+            let kind_str = args["kind"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "Provide 'kind' (bold, light, condensed, extended, small_caps, oblique, or inline).".to_string())?;
+            let kind = parse_style_variant_kind(kind_str)?;
+            let out_path = args["out_path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    "Provide non-empty 'out_path' for compiled .ttf output.".to_string()
+                })?;
+            let amount = args["amount"].as_f64().unwrap_or(0.0);
+            let family_hint = args["family"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let project = load_foundry_project(&resolved_path, family_hint)?;
+            let derived = cosmic_foundry::styles::generate_style_variant(&project, kind, amount);
+            let compiled = cosmic_foundry::compiler::compile_ttf(&derived, true)?;
+            write_compiled_ttf(out_path, &compiled.ttf_bytes)?;
+            Ok(json!({
+                "ok": true,
+                "style_name": derived.style_name,
+                "out_path": out_path,
+                "bytes": compiled.ttf_bytes.len(),
+            }))
+        }
+        "cosmic_visual_match_font" => {
+            let contours = if let Some(img_path) = args["image_path"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let bytes = fs::read(img_path)
+                    .map_err(|e| format!("Failed to read image '{img_path}': {e}"))?;
+                cosmic_foundry::trace::trace_image_bytes(
+                    &bytes,
+                    &cosmic_foundry::trace::TraceOptions::default(),
+                )?
+            } else if let Some(svg_text) = args["svg_text"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                cosmic_foundry::import::import_svg_glyph(svg_text, 1000)?
+            } else {
+                return Err("Provide 'image_path' or 'svg_text' for visual font matching.".into());
+            };
+            if contours.is_empty() {
+                return Err("No valid contours extracted from input.".into());
+            }
+            let candidates = cached_font_candidates(app);
+            let sample_chars = args["sample_chars"].as_str().unwrap_or("");
+            let top_k = args["top_k"].as_u64().unwrap_or(8).clamp(1, 50) as usize;
+            let matches = cosmic_foundry::retype::match_outline_against_fonts(
+                &contours,
+                &candidates,
+                sample_chars,
+                top_k,
+            );
+            Ok(json!({
+                "count": matches.len(),
+                "matches": matches,
+            }))
+        }
+        "cosmic_vibe_search_fonts" => {
+            let query = args["query"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "Provide non-empty 'query' string for vibe search.".to_string())?;
+            let top_k = args["top_k"].as_u64().unwrap_or(10).clamp(1, 50) as usize;
+            let candidates = cached_font_candidates_with_category(app);
+            let matches = cosmic_foundry::vibe::search_fonts_by_vibe(query, &candidates, top_k);
+            Ok(json!({
+                "count": matches.len(),
+                "matches": matches,
+            }))
+        }
+        "cosmic_find_outline_duplicates" => {
+            let target_paths = if let Some(arr) = args["paths"].as_array() {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::trim))
+                    .filter(|s| !s.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect()
+            } else if let Some(dir) = args["dir"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                collect_font_files_recursive(std::path::Path::new(dir), 12)
+            } else {
+                let state = app.state::<AppState>();
+                let cache = state.cache.lock().unwrap();
+                let mut seen = std::collections::HashSet::new();
+                let mut list = Vec::new();
+                for fam in &cache.families {
+                    for p in &fam.files {
+                        if !p.is_empty() && seen.insert(p.clone()) {
+                            list.push(std::path::PathBuf::from(p));
+                        }
+                    }
+                }
+                list
+            };
+            let groups = cosmic_foundry::outline_hash::find_outline_duplicates(&target_paths);
+            Ok(json!({
+                "group_count": groups.len(),
+                "groups": groups,
+            }))
+        }
         _ => Err(format!("Unknown MCP tool: {name}")),
     };
 
@@ -975,6 +1317,128 @@ fn execute_tool(
     result
 }
 
+fn resolve_font_path(app: &AppHandle, args: &Value, missing_err: &str) -> Result<String, String> {
+    if let Some(p) = args["path"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(p.to_string());
+    }
+    if let Some(fam) = args["family"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let state = app.state::<AppState>();
+        let cache = state.cache.lock().unwrap();
+        let lower = fam.to_ascii_lowercase();
+        return cache
+            .families
+            .iter()
+            .find(|f| f.name.to_ascii_lowercase() == lower)
+            .or_else(|| {
+                cache
+                    .families
+                    .iter()
+                    .find(|f| f.name.to_ascii_lowercase().contains(&lower))
+            })
+            .map(|f| f.file.clone())
+            .ok_or_else(|| format!("No cached font family matching '{fam}'"));
+    }
+    Err(missing_err.to_string())
+}
+
+fn load_foundry_project(
+    path_str: &str,
+    family_hint: Option<&str>,
+) -> Result<cosmic_foundry::model::FoundryProject, String> {
+    let p = std::path::Path::new(path_str);
+    if p.is_dir() {
+        cosmic_foundry::compiler::import_ufo(p)
+    } else {
+        cosmic_foundry::import::fork_font_file(p, family_hint, 256)
+    }
+}
+
+fn parse_style_variant_kind(raw: &str) -> Result<cosmic_foundry::styles::StyleVariantKind, String> {
+    use cosmic_foundry::styles::StyleVariantKind;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "bold" => Ok(StyleVariantKind::Bold),
+        "light" => Ok(StyleVariantKind::Light),
+        "condensed" => Ok(StyleVariantKind::Condensed),
+        "extended" => Ok(StyleVariantKind::Extended),
+        "small_caps" | "smallcaps" | "small-caps" => Ok(StyleVariantKind::SmallCaps),
+        "oblique" => Ok(StyleVariantKind::Oblique),
+        "inline" => Ok(StyleVariantKind::Inline),
+        other => Err(format!(
+            "Unsupported style variant '{other}'. Expected one of: bold, light, condensed, extended, small_caps, oblique, inline."
+        )),
+    }
+}
+
+fn write_compiled_ttf(out_path: &str, ttf_bytes: &[u8]) -> Result<(), String> {
+    let dest = std::path::Path::new(out_path);
+    if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create output directory '{}': {e}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(dest, ttf_bytes).map_err(|e| format!("Failed to write '{out_path}': {e}"))
+}
+
+fn cached_font_candidates(app: &AppHandle) -> Vec<(String, String)> {
+    let state = app.state::<AppState>();
+    let cache = state.cache.lock().unwrap();
+    cache
+        .families
+        .iter()
+        .filter(|f| !f.file.is_empty())
+        .map(|f| (f.name.clone(), f.file.clone()))
+        .collect()
+}
+
+fn cached_font_candidates_with_category(app: &AppHandle) -> Vec<(String, String, String)> {
+    let state = app.state::<AppState>();
+    let cache = state.cache.lock().unwrap();
+    cache
+        .families
+        .iter()
+        .filter(|f| !f.file.is_empty())
+        .map(|f| (f.name.clone(), f.file.clone(), f.category.clone()))
+        .collect()
+}
+
+fn collect_font_files_recursive(dir: &std::path::Path, depth: usize) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if depth == 0 {
+        return out;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            out.extend(collect_font_files_recursive(&path, depth - 1));
+        } else if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            if matches!(ext.to_ascii_lowercase().as_str(), "ttf" | "otf") {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
 fn summarize_tool_log(name: &str, args: &Value) -> String {
     match name {
         "cosmic_toggle_fonts" => format!(
@@ -992,6 +1456,37 @@ fn summarize_tool_log(name: &str, args: &Value) -> String {
             args["mode"].as_str().unwrap_or("os"),
             args["collection_name"].as_str().unwrap_or("OS Auto")
         ),
+        "cosmic_foundry_audit_font" => format!(
+            "path={:?}, family={:?}",
+            args["path"].as_str().unwrap_or(""),
+            args["family"].as_str().unwrap_or("")
+        ),
+        "cosmic_foundry_autofix_and_compile" => format!(
+            "path={:?}, out_path={:?}",
+            args["path"].as_str().unwrap_or(""),
+            args["out_path"].as_str().unwrap_or("")
+        ),
+        "cosmic_foundry_trace_image" => format!(
+            "image_path={:?}, threshold={:?}",
+            args["image_path"].as_str().unwrap_or(""),
+            args["threshold"].as_i64()
+        ),
+        "cosmic_foundry_generate_style" => format!(
+            "kind={:?}, out_path={:?}",
+            args["kind"].as_str().unwrap_or(""),
+            args["out_path"].as_str().unwrap_or("")
+        ),
+        "cosmic_visual_match_font" => format!(
+            "image_path={:?}, has_svg={}",
+            args["image_path"].as_str().unwrap_or(""),
+            args["svg_text"]
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty())
+        ),
+        "cosmic_vibe_search_fonts" => format!("query={:?}", args["query"].as_str().unwrap_or("")),
+        "cosmic_find_outline_duplicates" => {
+            format!("dir={:?}", args["dir"].as_str().unwrap_or(""))
+        }
         _ => format!("Executed {name}"),
     }
 }
@@ -1628,7 +2123,12 @@ async fn run_external_ai_prompt(
          Respond ONLY with strict JSON matching: \
          {{\"reply\": string, \"actions\": [{{\"tool\": string, \"arguments\": object}}]}}. \
          Available tools: cosmic_get_status, cosmic_search_fonts, cosmic_toggle_fonts, \
-         cosmic_scan_pc_fonts, cosmic_ui_navigate, cosmic_auto_organize. \
+         cosmic_scan_pc_fonts, cosmic_ui_navigate, cosmic_auto_organize, \
+         cosmic_inspect_glyph_outline, cosmic_search_github_fonts, \
+         cosmic_foundry_audit_font, cosmic_foundry_autofix_and_compile, \
+         cosmic_foundry_trace_image, cosmic_foundry_generate_style, \
+         cosmic_visual_match_font, cosmic_vibe_search_fonts, \
+         cosmic_find_outline_duplicates. \
          Current status: {}",
         status
     );
@@ -1747,18 +2247,104 @@ mod tests {
     #[test]
     fn mcp_tools_list_and_status_schema_are_valid() {
         let tools = mcp_tools_list();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 15);
+        let expected_names = [
+            "cosmic_get_status",
+            "cosmic_search_fonts",
+            "cosmic_toggle_fonts",
+            "cosmic_scan_pc_fonts",
+            "cosmic_ui_navigate",
+            "cosmic_auto_organize",
+            "cosmic_inspect_glyph_outline",
+            "cosmic_search_github_fonts",
+            "cosmic_foundry_audit_font",
+            "cosmic_foundry_autofix_and_compile",
+            "cosmic_foundry_trace_image",
+            "cosmic_foundry_generate_style",
+            "cosmic_visual_match_font",
+            "cosmic_vibe_search_fonts",
+            "cosmic_find_outline_duplicates",
+        ];
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-        assert!(names.contains(&"cosmic_get_status"));
-        assert!(names.contains(&"cosmic_search_fonts"));
-        assert!(names.contains(&"cosmic_toggle_fonts"));
-        assert!(names.contains(&"cosmic_scan_pc_fonts"));
-        assert!(names.contains(&"cosmic_ui_navigate"));
-        assert!(names.contains(&"cosmic_auto_organize"));
-        for tool in tools {
+        for expected in expected_names {
+            assert!(
+                names.contains(&expected),
+                "missing expected MCP tool: {expected}"
+            );
+        }
+        for tool in &tools {
             assert!(tool["description"].as_str().is_some_and(|d| !d.is_empty()));
             assert_eq!(tool["inputSchema"]["type"], "object");
+            assert!(tool["inputSchema"]["properties"].is_object());
         }
+
+        let by_name = |name: &str| -> &Value {
+            tools
+                .iter()
+                .find(|t| t["name"].as_str() == Some(name))
+                .unwrap_or_else(|| panic!("missing tool {name}"))
+        };
+        let reqs = |name: &str| -> Vec<&str> {
+            by_name(name)["inputSchema"]["required"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default()
+        };
+
+        assert_eq!(reqs("cosmic_toggle_fonts"), vec!["families", "activate"]);
+        assert_eq!(
+            reqs("cosmic_foundry_autofix_and_compile"),
+            vec!["path", "out_path"]
+        );
+        assert_eq!(reqs("cosmic_foundry_trace_image"), vec!["image_path"]);
+        assert_eq!(
+            reqs("cosmic_foundry_generate_style"),
+            vec!["kind", "out_path"]
+        );
+        assert!(
+            by_name("cosmic_foundry_audit_font")["inputSchema"]["properties"]["path"].is_object()
+        );
+        assert!(
+            by_name("cosmic_foundry_audit_font")["inputSchema"]["properties"]["family"].is_object()
+        );
+        assert!(
+            by_name("cosmic_visual_match_font")["inputSchema"]["properties"]["image_path"]
+                .is_object()
+        );
+        assert!(
+            by_name("cosmic_visual_match_font")["inputSchema"]["properties"]["svg_text"]
+                .is_object()
+        );
+    }
+
+    #[test]
+    fn is_mutating_tool_classifies_read_only_and_mutating_tools() {
+        let read_only = [
+            "cosmic_get_status",
+            "cosmic_search_fonts",
+            "cosmic_inspect_glyph_outline",
+            "cosmic_search_github_fonts",
+            "cosmic_foundry_audit_font",
+            "cosmic_foundry_trace_image",
+            "cosmic_visual_match_font",
+            "cosmic_vibe_search_fonts",
+            "cosmic_find_outline_duplicates",
+        ];
+        let mutating = [
+            "cosmic_toggle_fonts",
+            "cosmic_scan_pc_fonts",
+            "cosmic_ui_navigate",
+            "cosmic_auto_organize",
+            "cosmic_foundry_autofix_and_compile",
+            "cosmic_foundry_generate_style",
+        ];
+        for name in read_only {
+            assert!(!is_mutating_tool(name), "{name} must be read-only");
+        }
+        for name in mutating {
+            assert!(is_mutating_tool(name), "{name} must be mutating");
+        }
+        assert_eq!(read_only.len() + mutating.len(), mcp_tools_list().len());
     }
 
     #[test]
@@ -1840,7 +2426,7 @@ mod tests {
 
         let (h2, r2) = send_rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         assert!(h2.starts_with("HTTP/1.1 200 OK"));
-        assert_eq!(r2["result"]["tools"].as_array().unwrap().len(), 6);
+        assert_eq!(r2["result"]["tools"].as_array().unwrap().len(), 15);
 
         server.join().unwrap();
     }

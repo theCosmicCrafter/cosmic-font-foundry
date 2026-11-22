@@ -1,5 +1,5 @@
 <script>
-  import { Rss, Plus, RefreshCw, Trash2, Eye, Check, X, Sparkles, Globe } from "@lucide/svelte";
+  import { Rss, Plus, RefreshCw, Trash2, Eye, Check, X, Sparkles, Globe, Search, Star } from "@lucide/svelte";
   import {
     discover,
     COMMUNITY_PRESETS,
@@ -8,6 +8,7 @@
     removeCustomSource,
     toggleCustomSource,
     syncCustomSource,
+    searchGithubFonts,
   } from "../lib/discover.svelte.js";
   import { notify } from "../lib/toasts.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
@@ -21,9 +22,57 @@
   let syncingId = $state(null);
   let formError = $state("");
 
+  let ghQuery = $state("");
+  let ghSearching = $state(false);
+  let ghSearched = $state(false);
+  let ghResults = $state([]);
+  let ghError = $state("");
+  let ghTrackingUrl = $state("");
+
   loadCustomSources();
 
   const trackedUrls = $derived(new Set((discover.customSources ?? []).map((s) => s.url.toLowerCase())));
+
+  function isRepoTracked(repo) {
+    const html = String(repo.html_url || "").toLowerCase().replace(/\/+$/, "");
+    if (html && trackedUrls.has(html)) return true;
+    const full = String(repo.full_name || "").toLowerCase();
+    if (!full) return false;
+    const apiBase = `https://api.github.com/repos/${full}/releases`;
+    for (const u of trackedUrls) {
+      if (u === apiBase || u.startsWith(`${apiBase}?`)) return true;
+    }
+    return false;
+  }
+
+  async function runGithubSearch(e) {
+    e?.preventDefault();
+    if (ghSearching) return;
+    ghError = "";
+    ghSearching = true;
+    try {
+      ghResults = await searchGithubFonts(ghQuery);
+      ghSearched = true;
+    } catch (err) {
+      ghError = String(err?.message || err);
+    } finally {
+      ghSearching = false;
+    }
+  }
+
+  async function trackGithubRepo(repo) {
+    if (adding || ghTrackingUrl) return;
+    ghError = "";
+    ghTrackingUrl = repo.html_url;
+    try {
+      await addCustomSource({ name: repo.name, url: repo.html_url, kind: "github" });
+      notify("ok", t("cs.addedTitle"), repo.name);
+    } catch (err) {
+      ghError = String(err?.message || err);
+    } finally {
+      ghTrackingUrl = "";
+    }
+  }
 
   async function submitCustomForm(e) {
     e.preventDefault();
@@ -196,6 +245,69 @@
             </div>
           {/each}
         </div>
+      </section>
+
+      <!-- Search GitHub Open-Source Fonts -->
+      <section class="card">
+        <div class="sec-row">
+          <Search size={13} class="ico-cyan" />
+          <span class="sec-kicker">{t("cs.ghSearchTitle")}</span>
+        </div>
+        <form class="gh-search-form" onsubmit={runGithubSearch}>
+          <div class="url-row">
+            <input
+              type="search"
+              class="gh-input"
+              bind:value={ghQuery}
+              placeholder={t("cs.ghSearchPlaceholder")}
+            />
+            <button type="submit" class="btn-accent" disabled={ghSearching}>
+              <Search size={13} strokeWidth={2.2} />
+              {ghSearching ? t("cs.ghSearching") : t("cs.ghSearchBtn")}
+            </button>
+          </div>
+        </form>
+        {#if ghError}
+          <p class="err-banner">{ghError}</p>
+        {/if}
+        {#if ghResults.length}
+          <div class="gh-list">
+            {#each ghResults as repo (repo.full_name)}
+              {@const tracked = isRepoTracked(repo)}
+              <div class="gh-row">
+                <div class="gh-main">
+                  <div class="gh-title-line">
+                    <strong>{repo.name}</strong>
+                    <span class="gh-full">{repo.full_name}</span>
+                    <span class="gh-star-pill num">
+                      <Star size={11} />
+                      {Number(repo.stars || 0).toLocaleString()} {t("cs.ghStars")}
+                    </span>
+                    <span class="kind-pill">{repo.license}</span>
+                  </div>
+                  {#if repo.description}
+                    <div class="gh-desc">{repo.description}</div>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  class="btn-sm"
+                  class:done={tracked}
+                  disabled={tracked || adding || Boolean(ghTrackingUrl)}
+                  onclick={() => trackGithubRepo(repo)}
+                >
+                  {#if tracked}
+                    <Check size={12} /> {t("cs.ghTracked")}
+                  {:else}
+                    <Plus size={12} /> {t("cs.ghTrack")}
+                  {/if}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {:else if ghSearched && !ghSearching && !ghError}
+          <p class="empty">{t("cs.ghEmpty")}</p>
+        {/if}
       </section>
 
       <!-- Tracked Sources -->
@@ -468,7 +580,7 @@
 
   .preset-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 9px;
   }
 
@@ -661,5 +773,95 @@
 
   :global(.spin) {
     animation: cf-spin 0.9s linear infinite;
+  }
+
+  .gh-search-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .url-row .gh-input {
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line2);
+    background: var(--win);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 12.5px;
+  }
+
+  .url-row .gh-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .gh-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    max-height: 260px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+
+  .gh-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 9px;
+    background: var(--win);
+    border: 1px solid var(--line);
+  }
+
+  .gh-main {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .gh-title-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .gh-title-line strong {
+    font-size: 12.5px;
+  }
+
+  .gh-full {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink3);
+  }
+
+  .gh-star-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10.5px;
+    color: var(--ink2);
+    background: var(--side);
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  .gh-desc {
+    font-size: 11.5px;
+    color: var(--ink2);
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 </style>

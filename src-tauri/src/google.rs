@@ -1,5 +1,5 @@
 //! Multi-foundry Discover catalog (Google Fonts, Fontshare, Fontsource Open Foundry,
-//! Adobe & Dev Originals, and Font Squirrel) with local 7-day cache and streaming installer.
+//! Adobe & Dev Originals, Font Squirrel, and Nerd Fonts) with local 7-day cache and streaming installer.
 //! Restricts HTTP redirects strictly to vetted font registry and CDN hosts.
 
 use cosmic_core::sync::extract_zip_fonts;
@@ -20,6 +20,8 @@ const FONTSHARE_URL: &str = "https://api.fontshare.com/v2/fonts?offset=0&limit=1
 const FONTSOURCE_OTHER_URL: &str = "https://api.fontsource.org/v1/fonts?type=other";
 const FONTSOURCE_DETAIL_URL: &str = "https://api.fontsource.org/v1/fonts/";
 const FONTSQUIRREL_URL: &str = "https://www.fontsquirrel.com/api/fontlist/all";
+const NERDFONTS_URL: &str = "https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest";
+const BUNNY_URL: &str = "https://fonts.bunny.net/list";
 const CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 const ADOBE_DEV_FAMILIES: &[&str] = &[
@@ -71,7 +73,10 @@ fn is_allowed_host(host: &str) -> bool {
             | "cdn.jsdelivr.net"
             | "www.fontsquirrel.com"
             | "fontsquirrel.com"
-    )
+            | "api.github.com"
+            | "github.com"
+            | "fonts.bunny.net"
+    ) || host.ends_with(".githubusercontent.com")
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -138,6 +143,18 @@ pub struct CustomFontSource {
     pub last_synced: u64,
     pub font_count: usize,
     pub last_error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GithubFontRepo {
+    pub full_name: String,
+    pub name: String,
+    pub description: String,
+    pub stars: u64,
+    pub license: String,
+    pub html_url: String,
+    pub releases_url: String,
+    pub updated_at: String,
 }
 
 fn map_google_category(f: &Value) -> String {
@@ -531,6 +548,193 @@ fn parse_fontsquirrel_catalog(v: &Value) -> Vec<GoogleFontEntry> {
         .collect()
 }
 
+fn format_nerdfont_display_name(stem: &str) -> String {
+    let clean = stem.replace('_', " ").trim().to_string();
+    if clean.to_ascii_lowercase().contains("nerd") {
+        clean
+    } else {
+        format!("{clean} Nerd Font")
+    }
+}
+
+fn nerdfont_preview_url(stem: &str) -> Option<String> {
+    let slug = match stem.to_ascii_lowercase().as_str() {
+        "jetbrainsmono" => "jetbrains-mono",
+        "firacode" => "fira-code",
+        "firamono" => "fira-mono",
+        "hack" => "hack",
+        "cascadiacode" => "cascadia-code",
+        "cascadiamono" => "cascadia-mono",
+        "ubuntumono" => "ubuntu-mono",
+        "ubuntu" => "ubuntu",
+        "ubuntusans" => "ubuntu-sans",
+        "ubuntusansmono" => "ubuntu-sans-mono",
+        "spacemono" => "space-mono",
+        "victormono" => "victor-mono",
+        "iosevka" => "iosevka",
+        "inconsolata" => "inconsolata",
+        "robotomono" => "roboto-mono",
+        "saucecodepro" => "source-code-pro",
+        "geistmono" => "geist-mono",
+        "commitmono" => "commit-mono",
+        "monaspace" => "monaspace-neon",
+        "blexmono" => "ibm-plex-mono",
+        "anonymicepro" => "anonymous-pro",
+        "fantasquesansmono" => "fantasque-sans-mono",
+        "sharetechmono" => "share-tech-mono",
+        _ => return None,
+    };
+    Some(format!(
+        "https://cdn.jsdelivr.net/fontsource/fonts/{slug}@latest/latin-400-normal.woff2"
+    ))
+}
+
+pub fn parse_nerdfonts_catalog(v: &Value) -> Vec<GoogleFontEntry> {
+    let Some(assets) = v["assets"].as_array() else {
+        return Vec::new();
+    };
+    let version_tag = v["tag_name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+    let date = v["published_at"].as_str().unwrap_or("").to_string();
+    let mut seen = HashSet::new();
+
+    assets
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, asset)| {
+            let asset_name = asset["name"].as_str()?.trim();
+            let download_url = asset["browser_download_url"].as_str()?.trim();
+            if asset_name.is_empty()
+                || download_url.is_empty()
+                || !asset_name.to_ascii_lowercase().ends_with(".zip")
+            {
+                return None;
+            }
+            let stem = asset_name
+                .strip_suffix(".zip")
+                .or_else(|| asset_name.strip_suffix(".ZIP"))?
+                .trim();
+            if stem.is_empty() {
+                return None;
+            }
+            let name = format_nerdfont_display_name(stem);
+            if !seen.insert(name.to_ascii_lowercase()) {
+                return None;
+            }
+            Some(GoogleFontEntry {
+                name,
+                category: "mono".into(),
+                styles: 1,
+                popularity: 100 + (idx as i64),
+                date: date.clone(),
+                scripts: vec!["Latin".into(), "Symbols".into()],
+                designers: vec!["Nerd Fonts".into()],
+                is_variable: false,
+                axes: Vec::new(),
+                variants: vec!["400".into()],
+                source: "nerdfonts".into(),
+                source_id: asset_name.to_string(),
+                source_label: None,
+                version_tag: version_tag.clone(),
+                preview_url: nerdfont_preview_url(stem),
+                download_urls: vec![download_url.to_string()],
+            })
+        })
+        .collect()
+}
+
+fn format_slug_display_name(slug: &str) -> String {
+    slug.split('-')
+        .filter(|s| !s.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn parse_bunny_catalog(v: &Value) -> Vec<GoogleFontEntry> {
+    let Some(map) = v.as_object() else {
+        return Vec::new();
+    };
+    map.iter()
+        .enumerate()
+        .filter_map(|(idx, (slug, obj))| {
+            let slug = slug.trim();
+            if slug.is_empty() || !obj.is_object() {
+                return None;
+            }
+            let name = obj["familyName"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format_slug_display_name(slug));
+            if name.is_empty() {
+                return None;
+            }
+            let def_subset = obj["defSubset"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("latin");
+            let weights: Vec<u64> = obj["weights"]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_u64).collect())
+                .filter(|w: &Vec<u64>| !w.is_empty())
+                .unwrap_or_else(|| vec![400]);
+            let styles_list: Vec<&str> = obj["styles"]
+                .as_array()
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .filter(|s: &Vec<&str>| !s.is_empty())
+                .unwrap_or_else(|| vec!["normal"]);
+            let mut variants = Vec::new();
+            let mut download_urls = Vec::new();
+            for &w in &weights {
+                for &st in &styles_list {
+                    variants.push(if st == "italic" {
+                        format!("{w}i")
+                    } else {
+                        w.to_string()
+                    });
+                    download_urls.push(format!(
+                        "https://cdn.jsdelivr.net/fontsource/fonts/{slug}@latest/{def_subset}-{w}-{st}.ttf"
+                    ));
+                }
+            }
+            let mut scripts = map_scripts(obj);
+            if !scripts.iter().any(|s| s == "Latin") {
+                scripts.insert(0, "Latin".into());
+            }
+            Some(GoogleFontEntry {
+                name,
+                category: map_generic_category(obj["category"].as_str().unwrap_or("")),
+                styles: variants.len().max(1),
+                popularity: 50_000 + (idx as i64),
+                date: String::new(),
+                scripts,
+                designers: Vec::new(),
+                is_variable: obj["isVariable"].as_bool().unwrap_or(false),
+                axes: Vec::new(),
+                variants,
+                source: "bunny".into(),
+                source_id: slug.to_string(),
+                source_label: None,
+                version_tag: None,
+                preview_url: None,
+                download_urls,
+            })
+        })
+        .collect()
+}
+
 async fn fetch_cached_json(
     client: &reqwest::Client,
     url: &str,
@@ -585,12 +789,20 @@ pub async fn fetch_catalog(data_dir: &Path, force: bool) -> Result<Vec<GoogleFon
     let fontshare_file = data_dir.join("fontshare-metadata.json");
     let fontsource_file = data_dir.join("fontsource-other.json");
     let fontsquirrel_file = data_dir.join("fontsquirrel-metadata.json");
+    let nerdfonts_file = data_dir.join("nerdfonts-metadata.json");
+    let bunny_file = data_dir.join("bunny-metadata.json");
 
-    let (g_res, fs_res, src_res, sq_res) = futures_util::future::join4(
-        fetch_cached_json(&client, METADATA_URL, &google_file, force),
-        fetch_cached_json(&client, FONTSHARE_URL, &fontshare_file, force),
-        fetch_cached_json(&client, FONTSOURCE_OTHER_URL, &fontsource_file, force),
-        fetch_cached_json(&client, FONTSQUIRREL_URL, &fontsquirrel_file, force),
+    let ((g_res, fs_res, src_res, sq_res), (nf_res, bunny_res)) = futures_util::future::join(
+        futures_util::future::join4(
+            fetch_cached_json(&client, METADATA_URL, &google_file, force),
+            fetch_cached_json(&client, FONTSHARE_URL, &fontshare_file, force),
+            fetch_cached_json(&client, FONTSOURCE_OTHER_URL, &fontsource_file, force),
+            fetch_cached_json(&client, FONTSQUIRREL_URL, &fontsquirrel_file, force),
+        ),
+        futures_util::future::join(
+            fetch_cached_json(&client, NERDFONTS_URL, &nerdfonts_file, force),
+            fetch_cached_json(&client, BUNNY_URL, &bunny_file, force),
+        ),
     )
     .await;
 
@@ -615,6 +827,26 @@ pub async fn fetch_catalog(data_dir: &Path, force: bool) -> Result<Vec<GoogleFon
             Err(e) if first_err.is_none() => first_err = Some(e.clone()),
             Err(_) => {}
         }
+    }
+
+    if let Ok(nf_val) = nf_res {
+        for entry in parse_nerdfonts_catalog(&nf_val) {
+            if seen.insert(entry.name.to_lowercase()) {
+                combined.push(entry);
+            }
+        }
+    }
+
+    match bunny_res.as_ref().map(parse_bunny_catalog) {
+        Ok(list) => {
+            for entry in list {
+                if seen.insert(entry.name.to_lowercase()) {
+                    combined.push(entry);
+                }
+            }
+        }
+        Err(e) if first_err.is_none() => first_err = Some(e.clone()),
+        Err(_) => {}
     }
 
     if force {
@@ -660,10 +892,12 @@ fn select_google_font_files(refs: &[Value]) -> Vec<(String, String)> {
 
 fn find_cached_non_google_entry(data_dir: &Path, family: &str) -> Option<GoogleFontEntry> {
     type CatalogParser = fn(&Value) -> Vec<GoogleFontEntry>;
-    let sources: [(&str, CatalogParser); 3] = [
+    let sources: [(&str, CatalogParser); 5] = [
         ("fontshare-metadata.json", parse_fontshare_catalog),
         ("fontsource-other.json", parse_fontsource_other_catalog),
         ("fontsquirrel-metadata.json", parse_fontsquirrel_catalog),
+        ("nerdfonts-metadata.json", parse_nerdfonts_catalog),
+        ("bunny-metadata.json", parse_bunny_catalog),
     ];
     for (file, parser) in sources {
         if let Some(v) = fs::read_to_string(data_dir.join(file))
@@ -815,7 +1049,7 @@ pub async fn download_family(
     data_dir: &Path,
     family: &str,
     dest: &Path,
-    on_progress: impl FnMut(f64),
+    mut on_progress: impl FnMut(f64),
 ) -> Result<Vec<PathBuf>, String> {
     let client = http_client()?;
     if let Some(entry) = find_cached_custom_entry(data_dir, family) {
@@ -851,7 +1085,7 @@ pub async fn download_family(
     }
 
     if let Some(entry) = find_cached_non_google_entry(data_dir, family) {
-        if entry.source == "fontsquirrel" {
+        if entry.source == "fontsquirrel" || entry.source == "nerdfonts" {
             if let Some(zip_url) = entry.download_urls.first() {
                 return download_zip_family(&client, zip_url, dest, on_progress).await;
             }
@@ -860,7 +1094,7 @@ pub async fn download_family(
             .download_urls
             .first()
             .is_some_and(|u| u.contains("cdn.jsdelivr.net/fontsource"));
-        let urls = if entry.source == "fontsource" || is_fontsource_cdn {
+        let urls = if entry.source == "fontsource" || entry.source == "bunny" || is_fontsource_cdn {
             resolve_fontsource_urls(&client, &entry).await
         } else {
             entry.download_urls.clone()
@@ -871,7 +1105,11 @@ pub async fn download_family(
                 .enumerate()
                 .map(|(i, u)| (format!("{}-{}.ttf", entry.source_id, i), u))
                 .collect();
-            return download_files(&client, &files, dest, on_progress).await;
+            match download_files(&client, &files, dest, &mut on_progress).await {
+                Ok(res) => return Ok(res),
+                Err(_) if entry.source == "bunny" => {}
+                Err(err) => return Err(err),
+            }
         }
     }
 
@@ -1641,126 +1879,594 @@ pub fn parse_custom_json_catalog(
     Ok(entries)
 }
 
+fn truncate_description(raw: &str, max_chars: usize) -> String {
+    let trimmed = raw.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let take_len = max_chars.saturating_sub(3);
+    let prefix: String = trimmed.chars().take(take_len).collect();
+    format!("{prefix}...")
+}
+
+pub fn parse_github_search_repos(v: &Value) -> Vec<GithubFontRepo> {
+    let Some(items) = v["items"].as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let full_name = item["full_name"].as_str()?.trim().to_string();
+            let html_url = item["html_url"].as_str()?.trim().to_string();
+            if full_name.is_empty() || html_url.is_empty() {
+                return None;
+            }
+            let name = item["name"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&full_name)
+                .to_string();
+            let description = item["description"]
+                .as_str()
+                .map(|s| truncate_description(s, 180))
+                .unwrap_or_default();
+            let stars = item["stargazers_count"].as_u64().unwrap_or(0);
+            let license = item["license"]["spdx_id"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Unknown")
+                .to_string();
+            let releases_url = item["releases_url"]
+                .as_str()
+                .map(|s| s.replace("{/id}", ""))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| format!("https://api.github.com/repos/{full_name}/releases"));
+            let updated_at = item["updated_at"].as_str().unwrap_or("").to_string();
+            Some(GithubFontRepo {
+                full_name,
+                name,
+                description,
+                stars,
+                license,
+                html_url,
+                releases_url,
+                updated_at,
+            })
+        })
+        .collect()
+}
+
+pub async fn search_github_fonts(query: &str) -> Result<Vec<GithubFontRepo>, String> {
+    let trimmed = query.trim();
+    let q = if trimmed.is_empty() {
+        "topic:font license:ofl-1.1".to_string()
+    } else {
+        format!("{trimmed} topic:font")
+    };
+    let url = reqwest::Url::parse_with_params(
+        "https://api.github.com/search/repositories",
+        &[("q", q.as_str()), ("sort", "stars"), ("per_page", "18")],
+    )
+    .map_err(|e| e.to_string())?;
+    let client = http_client()?;
+    let text = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .text()
+        .await
+        .map_err(|e| e.to_string())?;
+    let val = parse_json(&text)?;
+    Ok(parse_github_search_repos(&val))
+}
+
+struct PresetSpec<'a> {
+    name: &'a str,
+    category: &'a str,
+    designer: &'a str,
+    styles: usize,
+    is_variable: bool,
+    slug: &'a str,
+    scripts: &'a [&'a str],
+    preview_url: Option<String>,
+    download_url: String,
+}
+
+impl<'a> PresetSpec<'a> {
+    fn fontsource(
+        name: &'a str,
+        category: &'a str,
+        designer: &'a str,
+        styles: usize,
+        is_variable: bool,
+        slug: &'a str,
+    ) -> Self {
+        Self {
+            name,
+            category,
+            designer,
+            styles,
+            is_variable,
+            slug,
+            scripts: &["Latin"],
+            preview_url: Some(format!(
+                "https://cdn.jsdelivr.net/fontsource/fonts/{slug}@latest/latin-400-normal.woff2"
+            )),
+            download_url: format!(
+                "https://cdn.jsdelivr.net/fontsource/fonts/{slug}@latest/latin-400-normal.ttf"
+            ),
+        }
+    }
+
+    fn with_variant(mut self, subset: &str, weight: u16, scripts: &'a [&'a str]) -> Self {
+        self.scripts = scripts;
+        self.preview_url = Some(format!(
+            "https://cdn.jsdelivr.net/fontsource/fonts/{}@latest/{subset}-{weight}-normal.woff2",
+            self.slug
+        ));
+        self.download_url = format!(
+            "https://cdn.jsdelivr.net/fontsource/fonts/{}@latest/{subset}-{weight}-normal.ttf",
+            self.slug
+        );
+        self
+    }
+
+    fn nerdfont(name: &'a str, asset_stem: &str, preview_slug: Option<&str>) -> Self {
+        Self {
+            name,
+            category: "mono",
+            designer: "Nerd Fonts",
+            styles: 1,
+            is_variable: false,
+            slug: "",
+            scripts: &["Latin", "Symbols"],
+            preview_url: preview_slug.map(|slug| {
+                format!("https://cdn.jsdelivr.net/fontsource/fonts/{slug}@latest/latin-400-normal.woff2")
+            }),
+            download_url: format!(
+                "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/{asset_stem}.zip"
+            ),
+        }
+    }
+}
+
 fn resolve_preset_entries(
     preset_key: &str,
     source_id_key: &str,
     source_name: &str,
 ) -> Vec<GoogleFontEntry> {
     let src_tag = format!("custom:{source_id_key}");
-    let items: Vec<(&str, &str, &str, usize, bool, &str, &str)> = match preset_key {
+    let items: Vec<PresetSpec<'_>> = match preset_key {
         "velvetyne" => vec![
-            (
-                "Syne",
-                "display",
-                "Bonjour Monde",
-                5,
-                true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/syne@latest/latin-700-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/syne@latest/latin-700-normal.ttf",
-            ),
-            (
+            PresetSpec::fontsource("Syne", "display", "Bonjour Monde", 5, true, "syne")
+                .with_variant("latin", 700, &["Latin"]),
+            PresetSpec::fontsource(
                 "Silkscreen",
                 "display",
                 "Jason Kottke / Velvetyne",
                 2,
                 false,
-                "https://cdn.jsdelivr.net/fontsource/fonts/silkscreen@latest/latin-400-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/silkscreen@latest/latin-400-normal.ttf",
+                "silkscreen",
             ),
-            (
-                "Unbounded",
-                "display",
-                "Studio Koto",
-                8,
-                true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/unbounded@latest/latin-600-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/unbounded@latest/latin-600-normal.ttf",
-            ),
-            (
+            PresetSpec::fontsource("Unbounded", "display", "Studio Koto", 8, true, "unbounded")
+                .with_variant("latin", 600, &["Latin"]),
+            PresetSpec::fontsource(
                 "Bricolage Grotesque",
                 "sans",
                 "Mathieu Triay",
                 8,
                 true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/bricolage-grotesque@latest/latin-500-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/bricolage-grotesque@latest/latin-500-normal.ttf",
-            ),
+                "bricolage-grotesque",
+            )
+            .with_variant("latin", 500, &["Latin"]),
         ],
         "leagueof" => vec![
-            (
+            PresetSpec::fontsource(
                 "League Spartan",
                 "sans",
                 "Matt Bailey & Tyler Finck",
                 9,
                 true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/league-spartan@latest/latin-600-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/league-spartan@latest/latin-600-normal.ttf",
-            ),
-            (
-                "Orbitron",
-                "display",
-                "Matt McInerney",
-                6,
-                true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/orbitron@latest/latin-600-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/orbitron@latest/latin-600-normal.ttf",
-            ),
-            (
+                "league-spartan",
+            )
+            .with_variant("latin", 600, &["Latin"]),
+            PresetSpec::fontsource("Orbitron", "display", "Matt McInerney", 6, true, "orbitron")
+                .with_variant("latin", 600, &["Latin"]),
+            PresetSpec::fontsource(
                 "League Gothic",
                 "display",
                 "Micah Rich & Caroline Hadilaksono",
                 2,
                 true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/league-gothic@latest/latin-400-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/league-gothic@latest/latin-400-normal.ttf",
+                "league-gothic",
             ),
-            (
-                "League Mono",
-                "mono",
-                "Tyler Finck",
-                8,
-                true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/league-mono@latest/latin-400-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/league-mono@latest/latin-400-normal.ttf",
-            ),
+            PresetSpec::fontsource("League Mono", "mono", "Tyler Finck", 8, true, "league-mono"),
         ],
         "indie_mono" => vec![
-            (
-                "Fira Code",
-                "mono",
-                "Nikita Prokopov",
-                5,
-                true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/fira-code@latest/latin-400-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/fira-code@latest/latin-400-normal.ttf",
-            ),
-            (
+            PresetSpec::fontsource("Fira Code", "mono", "Nikita Prokopov", 5, true, "fira-code"),
+            PresetSpec::fontsource(
                 "JetBrains Mono",
                 "mono",
                 "JetBrains",
                 16,
                 true,
-                "https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono@latest/latin-400-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono@latest/latin-400-normal.ttf",
+                "jetbrains-mono",
             ),
-            (
-                "Victor Mono",
-                "mono",
-                "Rune B",
-                14,
-                false,
-                "https://cdn.jsdelivr.net/fontsource/fonts/victor-mono@latest/latin-400-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/victor-mono@latest/latin-400-normal.ttf",
-            ),
-            (
+            PresetSpec::fontsource("Victor Mono", "mono", "Rune B", 14, false, "victor-mono"),
+            PresetSpec::fontsource(
                 "Space Mono",
                 "mono",
                 "Colophon Foundry",
                 4,
                 false,
-                "https://cdn.jsdelivr.net/fontsource/fonts/space-mono@latest/latin-400-normal.woff2",
-                "https://cdn.jsdelivr.net/fontsource/fonts/space-mono@latest/latin-400-normal.ttf",
+                "space-mono",
             ),
+            PresetSpec::fontsource(
+                "Commit Mono",
+                "mono",
+                "Eigil Nikolajsen",
+                4,
+                false,
+                "commit-mono",
+            ),
+            PresetSpec::fontsource(
+                "Monaspace Neon",
+                "mono",
+                "GitHub Next",
+                8,
+                true,
+                "monaspace-neon",
+            ),
+            PresetSpec::fontsource("Geist Mono", "mono", "Vercel", 9, true, "geist-mono"),
+            PresetSpec::fontsource("Iosevka", "mono", "Belleve Invis", 18, false, "iosevka"),
+        ],
+        "nerd_fonts" => vec![
+            PresetSpec::nerdfont(
+                "JetBrainsMono Nerd Font",
+                "JetBrainsMono",
+                Some("jetbrains-mono"),
+            ),
+            PresetSpec::nerdfont("FiraCode Nerd Font", "FiraCode", Some("fira-code")),
+            PresetSpec::nerdfont("Hack Nerd Font", "Hack", Some("hack")),
+            PresetSpec::nerdfont(
+                "CascadiaCode Nerd Font",
+                "CascadiaCode",
+                Some("cascadia-code"),
+            ),
+            PresetSpec::nerdfont("Meslo Nerd Font", "Meslo", None),
+            PresetSpec::nerdfont("Monaspace Nerd Font", "Monaspace", Some("monaspace-neon")),
+        ],
+        "historical" => vec![
+            PresetSpec::fontsource(
+                "EB Garamond",
+                "serif",
+                "Georg Duffner",
+                10,
+                true,
+                "eb-garamond",
+            ),
+            PresetSpec::fontsource(
+                "Cormorant Garamond",
+                "serif",
+                "Christian Thalmann",
+                10,
+                false,
+                "cormorant-garamond",
+            ),
+            PresetSpec::fontsource(
+                "Libre Baskerville",
+                "serif",
+                "Impallari Type",
+                3,
+                false,
+                "libre-baskerville",
+            ),
+            PresetSpec::fontsource(
+                "IM Fell English",
+                "serif",
+                "Igino Marini",
+                2,
+                false,
+                "im-fell-english",
+            ),
+            PresetSpec::fontsource("Fraunces", "serif", "Undercase Type", 14, true, "fraunces"),
+            PresetSpec::fontsource(
+                "Spectral",
+                "serif",
+                "Production Type",
+                14,
+                false,
+                "spectral",
+            ),
+            PresetSpec::fontsource(
+                "Bodoni Moda",
+                "serif",
+                "Indestructible Type",
+                12,
+                true,
+                "bodoni-moda",
+            ),
+        ],
+        "retro_pixel" => vec![
+            PresetSpec::fontsource(
+                "Silkscreen",
+                "display",
+                "Jason Kottke",
+                2,
+                false,
+                "silkscreen",
+            ),
+            PresetSpec::fontsource(
+                "Press Start 2P",
+                "display",
+                "CodeMan38",
+                1,
+                false,
+                "press-start-2p",
+            ),
+            PresetSpec::fontsource("VT323", "mono", "Peter Hull", 1, false, "vt323"),
+            PresetSpec::fontsource(
+                "Pixelify Sans",
+                "display",
+                "Stefie Justprince",
+                4,
+                true,
+                "pixelify-sans",
+            ),
+            PresetSpec::fontsource(
+                "Jersey 10",
+                "display",
+                "Sarah Cadigan-Fried",
+                1,
+                false,
+                "jersey-10",
+            ),
+            PresetSpec::fontsource("Tiny5", "display", "Gisselle Trejos", 1, false, "tiny5"),
+        ],
+        "global_scripts" => vec![
+            PresetSpec::fontsource(
+                "Vazirmatn",
+                "sans",
+                "Saber Rastikerdar",
+                9,
+                true,
+                "vazirmatn",
+            )
+            .with_variant("arabic", 400, &["Arabic", "Latin"]),
+            PresetSpec::fontsource("Cairo", "sans", "Mohamed Gaber", 8, true, "cairo")
+                .with_variant("arabic", 400, &["Arabic", "Latin"]),
+            PresetSpec::fontsource("Rubik", "sans", "Hubert & Fischer", 14, true, "rubik")
+                .with_variant("latin", 400, &["Latin", "Cyrillic", "Hebrew", "Arabic"]),
+            PresetSpec::fontsource(
+                "Noto Sans JP",
+                "other",
+                "Google / Monotype",
+                9,
+                true,
+                "noto-sans-jp",
+            )
+            .with_variant("japanese", 400, &["Japanese", "Latin"]),
+            PresetSpec::fontsource(
+                "Noto Sans Arabic",
+                "other",
+                "Google / Monotype",
+                9,
+                true,
+                "noto-sans-arabic",
+            )
+            .with_variant("arabic", 400, &["Arabic"]),
+            PresetSpec::fontsource(
+                "Shippori Mincho",
+                "serif",
+                "Fontdasu",
+                5,
+                false,
+                "shippori-mincho",
+            )
+            .with_variant("japanese", 400, &["Japanese", "Latin"]),
+        ],
+        "sil_scripts" => vec![
+            PresetSpec::fontsource(
+                "Gentium Plus",
+                "serif",
+                "SIL International",
+                4,
+                false,
+                "gentium-plus",
+            )
+            .with_variant("latin", 400, &["Latin", "Greek", "Cyrillic"]),
+            PresetSpec::fontsource(
+                "Charis SIL",
+                "serif",
+                "SIL International",
+                4,
+                false,
+                "charis-sil",
+            )
+            .with_variant("latin", 400, &["Latin", "Cyrillic"]),
+            PresetSpec::fontsource("Andika", "sans", "SIL International", 4, false, "andika")
+                .with_variant("latin", 400, &["Latin", "Cyrillic"]),
+            PresetSpec::fontsource(
+                "Scheherazade New",
+                "other",
+                "SIL International",
+                4,
+                false,
+                "scheherazade-new",
+            )
+            .with_variant("arabic", 400, &["Arabic", "Latin"]),
+            PresetSpec::fontsource(
+                "Abyssinica SIL",
+                "other",
+                "SIL International",
+                1,
+                false,
+                "abyssinica-sil",
+            )
+            .with_variant("latin", 400, &["Latin"]),
+            PresetSpec::fontsource("Padauk", "other", "SIL International", 4, false, "padauk")
+                .with_variant("latin", 400, &["Latin"]),
+        ],
+        "collletttivo" => vec![
+            PresetSpec::fontsource(
+                "Instrument Serif",
+                "serif",
+                "Rodrigo Fuenzalida",
+                2,
+                false,
+                "instrument-serif",
+            ),
+            PresetSpec::fontsource(
+                "Climate Crisis",
+                "display",
+                "Daniel Coull",
+                1,
+                true,
+                "climate-crisis",
+            ),
+            PresetSpec::fontsource(
+                "Plus Jakarta Sans",
+                "sans",
+                "Tokotype",
+                14,
+                true,
+                "plus-jakarta-sans",
+            ),
+            PresetSpec::fontsource(
+                "Rubik Glitch",
+                "display",
+                "Meir Sadan",
+                1,
+                false,
+                "rubik-glitch",
+            ),
+            PresetSpec::fontsource(
+                "Archivo Black",
+                "display",
+                "Omnibus-Type",
+                1,
+                false,
+                "archivo-black",
+            ),
+        ],
+        "use_modify" => vec![
+            PresetSpec::fontsource("Work Sans", "sans", "Wei Huang", 18, true, "work-sans"),
+            PresetSpec::fontsource("Epilogue", "sans", "Tyler Finck", 18, true, "epilogue"),
+            PresetSpec::fontsource(
+                "Space Grotesk",
+                "sans",
+                "Florian Karsten",
+                5,
+                true,
+                "space-grotesk",
+            ),
+            PresetSpec::fontsource("Fraunces", "serif", "Undercase Type", 14, true, "fraunces"),
+            PresetSpec::fontsource(
+                "Commissioner",
+                "sans",
+                "Kostas Bartsokas",
+                18,
+                true,
+                "commissioner",
+            ),
+        ],
+        "oldschool_pc" => vec![
+            PresetSpec::fontsource(
+                "IBM Plex Mono",
+                "mono",
+                "Mike Abbink / Bold Monday",
+                14,
+                false,
+                "ibm-plex-mono",
+            ),
+            PresetSpec::fontsource("VT323", "mono", "Peter Hull", 1, false, "vt323"),
+            PresetSpec::fontsource(
+                "Press Start 2P",
+                "display",
+                "CodeMan38",
+                1,
+                false,
+                "press-start-2p",
+            ),
+            PresetSpec::fontsource(
+                "Silkscreen",
+                "display",
+                "Jason Kottke",
+                2,
+                false,
+                "silkscreen",
+            ),
+            PresetSpec::fontsource(
+                "Share Tech Mono",
+                "mono",
+                "Ralph du Carrois",
+                1,
+                false,
+                "share-tech-mono",
+            ),
+            PresetSpec::fontsource("Cousine", "mono", "Steve Matteson", 4, false, "cousine"),
+        ],
+        "indestructible" => vec![
+            PresetSpec::fontsource(
+                "Jost",
+                "sans",
+                "Owen Earl (indestructible type*)",
+                9,
+                true,
+                "jost",
+            ),
+            PresetSpec::fontsource(
+                "Besley",
+                "serif",
+                "Owen Earl (indestructible type*)",
+                12,
+                true,
+                "besley",
+            ),
+            PresetSpec::fontsource(
+                "Bodoni Moda",
+                "serif",
+                "Owen Earl (indestructible type*)",
+                12,
+                true,
+                "bodoni-moda",
+            ),
+            PresetSpec::fontsource(
+                "Libre Bodoni",
+                "serif",
+                "Pablo Impallari",
+                4,
+                true,
+                "libre-bodoni",
+            ),
+            PresetSpec::fontsource(
+                "Newsreader",
+                "serif",
+                "Production Type",
+                14,
+                true,
+                "newsreader",
+            ),
+        ],
+        "open_foundry" => vec![
+            PresetSpec::fontsource("Inter", "sans", "Rasmus Andersson", 18, true, "inter"),
+            PresetSpec::fontsource(
+                "Instrument Sans",
+                "sans",
+                "Rodrigo Fuenzalida",
+                8,
+                true,
+                "instrument-sans",
+            ),
+            PresetSpec::fontsource("Archivo", "sans", "Omnibus-Type", 18, true, "archivo"),
+            PresetSpec::fontsource("DM Sans", "sans", "Colophon Foundry", 12, true, "dm-sans"),
+            PresetSpec::fontsource("Manrope", "sans", "Mikhail Sharanda", 7, true, "manrope"),
         ],
         _ => Vec::new(),
     };
@@ -1768,26 +2474,24 @@ fn resolve_preset_entries(
     items
         .into_iter()
         .enumerate()
-        .map(
-            |(idx, (name, cat, designer, styles, is_var, woff2, ttf))| GoogleFontEntry {
-                name: name.to_string(),
-                category: cat.to_string(),
-                styles,
-                popularity: (idx as i64) + 1,
-                date: "2026-01-01".into(),
-                scripts: vec!["Latin".into()],
-                designers: vec![designer.to_string()],
-                is_variable: is_var,
-                axes: Vec::new(),
-                variants: vec!["400".into()],
-                source: src_tag.clone(),
-                source_id: name.to_string(),
-                source_label: Some(source_name.to_string()),
-                version_tag: None,
-                preview_url: Some(woff2.to_string()),
-                download_urls: vec![ttf.to_string()],
-            },
-        )
+        .map(|(idx, item)| GoogleFontEntry {
+            name: item.name.to_string(),
+            category: item.category.to_string(),
+            styles: item.styles,
+            popularity: (idx as i64) + 1,
+            date: "2026-01-01".into(),
+            scripts: item.scripts.iter().map(|s| (*s).to_string()).collect(),
+            designers: vec![item.designer.to_string()],
+            is_variable: item.is_variable,
+            axes: Vec::new(),
+            variants: vec!["400".into()],
+            source: src_tag.clone(),
+            source_id: item.name.to_string(),
+            source_label: Some(source_name.to_string()),
+            version_tag: None,
+            preview_url: item.preview_url,
+            download_urls: vec![item.download_url],
+        })
         .collect()
 }
 
@@ -1862,6 +2566,241 @@ mod tests {
         assert_eq!(
             normalize_custom_feed_url("https://github.com/tonsky/FiraCode", "auto").unwrap(),
             "https://api.github.com/repos/tonsky/FiraCode/releases?per_page=15"
+        );
+    }
+
+    #[test]
+    fn nerdfonts_catalog_parser_extracts_zip_assets_and_maps_previews() {
+        let payload = serde_json::json!({
+            "tag_name": "v3.3.0",
+            "published_at": "2025-01-15T12:00:00Z",
+            "assets": [
+                {
+                    "name": "JetBrainsMono.zip",
+                    "browser_download_url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/JetBrainsMono.zip"
+                },
+                {
+                    "name": "JetBrainsMono.tar.xz",
+                    "browser_download_url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/JetBrainsMono.tar.xz"
+                },
+                {
+                    "name": "FiraCode.zip",
+                    "browser_download_url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/FiraCode.zip"
+                },
+                {
+                    "name": "Agave.zip",
+                    "browser_download_url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/Agave.zip"
+                },
+                {
+                    "name": "SHA256SUMS",
+                    "browser_download_url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/SHA256SUMS"
+                }
+            ]
+        });
+
+        let entries = parse_nerdfonts_catalog(&payload);
+        assert_eq!(entries.len(), 3);
+
+        assert_eq!(entries[0].name, "JetBrainsMono Nerd Font");
+        assert_eq!(entries[0].source, "nerdfonts");
+        assert_eq!(entries[0].source_id, "JetBrainsMono.zip");
+        assert_eq!(entries[0].category, "mono");
+        assert_eq!(entries[0].scripts, vec!["Latin", "Symbols"]);
+        assert_eq!(entries[0].designers, vec!["Nerd Fonts"]);
+        assert_eq!(entries[0].version_tag.as_deref(), Some("v3.3.0"));
+        assert_eq!(
+            entries[0].preview_url.as_deref(),
+            Some("https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono@latest/latin-400-normal.woff2")
+        );
+        assert_eq!(
+            entries[0].download_urls,
+            vec!["https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/JetBrainsMono.zip"]
+        );
+
+        assert_eq!(entries[1].name, "FiraCode Nerd Font");
+        assert_eq!(
+            entries[1].preview_url.as_deref(),
+            Some(
+                "https://cdn.jsdelivr.net/fontsource/fonts/fira-code@latest/latin-400-normal.woff2"
+            )
+        );
+
+        assert_eq!(entries[2].name, "Agave Nerd Font");
+        assert!(entries[2].preview_url.is_none());
+    }
+
+    #[test]
+    fn github_search_repos_parser_maps_fields_and_fallbacks() {
+        let payload = serde_json::json!({
+            "items": [
+                {
+                    "full_name": "tonsky/FiraCode",
+                    "name": "FiraCode",
+                    "description": "Free monospaced font with programming ligatures",
+                    "stargazers_count": 76000,
+                    "license": { "spdx_id": "OFL-1.1" },
+                    "html_url": "https://github.com/tonsky/FiraCode",
+                    "releases_url": "https://api.github.com/repos/tonsky/FiraCode/releases{/id}",
+                    "updated_at": "2025-02-01T10:00:00Z"
+                },
+                {
+                    "full_name": "example/NoLicenseFont",
+                    "name": "NoLicenseFont",
+                    "description": null,
+                    "stargazers_count": 42,
+                    "license": null,
+                    "html_url": "https://github.com/example/NoLicenseFont",
+                    "releases_url": "",
+                    "updated_at": "2025-01-20T00:00:00Z"
+                }
+            ]
+        });
+
+        let repos = parse_github_search_repos(&payload);
+        assert_eq!(repos.len(), 2);
+
+        assert_eq!(repos[0].full_name, "tonsky/FiraCode");
+        assert_eq!(repos[0].name, "FiraCode");
+        assert_eq!(
+            repos[0].description,
+            "Free monospaced font with programming ligatures"
+        );
+        assert_eq!(repos[0].stars, 76000);
+        assert_eq!(repos[0].license, "OFL-1.1");
+        assert_eq!(repos[0].html_url, "https://github.com/tonsky/FiraCode");
+        assert_eq!(
+            repos[0].releases_url,
+            "https://api.github.com/repos/tonsky/FiraCode/releases"
+        );
+        assert_eq!(repos[0].updated_at, "2025-02-01T10:00:00Z");
+
+        assert_eq!(repos[1].description, "");
+        assert_eq!(repos[1].license, "Unknown");
+        assert_eq!(
+            repos[1].releases_url,
+            "https://api.github.com/repos/example/NoLicenseFont/releases"
+        );
+    }
+
+    #[test]
+    fn allowed_hosts_include_github_and_bunny() {
+        assert!(is_allowed_host("api.github.com"));
+        assert!(is_allowed_host("github.com"));
+        assert!(is_allowed_host("fonts.bunny.net"));
+        assert!(is_allowed_host("objects.githubusercontent.com"));
+        assert!(is_allowed_host("release-assets.githubusercontent.com"));
+        assert!(!is_allowed_host("evil.example.com"));
+    }
+
+    #[test]
+    fn bunny_catalog_parser_maps_categories_variants_and_fallbacks() {
+        let payload = serde_json::json!({
+            "space-grotesk": {
+                "familyName": "Space Grotesk",
+                "category": "sans-serif",
+                "weights": [400, 700],
+                "styles": ["normal", "italic"],
+                "isVariable": true,
+                "defSubset": "latin",
+                "subsets": ["latin", "latin-ext"]
+            },
+            "ibm-plex-mono": {
+                "familyName": "IBM Plex Mono",
+                "category": "monospace",
+                "weights": [400],
+                "styles": ["normal"],
+                "isVariable": false,
+                "defSubset": "latin"
+            },
+            "caveat": {
+                "category": "handwriting"
+            }
+        });
+
+        let entries = parse_bunny_catalog(&payload);
+        assert_eq!(entries.len(), 3);
+
+        let sg = entries
+            .iter()
+            .find(|e| e.source_id == "space-grotesk")
+            .unwrap();
+        assert_eq!(sg.name, "Space Grotesk");
+        assert_eq!(sg.category, "sans");
+        assert_eq!(sg.styles, 4);
+        assert!(sg.is_variable);
+        assert_eq!(sg.source, "bunny");
+        assert!(sg.popularity >= 50_000);
+        assert!(sg.preview_url.is_none());
+        assert_eq!(sg.scripts, vec!["Latin", "Latin Ext"]);
+        assert_eq!(sg.variants, vec!["400", "400i", "700", "700i"]);
+        assert!(sg.download_urls.contains(
+            &"https://cdn.jsdelivr.net/fontsource/fonts/space-grotesk@latest/latin-400-normal.ttf"
+                .to_string()
+        ));
+
+        let mono = entries
+            .iter()
+            .find(|e| e.source_id == "ibm-plex-mono")
+            .unwrap();
+        assert_eq!(mono.category, "mono");
+        assert_eq!(mono.styles, 1);
+        assert!(!mono.is_variable);
+        assert_eq!(mono.scripts, vec!["Latin"]);
+
+        let caveat = entries.iter().find(|e| e.source_id == "caveat").unwrap();
+        assert_eq!(caveat.name, "Caveat");
+        assert_eq!(caveat.category, "script");
+        assert_eq!(caveat.variants, vec!["400"]);
+    }
+
+    #[test]
+    fn all_thirteen_presets_resolve_non_empty() {
+        for key in [
+            "velvetyne",
+            "leagueof",
+            "indie_mono",
+            "nerd_fonts",
+            "historical",
+            "retro_pixel",
+            "global_scripts",
+            "sil_scripts",
+            "collletttivo",
+            "use_modify",
+            "oldschool_pc",
+            "indestructible",
+            "open_foundry",
+        ] {
+            let entries = resolve_preset_entries(key, "test", "Test Preset");
+            assert!(!entries.is_empty(), "preset {key} should not be empty");
+        }
+        assert_eq!(resolve_preset_entries("indie_mono", "id", "Indie").len(), 8);
+        assert_eq!(resolve_preset_entries("nerd_fonts", "id", "Nerd").len(), 6);
+        assert_eq!(resolve_preset_entries("historical", "id", "Hist").len(), 7);
+        assert_eq!(
+            resolve_preset_entries("retro_pixel", "id", "Retro").len(),
+            6
+        );
+        assert_eq!(
+            resolve_preset_entries("global_scripts", "id", "Global").len(),
+            6
+        );
+        assert_eq!(resolve_preset_entries("sil_scripts", "id", "SIL").len(), 6);
+        assert_eq!(
+            resolve_preset_entries("collletttivo", "id", "Coll").len(),
+            5
+        );
+        assert_eq!(resolve_preset_entries("use_modify", "id", "Use").len(), 5);
+        assert_eq!(
+            resolve_preset_entries("oldschool_pc", "id", "Oldschool").len(),
+            6
+        );
+        assert_eq!(
+            resolve_preset_entries("indestructible", "id", "Indestructible").len(),
+            5
+        );
+        assert_eq!(
+            resolve_preset_entries("open_foundry", "id", "Open Foundry").len(),
+            5
         );
     }
 }

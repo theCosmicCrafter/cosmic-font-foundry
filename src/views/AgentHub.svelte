@@ -63,6 +63,51 @@
     { name: "cosmic_scan_pc_fonts", mode: "WRITE", descKey: "agent.toolScan" },
     { name: "cosmic_ui_navigate", mode: "WRITE", descKey: "agent.toolNavigate" },
     { name: "cosmic_auto_organize", mode: "WRITE", descKey: "agent.toolOrganize" },
+    {
+      name: "cosmic_inspect_glyph_outline",
+      mode: "READ",
+      desc: "Extract vector Bezier contours, SVG path, bbox, and sidebearing metrics for a glyph.",
+    },
+    {
+      name: "cosmic_search_github_fonts",
+      mode: "READ",
+      desc: "Search open-source font repositories on GitHub with license and release metadata.",
+    },
+    {
+      name: "cosmic_foundry_audit_font",
+      mode: "READ",
+      desc: "Audit a font file, UFO directory, or family for outline, winding, and OpenType QA issues.",
+    },
+    {
+      name: "cosmic_foundry_autofix_and_compile",
+      mode: "WRITE",
+      desc: "Auto-repair outline QA issues and compile a font or UFO project to a .ttf binary.",
+    },
+    {
+      name: "cosmic_foundry_trace_image",
+      mode: "READ",
+      desc: "Vectorize a glyph raster image into Bezier contours, SVG path data, and bbox metrics.",
+    },
+    {
+      name: "cosmic_foundry_generate_style",
+      mode: "WRITE",
+      desc: "Generate a derived style variant (bold, light, condensed, extended, small caps, oblique, inline) and compile .ttf.",
+    },
+    {
+      name: "cosmic_visual_match_font",
+      mode: "READ",
+      desc: "Visually identify matching cached fonts from a glyph image or SVG outline.",
+    },
+    {
+      name: "cosmic_vibe_search_fonts",
+      mode: "READ",
+      desc: "Search local fonts using natural-language typographic vibe queries without ML weights.",
+    },
+    {
+      name: "cosmic_find_outline_duplicates",
+      mode: "READ",
+      desc: "Detect renamed font duplicates by hashing canonical outline geometry.",
+    },
   ];
 
   function syncDraftFromSnap(nextSnap) {
@@ -387,7 +432,7 @@
                 <code class="tool-name">{tool.name}</code>
                 <span class="mode-tag" class:write={tool.mode === "WRITE"}>{tool.mode}</span>
               </div>
-              <p>{t(tool.descKey)}</p>
+              <p>{tool.desc ?? t(tool.descKey)}</p>
             </div>
           {/each}
         </div>
