@@ -1351,7 +1351,7 @@ fn execute_tool(
                 ..Default::default()
             };
             let raw = tauri::async_runtime::block_on(async {
-                let verified_model = crate::ensure_prime_model_downloaded(
+                let (effective_endpoint, verified_model) = crate::ensure_prime_model_downloaded(
                     Some(app),
                     None,
                     &endpoint,
@@ -1365,7 +1365,7 @@ fn execute_tool(
                     .map_err(|e| e.to_string())?;
                 crate::run_vecglypher_inference(
                     &client,
-                    &endpoint,
+                    &effective_endpoint,
                     &provider,
                     &verified_model,
                     &cfg,

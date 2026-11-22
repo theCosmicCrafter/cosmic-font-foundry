@@ -19,6 +19,7 @@
   import { invokeCmd } from "../../lib/fonts.svelte.js";
   import { inTauri } from "../../lib/settings.svelte.js";
 
+  const BUILTIN_DEFAULT_ENDPOINT = "http://127.0.0.1:17421";
   const OLLAMA_DEFAULT_ENDPOINT = "http://127.0.0.1:11434";
   const OPENAI_DEFAULT_ENDPOINT = "http://127.0.0.1:30000";
   const DEFAULT_MODEL = "hf.co/wahidmounir/VecGlypher-27b-it-Q4_K_M-GGUF";
@@ -76,8 +77,8 @@
   } = $props();
 
   // Backend config & status
-  let provider = $state("ollama");
-  let endpoint = $state(OLLAMA_DEFAULT_ENDPOINT);
+  let provider = $state("builtin");
+  let endpoint = $state(BUILTIN_DEFAULT_ENDPOINT);
   let model = $state(DEFAULT_MODEL);
   let backendStatus = $state(null);
   let checkingBackend = $state(false);
@@ -132,7 +133,10 @@
     pulling = true;
     pullSuccess = false;
     pullProgress = {
-      status: "Contacting Ollama...",
+      status:
+        provider === "builtin"
+          ? "Initializing built-in GPU engine & model download…"
+          : "Contacting Ollama…",
       completed: 0,
       total: 0,
       percent: 0,
@@ -144,6 +148,7 @@
       await invokeCmd("foundry_ai_pull_model", {
         endpoint,
         model: model.trim(),
+        provider,
       });
       await checkBackend();
       return Boolean(isModelInstalled && !pullProgress?.error);
@@ -312,12 +317,21 @@
   function setProvider(next) {
     if (next === provider) return;
     provider = next;
-    if (next === "openai" && (!endpoint.trim() || endpoint.trim() === OLLAMA_DEFAULT_ENDPOINT)) {
-      endpoint = OPENAI_DEFAULT_ENDPOINT;
-    } else if (next === "ollama" && (!endpoint.trim() || endpoint.trim() === OPENAI_DEFAULT_ENDPOINT)) {
+    if (next === "builtin") {
+      endpoint = BUILTIN_DEFAULT_ENDPOINT;
+    } else if (next === "ollama") {
       endpoint = OLLAMA_DEFAULT_ENDPOINT;
+    } else if (
+      next === "openai" &&
+      (!endpoint.trim() ||
+        endpoint.trim() === OLLAMA_DEFAULT_ENDPOINT ||
+        endpoint.trim() === BUILTIN_DEFAULT_ENDPOINT)
+    ) {
+      endpoint = OPENAI_DEFAULT_ENDPOINT;
     }
     backendStatus = null;
+    pullSuccess = false;
+    checkBackend();
   }
 
   async function checkBackend() {
@@ -413,9 +427,9 @@
       await checkBackend();
     }
 
-    if (provider === "ollama") {
+    if (provider === "builtin" || provider === "ollama") {
       if (!backendStatus?.ok) {
-        errorMsg = `Generation halted: local Ollama backend is unreachable (${backendStatus?.message || endpoint}).`;
+        errorMsg = `Generation halted: ${provider === "builtin" ? "built-in engine" : "local Ollama backend"} is unavailable (${backendStatus?.message || endpoint}).`;
         return;
       }
       if (!isModelInstalled) {
@@ -423,7 +437,10 @@
           errorMsg = `Generation halted: waiting for prime model download (${pullProgress?.percent?.toFixed(1) ?? 0}%) to finish.`;
           return;
         }
-        statusMsg = `Prime model not yet downloaded. Halting generation and downloading ${model} now — generation will resume automatically once download completes…`;
+        statusMsg =
+          provider === "builtin"
+            ? "Auto-provisioning built-in llama.cpp GPU engine + VecGlypher-27b-it — generation will run automatically once complete…"
+            : `Prime model not yet downloaded. Halting generation and downloading ${model} now — generation will resume automatically once download completes…`;
         const pulledOk = await startPullModel();
         if (!pulledOk || !isModelInstalled) {
           statusMsg = "";
@@ -570,13 +587,24 @@
         <button
           type="button"
           class="mode-btn"
+          class:active={provider === "builtin"}
+          role="radio"
+          aria-checked={provider === "builtin"}
+          disabled={isDisabled}
+          onclick={() => setProvider("builtin")}
+        >
+          Built-in Engine (Auto)
+        </button>
+        <button
+          type="button"
+          class="mode-btn"
           class:active={provider === "ollama"}
           role="radio"
           aria-checked={provider === "ollama"}
           disabled={isDisabled}
           onclick={() => setProvider("ollama")}
         >
-          Ollama (C++ / CUDA)
+          Ollama (Local)
         </button>
         <button
           type="button"
@@ -587,7 +615,7 @@
           disabled={isDisabled}
           onclick={() => setProvider("openai")}
         >
-          vLLM / llama.cpp (OpenAI API)
+          vLLM / Custom (OpenAI API)
         </button>
       </div>
     </div>
@@ -640,7 +668,11 @@
             Dismiss
           </button>
         </div>
-        <span class="download-subtext">VecGlypher is active in local Ollama on your GPU. Ready to forge vector glyphs!</span>
+        <span class="download-subtext">
+          {provider === "builtin"
+            ? "Built-in llama.cpp GPU engine and VecGlypher-27b-it are installed and active. Ready to forge vector glyphs!"
+            : "VecGlypher is active in local Ollama on your GPU. Ready to forge vector glyphs!"}
+        </span>
       </div>
     {:else if !isPrimeVecGlypherModel}
       <div class="model-download-card uninstalled">
@@ -660,14 +692,22 @@
           <span>Lock to Prime Model</span>
         </button>
       </div>
-    {:else if backendStatus?.ok && !isModelInstalled && provider === "ollama"}
+    {:else if backendStatus?.ok && !isModelInstalled && (provider === "builtin" || provider === "ollama")}
       <div class="model-download-card uninstalled">
         <div class="uninstalled-info">
           <div class="uninstalled-title">
             <AlertCircle size={13} />
-            <span>Prime Model Required — Generation Paused Until Downloaded</span>
+            <span>
+              {provider === "builtin"
+                ? "Zero-Setup Auto-Install — Built-in GPU Engine + Prime Model"
+                : "Prime Model Required — Generation Paused Until Downloaded"}
+            </span>
           </div>
-          <span class="uninstalled-sub">VecGlypher-27b-it (~16.6 GB GGUF) · No alternative model will be substituted</span>
+          <span class="uninstalled-sub">
+            {provider === "builtin"
+              ? "Auto-downloads portable llama.cpp Vulkan GPU engine (~37 MB) + VecGlypher-27b-it (~16.6 GB, resumable) · No Ollama needed"
+              : "VecGlypher-27b-it (~16.6 GB GGUF) · No alternative model will be substituted"}
+          </span>
         </div>
         <button
           type="button"
@@ -676,7 +716,11 @@
           onclick={startPullModel}
         >
           <Download size={12} />
-          <span>Download Prime Model (~16.6 GB)</span>
+          <span>
+            {provider === "builtin"
+              ? "Auto-Install Engine + Model"
+              : "Download Prime Model (~16.6 GB)"}
+          </span>
         </button>
       </div>
     {:else if isModelInstalled}
@@ -693,8 +737,12 @@
           type="text"
           bind:value={endpoint}
           spellcheck="false"
-          disabled={isDisabled}
-          placeholder={provider === "ollama" ? OLLAMA_DEFAULT_ENDPOINT : OPENAI_DEFAULT_ENDPOINT}
+          disabled={isDisabled || provider === "builtin"}
+          placeholder={provider === "builtin"
+            ? BUILTIN_DEFAULT_ENDPOINT
+            : provider === "ollama"
+              ? OLLAMA_DEFAULT_ENDPOINT
+              : OPENAI_DEFAULT_ENDPOINT}
         />
       </label>
 

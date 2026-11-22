@@ -1,4 +1,5 @@
 mod agent;
+mod ai_runtime;
 pub mod fonts;
 mod google;
 mod startup;
@@ -46,6 +47,7 @@ pub(crate) struct AppState {
     scan_cancel: Arc<AtomicBool>,
     ai_cancel: Arc<AtomicBool>,
     ai_pull_cancel: Arc<AtomicBool>,
+    llama_child: Mutex<Option<std::process::Child>>,
 }
 
 impl AppState {
@@ -1841,13 +1843,27 @@ pub(crate) async fn ensure_prime_model_downloaded(
     endpoint: &str,
     provider: &str,
     model: &str,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     let prime_model = resolve_prime_vecglypher_model(model)?;
+    if provider.eq_ignore_ascii_case("builtin") {
+        let Some(a) = app else {
+            return Err("Built-in managed engine requires desktop app context.".into());
+        };
+        let state = a.state::<AppState>();
+        ai_runtime::provision_and_start_builtin(
+            &state.env.data_dir,
+            &state.llama_child,
+            Some(a),
+            cancel_flag,
+        )
+        .await?;
+        return Ok((ai_runtime::BUILTIN_ENDPOINT.to_string(), prime_model));
+    }
     if !provider.eq_ignore_ascii_case("ollama") {
-        return Ok(prime_model);
+        return Ok((endpoint.to_string(), prime_model));
     }
 
-    let status = foundry_ai_check_backend(endpoint.to_string(), provider.to_string()).await?;
+    let status = probe_remote_ai_backend(endpoint, provider).await?;
     if !status.ok {
         return Err(format!(
             "Local Ollama backend unreachable ({}) — cannot verify or download prime model '{}'.",
@@ -1863,12 +1879,12 @@ pub(crate) async fn ensure_prime_model_downloaded(
             || target_lower.contains(&lower)
             || lower.contains("vecglypher")
     }) {
-        return Ok(installed.clone());
+        return Ok((endpoint.to_string(), installed.clone()));
     }
 
     // Prime model is not installed yet: halt production and wait for full download & verification.
     pull_ollama_model_internal(app, cancel_flag, endpoint, &prime_model).await?;
-    Ok(prime_model)
+    Ok((endpoint.to_string(), prime_model))
 }
 
 pub(crate) async fn run_vecglypher_inference(
@@ -1944,8 +1960,46 @@ pub(crate) async fn run_vecglypher_inference(
 
 #[tauri::command]
 async fn foundry_ai_check_backend(
+    state: State<'_, AppState>,
     endpoint: String,
     provider: String,
+) -> Result<AiBackendStatus, String> {
+    if provider.eq_ignore_ascii_case("builtin") {
+        let has_engine = ai_runtime::has_builtin_engine(&state.env.data_dir);
+        let has_model = ai_runtime::has_builtin_model(&state.env.data_dir);
+        let healthy = ai_runtime::builtin_server_healthy().await;
+        let ready = has_engine && has_model;
+        let models = if ready {
+            vec![cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF.to_string()]
+        } else {
+            Vec::new()
+        };
+        let message = if ready && healthy {
+            "Built-in llama.cpp GPU engine running on 127.0.0.1:17421 (VecGlypher ready).".into()
+        } else if ready {
+            "Built-in llama.cpp GPU engine & VecGlypher-27b-it installed (auto-starts on Generate)."
+                .into()
+        } else if has_engine {
+            "Built-in llama.cpp GPU engine installed. Click Download to fetch VecGlypher-27b-it (~16.55 GB)."
+                .into()
+        } else {
+            "Zero-setup Built-in Engine — 1-click downloads portable llama.cpp GPU engine (~37 MB) + VecGlypher-27b-it (~16.55 GB)."
+                .into()
+        };
+        return Ok(AiBackendStatus {
+            ok: true,
+            models,
+            has_vecglypher: ready,
+            recommended_pull: "Automatic 1-Click Built-in Install".into(),
+            message,
+        });
+    }
+    probe_remote_ai_backend(&endpoint, &provider).await
+}
+
+async fn probe_remote_ai_backend(
+    endpoint: &str,
+    provider: &str,
 ) -> Result<AiBackendStatus, String> {
     let recommended_pull = format!(
         "ollama run {}",
@@ -2098,7 +2152,7 @@ async fn foundry_ai_generate_glyph(
         req.temperature
     };
 
-    let verified_model = ensure_prime_model_downloaded(
+    let (effective_endpoint, verified_model) = ensure_prime_model_downloaded(
         Some(&app),
         Some(&state.ai_pull_cancel),
         &req.endpoint,
@@ -2130,7 +2184,7 @@ async fn foundry_ai_generate_glyph(
 
     let raw = run_vecglypher_inference(
         &client,
-        &req.endpoint,
+        &effective_endpoint,
         &req.provider,
         &verified_model,
         &cfg,
@@ -2150,7 +2204,7 @@ async fn foundry_ai_generate_font_batch(
     use std::sync::atomic::Ordering;
     state.ai_cancel.store(false, Ordering::SeqCst);
 
-    let verified_model = ensure_prime_model_downloaded(
+    let (effective_endpoint, verified_model) = ensure_prime_model_downloaded(
         Some(&app),
         Some(&state.ai_pull_cancel),
         &req.endpoint,
@@ -2234,7 +2288,7 @@ async fn foundry_ai_generate_font_batch(
 
         if let Ok(raw) = run_vecglypher_inference(
             &client,
-            &req.endpoint,
+            &effective_endpoint,
             &req.provider,
             &verified_model,
             &cfg,
@@ -2283,13 +2337,13 @@ async fn foundry_ai_cancel_batch(state: State<'_, AppState>) -> Result<bool, Str
 }
 
 #[derive(Clone, Serialize)]
-struct AiPullProgressPayload {
-    status: String,
-    completed: u64,
-    total: u64,
-    percent: f32,
-    done: bool,
-    error: Option<String>,
+pub(crate) struct AiPullProgressPayload {
+    pub(crate) status: String,
+    pub(crate) completed: u64,
+    pub(crate) total: u64,
+    pub(crate) percent: f32,
+    pub(crate) done: bool,
+    pub(crate) error: Option<String>,
 }
 
 pub(crate) async fn pull_ollama_model_internal(
@@ -2438,7 +2492,21 @@ async fn foundry_ai_pull_model(
     state: State<'_, AppState>,
     endpoint: String,
     model: String,
+    provider: Option<String>,
 ) -> Result<(), String> {
+    if provider
+        .as_deref()
+        .unwrap_or("ollama")
+        .eq_ignore_ascii_case("builtin")
+    {
+        return ai_runtime::provision_and_start_builtin(
+            &state.env.data_dir,
+            &state.llama_child,
+            Some(&app),
+            Some(&state.ai_pull_cancel),
+        )
+        .await;
+    }
     pull_ollama_model_internal(Some(&app), Some(&state.ai_pull_cancel), &endpoint, &model).await
 }
 
@@ -2917,6 +2985,7 @@ pub fn run() {
                 scan_cancel: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
                 ai_pull_cancel: Arc::new(AtomicBool::new(false)),
+                llama_child: Mutex::default(),
             });
             watch_folders(&handle);
             agent::init(&handle);
@@ -2968,7 +3037,9 @@ pub fn run() {
     app.run(|app, ev| {
         if let RunEvent::Exit = ev {
             win::stop_hotkey_listener();
-            app.state::<AppState>().unload_all_folder_fonts();
+            let state = app.state::<AppState>();
+            ai_runtime::kill_managed_server(&state.llama_child);
+            state.unload_all_folder_fonts();
         }
     });
 }
