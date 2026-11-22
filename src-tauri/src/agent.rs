@@ -1351,12 +1351,27 @@ fn execute_tool(
                 ..Default::default()
             };
             let raw = tauri::async_runtime::block_on(async {
+                let verified_model = crate::ensure_prime_model_downloaded(
+                    Some(app),
+                    None,
+                    &endpoint,
+                    &provider,
+                    &model,
+                )
+                .await?;
                 let client = reqwest::Client::builder()
                     .timeout(Duration::from_secs(120))
                     .build()
                     .map_err(|e| e.to_string())?;
-                crate::run_vecglypher_inference(&client, &endpoint, &provider, &model, &cfg, &[])
-                    .await
+                crate::run_vecglypher_inference(
+                    &client,
+                    &endpoint,
+                    &provider,
+                    &verified_model,
+                    &cfg,
+                    &[],
+                )
+                .await
             })?;
             let contours = cosmic_foundry::vecglypher::decode_vecglypher_svg(&raw, upm)?;
             let bbox = cosmic_foundry::model::compute_bbox(&contours);

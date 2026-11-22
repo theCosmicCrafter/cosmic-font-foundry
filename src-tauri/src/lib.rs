@@ -1818,6 +1818,59 @@ struct AiGlyphProgressPayload {
     status: String,
 }
 
+pub(crate) fn resolve_prime_vecglypher_model(model: &str) -> Result<String, String> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return Ok(cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF.to_string());
+    }
+    if !trimmed.to_ascii_lowercase().contains("vecglypher") {
+        return Err(format!(
+            "Prime model lock: refusing to substitute '{}' for VecGlypher-27b-it. \
+             Only VecGlypher prime models ({}) are trained to emit native glyph SVG outlines; \
+             switching models will corrupt glyph generation.",
+            trimmed,
+            cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+pub(crate) async fn ensure_prime_model_downloaded(
+    app: Option<&AppHandle>,
+    cancel_flag: Option<&AtomicBool>,
+    endpoint: &str,
+    provider: &str,
+    model: &str,
+) -> Result<String, String> {
+    let prime_model = resolve_prime_vecglypher_model(model)?;
+    if !provider.eq_ignore_ascii_case("ollama") {
+        return Ok(prime_model);
+    }
+
+    let status = foundry_ai_check_backend(endpoint.to_string(), provider.to_string()).await?;
+    if !status.ok {
+        return Err(format!(
+            "Local Ollama backend unreachable ({}) — cannot verify or download prime model '{}'.",
+            status.message, prime_model
+        ));
+    }
+
+    let target_lower = prime_model.to_ascii_lowercase();
+    if let Some(installed) = status.models.iter().find(|m| {
+        let lower = m.to_ascii_lowercase();
+        lower == target_lower
+            || lower.contains(&target_lower)
+            || target_lower.contains(&lower)
+            || lower.contains("vecglypher")
+    }) {
+        return Ok(installed.clone());
+    }
+
+    // Prime model is not installed yet: halt production and wait for full download & verification.
+    pull_ollama_model_internal(app, cancel_flag, endpoint, &prime_model).await?;
+    Ok(prime_model)
+}
+
 pub(crate) async fn run_vecglypher_inference(
     client: &reqwest::Client,
     endpoint: &str,
@@ -1830,11 +1883,8 @@ pub(crate) async fn run_vecglypher_inference(
     if base.is_empty() {
         return Err("AI backend endpoint cannot be empty".into());
     }
-    let model_name = if model.trim().is_empty() {
-        cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF
-    } else {
-        model.trim()
-    };
+    let prime_model = resolve_prime_vecglypher_model(model)?;
+    let model_name = prime_model.as_str();
 
     if provider.eq_ignore_ascii_case("ollama") {
         let url = format!("{base}/api/chat");
@@ -2032,6 +2082,8 @@ fn build_glyph_from_contours(
 
 #[tauri::command]
 async fn foundry_ai_generate_glyph(
+    app: AppHandle,
+    state: State<'_, AppState>,
     req: AiGlyphRequest,
 ) -> Result<cosmic_foundry::model::GlyphOutline, String> {
     let ch = req
@@ -2045,6 +2097,15 @@ async fn foundry_ai_generate_glyph(
     } else {
         req.temperature
     };
+
+    let verified_model = ensure_prime_model_downloaded(
+        Some(&app),
+        Some(&state.ai_pull_cancel),
+        &req.endpoint,
+        &req.provider,
+        &req.model,
+    )
+    .await?;
 
     let mut images_b64 = Vec::new();
     for g in req.exemplar_glyphs.iter().take(8) {
@@ -2071,7 +2132,7 @@ async fn foundry_ai_generate_glyph(
         &client,
         &req.endpoint,
         &req.provider,
-        &req.model,
+        &verified_model,
         &cfg,
         &images_b64,
     )
@@ -2088,6 +2149,15 @@ async fn foundry_ai_generate_font_batch(
 ) -> Result<cosmic_foundry::model::FoundryProject, String> {
     use std::sync::atomic::Ordering;
     state.ai_cancel.store(false, Ordering::SeqCst);
+
+    let verified_model = ensure_prime_model_downloaded(
+        Some(&app),
+        Some(&state.ai_pull_cancel),
+        &req.endpoint,
+        &req.provider,
+        &req.model,
+    )
+    .await?;
 
     let mut project = req.project;
     let upm = if project.metrics.upm == 0 {
@@ -2166,7 +2236,7 @@ async fn foundry_ai_generate_font_batch(
             &client,
             &req.endpoint,
             &req.provider,
-            &req.model,
+            &verified_model,
             &cfg,
             &images_b64,
         )
@@ -2222,23 +2292,21 @@ struct AiPullProgressPayload {
     error: Option<String>,
 }
 
-#[tauri::command]
-async fn foundry_ai_pull_model(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    endpoint: String,
-    model: String,
+pub(crate) async fn pull_ollama_model_internal(
+    app: Option<&AppHandle>,
+    cancel_flag: Option<&AtomicBool>,
+    endpoint: &str,
+    model: &str,
 ) -> Result<(), String> {
     use std::sync::atomic::Ordering;
-    state.ai_pull_cancel.store(false, Ordering::SeqCst);
+    if let Some(flag) = cancel_flag {
+        flag.store(false, Ordering::SeqCst);
+    }
 
+    let prime_model = resolve_prime_vecglypher_model(model)?;
     let base = endpoint.trim().trim_end_matches('/');
     if base.is_empty() {
         return Err("Endpoint URL is empty.".into());
-    }
-    let model_name = model.trim();
-    if model_name.is_empty() {
-        return Err("Model name cannot be empty.".into());
     }
 
     let client = reqwest::Client::builder()
@@ -2248,7 +2316,7 @@ async fn foundry_ai_pull_model(
 
     let url = format!("{base}/api/pull");
     let payload = json!({
-        "name": model_name,
+        "name": prime_model,
         "stream": true
     });
 
@@ -2274,19 +2342,21 @@ async fn foundry_ai_pull_model(
         .await
         .map_err(|e| format!("Stream read error: {e}"))?
     {
-        if state.ai_pull_cancel.load(Ordering::SeqCst) {
-            let _ = app.emit(
-                "ai-pull-progress",
-                AiPullProgressPayload {
-                    status: "Download cancelled by user.".into(),
-                    completed: 0,
-                    total: last_total,
-                    percent: 0.0,
-                    done: true,
-                    error: Some("Cancelled".into()),
-                },
-            );
-            return Ok(());
+        if cancel_flag.is_some_and(|f| f.load(Ordering::SeqCst)) {
+            if let Some(a) = app {
+                let _ = a.emit(
+                    "ai-pull-progress",
+                    AiPullProgressPayload {
+                        status: "Download cancelled by user.".into(),
+                        completed: 0,
+                        total: last_total,
+                        percent: 0.0,
+                        done: true,
+                        error: Some("Cancelled".into()),
+                    },
+                );
+            }
+            return Err("Prime model download cancelled by user — halting generation.".into());
         }
 
         let chunk_str = String::from_utf8_lossy(&chunk);
@@ -2300,17 +2370,19 @@ async fn foundry_ai_pull_model(
             }
             if let Ok(val) = serde_json::from_str::<Value>(&line) {
                 if let Some(err_msg) = val["error"].as_str() {
-                    let _ = app.emit(
-                        "ai-pull-progress",
-                        AiPullProgressPayload {
-                            status: format!("Error: {err_msg}"),
-                            completed: 0,
-                            total: last_total,
-                            percent: 0.0,
-                            done: true,
-                            error: Some(err_msg.to_string()),
-                        },
-                    );
+                    if let Some(a) = app {
+                        let _ = a.emit(
+                            "ai-pull-progress",
+                            AiPullProgressPayload {
+                                status: format!("Error: {err_msg}"),
+                                completed: 0,
+                                total: last_total,
+                                percent: 0.0,
+                                done: true,
+                                error: Some(err_msg.to_string()),
+                            },
+                        );
+                    }
                     return Err(format!("Ollama error: {err_msg}"));
                 }
 
@@ -2329,21 +2401,23 @@ async fn foundry_ai_pull_model(
                 };
                 let done = status_str == "success";
 
-                let _ = app.emit(
-                    "ai-pull-progress",
-                    AiPullProgressPayload {
-                        status: if done {
-                            "Model downloaded and verified successfully!".into()
-                        } else {
-                            status_str
+                if let Some(a) = app {
+                    let _ = a.emit(
+                        "ai-pull-progress",
+                        AiPullProgressPayload {
+                            status: if done {
+                                "Model downloaded and verified successfully!".into()
+                            } else {
+                                status_str
+                            },
+                            completed,
+                            total,
+                            percent,
+                            done,
+                            error: None,
                         },
-                        completed,
-                        total,
-                        percent,
-                        done,
-                        error: None,
-                    },
-                );
+                    );
+                }
 
                 if done {
                     return Ok(());
@@ -2352,7 +2426,20 @@ async fn foundry_ai_pull_model(
         }
     }
 
-    Ok(())
+    Err(
+        "Prime model download stream ended before verification completed — halting generation."
+            .into(),
+    )
+}
+
+#[tauri::command]
+async fn foundry_ai_pull_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+    model: String,
+) -> Result<(), String> {
+    pull_ollama_model_internal(Some(&app), Some(&state.ai_pull_cancel), &endpoint, &model).await
 }
 
 #[tauri::command]

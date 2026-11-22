@@ -90,14 +90,29 @@
   let pullSuccess = $state(false);
   let unlistenPull = null;
 
+  const isPrimeVecGlypherModel = $derived.by(() => {
+    const target = (model || "").trim();
+    return Boolean(target) && /vecglypher/i.test(target);
+  });
+
   const isModelInstalled = $derived.by(() => {
-    if (!backendStatus?.models?.length) return false;
+    if (!isPrimeVecGlypherModel || !backendStatus?.models?.length) return false;
     const target = (model || "").trim().toLowerCase();
-    if (!target) return false;
     return backendStatus.models.some((m) => {
       const lower = m.toLowerCase();
-      return lower === target || lower.includes(target) || target.includes(lower);
+      return (
+        lower.includes("vecglypher") &&
+        (lower === target || lower.includes(target) || target.includes(lower))
+      );
     });
+  });
+
+  const primeModelOptions = $derived.by(() => {
+    const set = new Set([DEFAULT_MODEL]);
+    for (const m of backendStatus?.models ?? []) {
+      if (/vecglypher/i.test(m)) set.add(m);
+    }
+    return [...set];
   });
 
   function formatBytes(bytes) {
@@ -110,7 +125,10 @@
   }
 
   async function startPullModel() {
-    if (!inTauri || pulling) return;
+    if (!inTauri || pulling) return false;
+    if (!isPrimeVecGlypherModel) {
+      model = DEFAULT_MODEL;
+    }
     pulling = true;
     pullSuccess = false;
     pullProgress = {
@@ -122,12 +140,13 @@
       error: null,
     };
     errorMsg = "";
-    statusMsg = "";
     try {
       await invokeCmd("foundry_ai_pull_model", {
         endpoint,
         model: model.trim(),
       });
+      await checkBackend();
+      return Boolean(isModelInstalled && !pullProgress?.error);
     } catch (err) {
       pulling = false;
       errorMsg = String(err);
@@ -139,6 +158,7 @@
         done: true,
         error: String(err),
       };
+      return false;
     }
   }
 
@@ -274,7 +294,7 @@
     return Math.min(100, Math.max(0, Math.round((progress.current / progress.total) * 100)));
   });
 
-  const isDisabled = $derived(busy || generating);
+  const isDisabled = $derived(busy || generating || pulling);
 
   // Prune exemplar keys if the underlying project changed and removed glyphs
   $effect(() => {
@@ -383,18 +403,36 @@
       return;
     }
 
+    if (!isPrimeVecGlypherModel) {
+      errorMsg = `Prime model lock: "${model}" is not a VecGlypher model. Switching models will break SVG glyph synthesis — resetting to prime model (${DEFAULT_MODEL}).`;
+      model = DEFAULT_MODEL;
+      return;
+    }
+
     if (!backendStatus && inTauri) {
       await checkBackend();
     }
 
-    if (backendStatus?.ok && !isModelInstalled && provider === "ollama") {
-      if (pulling) {
-        errorMsg = `Model is downloading (${pullProgress?.percent?.toFixed(1) ?? 0}%). Please wait for completion before generating.`;
+    if (provider === "ollama") {
+      if (!backendStatus?.ok) {
+        errorMsg = `Generation halted: local Ollama backend is unreachable (${backendStatus?.message || endpoint}).`;
         return;
       }
-      statusMsg = `Model not found in local Ollama. Starting auto-pull for ${model}…`;
-      await startPullModel();
-      return;
+      if (!isModelInstalled) {
+        if (pulling) {
+          errorMsg = `Generation halted: waiting for prime model download (${pullProgress?.percent?.toFixed(1) ?? 0}%) to finish.`;
+          return;
+        }
+        statusMsg = `Prime model not yet downloaded. Halting generation and downloading ${model} now — generation will resume automatically once download completes…`;
+        const pulledOk = await startPullModel();
+        if (!pulledOk || !isModelInstalled) {
+          statusMsg = "";
+          errorMsg =
+            errorMsg ||
+            "Generation halted: prime model download did not complete. No fallback model is permitted.";
+          return;
+        }
+      }
     }
 
     generating = true;
@@ -604,14 +642,32 @@
         </div>
         <span class="download-subtext">VecGlypher is active in local Ollama on your GPU. Ready to forge vector glyphs!</span>
       </div>
+    {:else if !isPrimeVecGlypherModel}
+      <div class="model-download-card uninstalled">
+        <div class="uninstalled-info">
+          <div class="uninstalled-title">
+            <AlertCircle size={13} />
+            <span>Invalid Model — Prime VecGlypher Model Required</span>
+          </div>
+          <span class="uninstalled-sub">No substitute chat model can emit native VecGlypher SVG paths without breaking output.</span>
+        </div>
+        <button
+          type="button"
+          class="btn-inline primary-generate"
+          disabled={isDisabled}
+          onclick={() => (model = DEFAULT_MODEL)}
+        >
+          <span>Lock to Prime Model</span>
+        </button>
+      </div>
     {:else if backendStatus?.ok && !isModelInstalled && provider === "ollama"}
       <div class="model-download-card uninstalled">
         <div class="uninstalled-info">
           <div class="uninstalled-title">
             <AlertCircle size={13} />
-            <span>Model not yet downloaded in local Ollama</span>
+            <span>Prime Model Required — Generation Paused Until Downloaded</span>
           </div>
-          <span class="uninstalled-sub">VecGlypher-27b-it (~16.6 GB GGUF) · Pulls directly into your local Ollama model store</span>
+          <span class="uninstalled-sub">VecGlypher-27b-it (~16.6 GB GGUF) · No alternative model will be substituted</span>
         </div>
         <button
           type="button"
@@ -620,7 +676,7 @@
           onclick={startPullModel}
         >
           <Download size={12} />
-          <span>Download &amp; Install Model (~16.6 GB)</span>
+          <span>Download Prime Model (~16.6 GB)</span>
         </button>
       </div>
     {:else if isModelInstalled}
@@ -652,13 +708,11 @@
           disabled={isDisabled}
           placeholder={DEFAULT_MODEL}
         />
-        {#if backendStatus?.models?.length}
-          <datalist id="ai-backend-models">
-            {#each backendStatus.models as m (m)}
-              <option value={m}></option>
-            {/each}
-          </datalist>
-        {/if}
+        <datalist id="ai-backend-models">
+          {#each primeModelOptions as m (m)}
+            <option value={m}></option>
+          {/each}
+        </datalist>
       </label>
 
       <div class="backend-actions">
@@ -982,7 +1036,9 @@
       >
         <Play size={11} />
         <span>
-          {#if generating}
+          {#if pulling}
+            Waiting for Prime Model ({pullProgress?.percent?.toFixed(1) ?? "0.0"}%)…
+          {:else if generating}
             Generating…
           {:else if scope === "single"}
             Generate “{activeChar}”
