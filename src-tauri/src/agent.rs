@@ -876,6 +876,22 @@ pub fn mcp_tools_list() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "name": "cosmic_foundry_ai_generate_glyph",
+            "description": "Synthesize a vector glyph outline via VecGlypher (local C++/CUDA Ollama or OpenAI/vLLM endpoint) and decode clean Bezier contours, SVG path data, and metrics.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "character": { "type": "string", "description": "Target character to generate (e.g. 'A', 'g', '&')." },
+                    "style_prompt": { "type": "string", "description": "Typographic style description (e.g. 'High-contrast Art Deco display serif, sharp triangular serifs')." },
+                    "endpoint": { "type": "string", "description": "Optional inference endpoint URL (default 'http://127.0.0.1:11434')." },
+                    "provider": { "type": "string", "description": "Inference provider: 'ollama' or 'openai' (default 'ollama')." },
+                    "model": { "type": "string", "description": "Model identifier (default 'hf.co/wahidmounir/VecGlypher-27b-it-Q4_K_M-GGUF')." },
+                    "upm": { "type": "integer", "description": "Target units-per-em grid (default 1000)." }
+                },
+                "required": ["character", "style_prompt"]
+            }
+        }),
     ]
 }
 
@@ -1294,6 +1310,66 @@ fn execute_tool(
                 "groups": groups,
             }))
         }
+        "cosmic_foundry_ai_generate_glyph" => {
+            let ch = args["character"]
+                .as_str()
+                .and_then(|s| s.chars().next())
+                .ok_or_else(|| "Provide non-empty 'character' string.".to_string())?;
+            let style_prompt = args["style_prompt"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "Provide non-empty 'style_prompt' string.".to_string())?
+                .to_string();
+            let endpoint = args["endpoint"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("http://127.0.0.1:11434")
+                .to_string();
+            let provider = args["provider"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("ollama")
+                .to_string();
+            let model = args["model"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF)
+                .to_string();
+            let upm = args["upm"]
+                .as_u64()
+                .and_then(|v| u16::try_from(v).ok())
+                .filter(|&v| v > 0)
+                .unwrap_or(1000);
+
+            let cfg = cosmic_foundry::vecglypher::VecGlypherPromptConfig {
+                style_prompt,
+                target_text: ch.to_string(),
+                ..Default::default()
+            };
+            let raw = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(120))
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                crate::run_vecglypher_inference(&client, &endpoint, &provider, &model, &cfg, &[])
+                    .await
+            })?;
+            let contours = cosmic_foundry::vecglypher::decode_vecglypher_svg(&raw, upm)?;
+            let bbox = cosmic_foundry::model::compute_bbox(&contours);
+            let svg_d = cosmic_foundry::model::contours_to_svg_d(&contours, f64::from(upm) * 0.8);
+            Ok(json!({
+                "character": ch.to_string(),
+                "codepoint": ch as u32,
+                "contour_count": contours.len(),
+                "svg_d": svg_d,
+                "bbox": bbox,
+                "contours": contours,
+            }))
+        }
         _ => Err(format!("Unknown MCP tool: {name}")),
     };
 
@@ -1487,6 +1563,11 @@ fn summarize_tool_log(name: &str, args: &Value) -> String {
         "cosmic_find_outline_duplicates" => {
             format!("dir={:?}", args["dir"].as_str().unwrap_or(""))
         }
+        "cosmic_foundry_ai_generate_glyph" => format!(
+            "character={:?}, style_prompt={:?}",
+            args["character"].as_str().unwrap_or(""),
+            args["style_prompt"].as_str().unwrap_or("")
+        ),
         _ => format!("Executed {name}"),
     }
 }
@@ -2128,7 +2209,7 @@ async fn run_external_ai_prompt(
          cosmic_foundry_audit_font, cosmic_foundry_autofix_and_compile, \
          cosmic_foundry_trace_image, cosmic_foundry_generate_style, \
          cosmic_visual_match_font, cosmic_vibe_search_fonts, \
-         cosmic_find_outline_duplicates. \
+         cosmic_find_outline_duplicates, cosmic_foundry_ai_generate_glyph. \
          Current status: {}",
         status
     );
@@ -2247,7 +2328,7 @@ mod tests {
     #[test]
     fn mcp_tools_list_and_status_schema_are_valid() {
         let tools = mcp_tools_list();
-        assert_eq!(tools.len(), 15);
+        assert_eq!(tools.len(), 16);
         let expected_names = [
             "cosmic_get_status",
             "cosmic_search_fonts",
@@ -2264,6 +2345,7 @@ mod tests {
             "cosmic_visual_match_font",
             "cosmic_vibe_search_fonts",
             "cosmic_find_outline_duplicates",
+            "cosmic_foundry_ai_generate_glyph",
         ];
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         for expected in expected_names {
@@ -2329,6 +2411,7 @@ mod tests {
             "cosmic_visual_match_font",
             "cosmic_vibe_search_fonts",
             "cosmic_find_outline_duplicates",
+            "cosmic_foundry_ai_generate_glyph",
         ];
         let mutating = [
             "cosmic_toggle_fonts",
@@ -2426,7 +2509,7 @@ mod tests {
 
         let (h2, r2) = send_rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         assert!(h2.starts_with("HTTP/1.1 200 OK"));
-        assert_eq!(r2["result"]["tools"].as_array().unwrap().len(), 15);
+        assert_eq!(r2["result"]["tools"].as_array().unwrap().len(), 16);
 
         server.join().unwrap();
     }

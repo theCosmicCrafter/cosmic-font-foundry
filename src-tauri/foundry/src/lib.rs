@@ -12,4 +12,5 @@ pub mod styles;
 pub mod trace;
 pub mod typography;
 pub mod variable;
+pub mod vecglypher;
 pub mod vibe;

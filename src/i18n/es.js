@@ -488,6 +488,9 @@ export default {
   "forge.styleGenerated": "Derivado {style} generado.",
   "forge.varExported": "TTF variable exportado.",
   "forge.qaAutofixed": "Corregidos {n} problemas de contornos/métricas.",
+  "forge.aiGenerate": "Generar con IA",
+  "forge.aiGeneratedGlyph": "Glifo vectorial “{ch}” generado con VecGlypher.",
+  "forge.aiGeneratedBatch": "Lote de glifos vectoriales generados con IA aplicado al proyecto.",
   "visual.btn": "Búsqueda visual",
 
   "group.smart": "Vistas inteligentes",

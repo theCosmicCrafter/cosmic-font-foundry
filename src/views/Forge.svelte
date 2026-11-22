@@ -12,6 +12,7 @@
   import LayoutCompositesPanel from "../components/foundry/LayoutCompositesPanel.svelte";
   import StylesVariablePanel from "../components/foundry/StylesVariablePanel.svelte";
   import FoundryQaPanel from "../components/foundry/FoundryQaPanel.svelte";
+  import AiGlyphGeneratorDrawer from "../components/foundry/AiGlyphGeneratorDrawer.svelte";
   import {
     MATRIX_COLS,
     MATRIX_ROWS,
@@ -79,6 +80,7 @@
   let vectorGlyphQuery = $state("");
   let svgDrawerOpen = $state(false);
   let traceDrawerOpen = $state(false);
+  let aiDrawerOpen = $state(false);
   let svgImportText = $state("");
   let vectorBusy = $state(false);
   let forking = $state(false);
@@ -739,6 +741,26 @@
     if (!vectorProject) return;
     pushVectorUndo();
     vectorProject = { ...vectorProject, kerning: nextPairs };
+  }
+
+  function handleAiApplyGlyph(glyph) {
+    if (!vectorProject || !glyph) return;
+    pushVectorUndo();
+    const key = String(glyph.codepoint || activeVectorKey);
+    vectorProject = {
+      ...vectorProject,
+      glyphs: { ...vectorProject.glyphs, [key]: glyph },
+    };
+    activeVectorKey = key;
+    const ch = String.fromCodePoint(Number(key) || 65);
+    notify("ok", t("forge.aiGeneratedGlyph", { ch }), "");
+  }
+
+  function handleAiApplyProject(nextProj) {
+    if (!nextProj) return;
+    pushVectorUndo();
+    vectorProject = nextProj;
+    notify("ok", t("forge.aiGeneratedBatch"), "");
   }
 
   async function handleAutoSpace(targetSidebearing) {
@@ -1651,6 +1673,14 @@
                 >
                   <Scan size={12} />{t("forge.traceImage")}
                 </button>
+                <button
+                  type="button"
+                  class="btn-inline"
+                  class:accent={aiDrawerOpen}
+                  onclick={() => (aiDrawerOpen = !aiDrawerOpen)}
+                >
+                  <Sparkles size={12} />{t("forge.aiGenerate")}
+                </button>
               {/if}
               <button
                 type="button"
@@ -1693,6 +1723,20 @@
               onApplyOutlineStroke={handleApplyOutlineStroke}
               onApplyCalligraphy={handleApplyCalligraphy}
               onclose={() => (traceDrawerOpen = false)}
+            />
+          {/if}
+
+          <!-- VecGlypher AI Vector Glyph & Font Batch Generator Drawer -->
+          {#if aiDrawerOpen}
+            <AiGlyphGeneratorDrawer
+              project={vectorProject}
+              activeKey={activeVectorKey}
+              activeChar={activeVectorChar}
+              upm={vectorMetrics.upm}
+              busy={vectorBusy}
+              onApplyGlyph={handleAiApplyGlyph}
+              onApplyProject={handleAiApplyProject}
+              onclose={() => (aiDrawerOpen = false)}
             />
           {/if}
 

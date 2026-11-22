@@ -108,6 +108,11 @@
       mode: "READ",
       desc: "Detect renamed font duplicates by hashing canonical outline geometry.",
     },
+    {
+      name: "cosmic_foundry_ai_generate_glyph",
+      mode: "READ",
+      desc: "Synthesize a vector glyph via VecGlypher (C++/CUDA Ollama or vLLM) and decode clean Bezier contours.",
+    },
   ];
 
   function syncDraftFromSnap(nextSnap) {

@@ -488,6 +488,9 @@ export default {
   "forge.styleGenerated": "Generated {style} derivative.",
   "forge.varExported": "Variable TTF exported.",
   "forge.qaAutofixed": "Auto-fixed {n} outline/metric issues.",
+  "forge.aiGenerate": "AI Generate",
+  "forge.aiGeneratedGlyph": "Generated vector glyph “{ch}” with VecGlypher.",
+  "forge.aiGeneratedBatch": "Generated AI vector glyph batch into project.",
   "visual.btn": "Visual Match",
 
   "group.smart": "Smart Views",
