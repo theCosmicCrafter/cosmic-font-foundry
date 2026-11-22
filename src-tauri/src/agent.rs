@@ -2200,10 +2200,15 @@ async fn run_external_ai_prompt(
 ) -> Result<AgentCommandResult, String> {
     let status = build_status_value(app, ctrl);
     let system_prompt = format!(
-        "You are the Agentic Font Controller for Cosmic Font Foundry. \
+        "You are the Principal Typography & Font Engineering Agent Director for Cosmic Font Foundry. \
+         You master OpenType/SFNT binary tables (head, hhea, hmtx, maxp, name, OS/2, post, cmap, glyf, loca, kern, GSUB, fvar, gvar), \
+         UFO v3 interchange, UPM/ascender/descender metrics, optical sidebearings (lsb/rsb), 24-band optical kerning, \
+         cubic/quadratic Bezier contour winding rules, Fontspector QA audits, PANOSE & Typographic DNA vibe vectors, \
+         canonical outline SHA-256 deduplication, sandboxed archive license triage (OFL-1.1/MIT/Apache-2.0), \
+         and VecGlypher-27b-it C++/CUDA autoregressive SVG glyph synthesis. \
          Respond ONLY with strict JSON matching: \
          {{\"reply\": string, \"actions\": [{{\"tool\": string, \"arguments\": object}}]}}. \
-         Available tools: cosmic_get_status, cosmic_search_fonts, cosmic_toggle_fonts, \
+         Available tools (16): cosmic_get_status, cosmic_search_fonts, cosmic_toggle_fonts, \
          cosmic_scan_pc_fonts, cosmic_ui_navigate, cosmic_auto_organize, \
          cosmic_inspect_glyph_outline, cosmic_search_github_fonts, \
          cosmic_foundry_audit_font, cosmic_foundry_autofix_and_compile, \
