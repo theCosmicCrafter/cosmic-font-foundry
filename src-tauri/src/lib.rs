@@ -45,6 +45,7 @@ pub(crate) struct AppState {
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
     scan_cancel: Arc<AtomicBool>,
     ai_cancel: Arc<AtomicBool>,
+    ai_pull_cancel: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -2211,6 +2212,156 @@ async fn foundry_ai_cancel_batch(state: State<'_, AppState>) -> Result<bool, Str
     Ok(true)
 }
 
+#[derive(Clone, Serialize)]
+struct AiPullProgressPayload {
+    status: String,
+    completed: u64,
+    total: u64,
+    percent: f32,
+    done: bool,
+    error: Option<String>,
+}
+
+#[tauri::command]
+async fn foundry_ai_pull_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+    model: String,
+) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    state.ai_pull_cancel.store(false, Ordering::SeqCst);
+
+    let base = endpoint.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Endpoint URL is empty.".into());
+    }
+    let model_name = model.trim();
+    if model_name.is_empty() {
+        return Err("Model name cannot be empty.".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(7200))
+        .build()
+        .map_err(err)?;
+
+    let url = format!("{base}/api/pull");
+    let payload = json!({
+        "name": model_name,
+        "stream": true
+    });
+
+    let resp = client
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to initiate model pull at {url}: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Ollama pull error ({status}): {body}"));
+    }
+
+    let mut stream = resp;
+    let mut buffer = String::new();
+    let mut last_total = 0u64;
+
+    while let Some(chunk) = stream
+        .chunk()
+        .await
+        .map_err(|e| format!("Stream read error: {e}"))?
+    {
+        if state.ai_pull_cancel.load(Ordering::SeqCst) {
+            let _ = app.emit(
+                "ai-pull-progress",
+                AiPullProgressPayload {
+                    status: "Download cancelled by user.".into(),
+                    completed: 0,
+                    total: last_total,
+                    percent: 0.0,
+                    done: true,
+                    error: Some("Cancelled".into()),
+                },
+            );
+            return Ok(());
+        }
+
+        let chunk_str = String::from_utf8_lossy(&chunk);
+        buffer.push_str(&chunk_str);
+
+        while let Some(newline_pos) = buffer.find('\n') {
+            let line = buffer[..newline_pos].trim().to_string();
+            buffer.drain(..=newline_pos);
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<Value>(&line) {
+                if let Some(err_msg) = val["error"].as_str() {
+                    let _ = app.emit(
+                        "ai-pull-progress",
+                        AiPullProgressPayload {
+                            status: format!("Error: {err_msg}"),
+                            completed: 0,
+                            total: last_total,
+                            percent: 0.0,
+                            done: true,
+                            error: Some(err_msg.to_string()),
+                        },
+                    );
+                    return Err(format!("Ollama error: {err_msg}"));
+                }
+
+                let status_str = val["status"].as_str().unwrap_or("downloading").to_string();
+                let completed = val["completed"].as_u64().unwrap_or(0);
+                let total = val["total"].as_u64().unwrap_or(last_total);
+                if total > 0 {
+                    last_total = total;
+                }
+                let percent = if total > 0 {
+                    ((completed as f64 / total as f64) * 100.0) as f32
+                } else if status_str == "success" {
+                    100.0
+                } else {
+                    0.0
+                };
+                let done = status_str == "success";
+
+                let _ = app.emit(
+                    "ai-pull-progress",
+                    AiPullProgressPayload {
+                        status: if done {
+                            "Model downloaded and verified successfully!".into()
+                        } else {
+                            status_str
+                        },
+                        completed,
+                        total,
+                        percent,
+                        done,
+                        error: None,
+                    },
+                );
+
+                if done {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn foundry_ai_cancel_pull(state: State<'_, AppState>) -> Result<bool, String> {
+    use std::sync::atomic::Ordering;
+    state.ai_pull_cancel.store(true, Ordering::SeqCst);
+    Ok(true)
+}
+
 // ---- BYO-Sync, Portability, Collection ZIP & Migration ----
 
 fn device_name() -> String {
@@ -2611,6 +2762,8 @@ pub fn run() {
             foundry_ai_generate_glyph,
             foundry_ai_generate_font_batch,
             foundry_ai_cancel_batch,
+            foundry_ai_pull_model,
+            foundry_ai_cancel_pull,
             foundry_export_ufo,
             foundry_import_ufo,
             foundry_subset_font,
@@ -2676,6 +2829,7 @@ pub fn run() {
                 watcher: Mutex::default(),
                 scan_cancel: Arc::new(AtomicBool::new(false)),
                 ai_cancel: Arc::new(AtomicBool::new(false)),
+                ai_pull_cancel: Arc::new(AtomicBool::new(false)),
             });
             watch_folders(&handle);
             agent::init(&handle);

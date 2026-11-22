@@ -12,6 +12,9 @@
     X,
     Layers,
     WandSparkles,
+    Download,
+    CheckCircle2,
+    AlertCircle,
   } from "@lucide/svelte";
   import { invokeCmd } from "../../lib/fonts.svelte.js";
   import { inTauri } from "../../lib/settings.svelte.js";
@@ -80,6 +83,75 @@
   let checkingBackend = $state(false);
   let copiedPull = $state(false);
   let copyTimer = null;
+
+  // Model download / pull tracking
+  let pulling = $state(false);
+  let pullProgress = $state(null);
+  let pullSuccess = $state(false);
+  let unlistenPull = null;
+
+  const isModelInstalled = $derived.by(() => {
+    if (!backendStatus?.models?.length) return false;
+    const target = (model || "").trim().toLowerCase();
+    if (!target) return false;
+    return backendStatus.models.some((m) => {
+      const lower = m.toLowerCase();
+      return lower === target || lower.includes(target) || target.includes(lower);
+    });
+  });
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return "0 B";
+    const k = 1024;
+    const dm = 2;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+  }
+
+  async function startPullModel() {
+    if (!inTauri || pulling) return;
+    pulling = true;
+    pullSuccess = false;
+    pullProgress = {
+      status: "Contacting Ollama...",
+      completed: 0,
+      total: 0,
+      percent: 0,
+      done: false,
+      error: null,
+    };
+    errorMsg = "";
+    statusMsg = "";
+    try {
+      await invokeCmd("foundry_ai_pull_model", {
+        endpoint,
+        model: model.trim(),
+      });
+    } catch (err) {
+      pulling = false;
+      errorMsg = String(err);
+      pullProgress = {
+        status: "Download failed.",
+        completed: 0,
+        total: 0,
+        percent: 0,
+        done: true,
+        error: String(err),
+      };
+    }
+  }
+
+  async function cancelPullModel() {
+    if (!inTauri || !pulling) return;
+    try {
+      await invokeCmd("foundry_ai_cancel_pull");
+    } catch (err) {
+      console.warn("Cancel pull failed:", err);
+    } finally {
+      pulling = false;
+    }
+  }
 
   // Style & conditioning
   let stylePrompt = $state("humanist sans-serif, 600 weight, calm, clean, normal style");
@@ -309,6 +381,16 @@
       return;
     }
 
+    if (backendStatus?.ok && !isModelInstalled && provider === "ollama") {
+      if (pulling) {
+        errorMsg = `Model is downloading (${pullProgress?.percent?.toFixed(1) ?? 0}%). Please wait for completion before generating.`;
+        return;
+      }
+      statusMsg = `Model not found in local Ollama. Starting auto-pull for ${model}…`;
+      await startPullModel();
+      return;
+    }
+
     generating = true;
     cancelling = false;
     errorMsg = "";
@@ -385,6 +467,17 @@
           if (!payload) return;
           progress = payload;
         });
+        unlistenPull = await listen("ai-pull-progress", ({ payload }) => {
+          if (!payload) return;
+          pullProgress = payload;
+          if (payload.done) {
+            pulling = false;
+            if (!payload.error) {
+              pullSuccess = true;
+              checkBackend();
+            }
+          }
+        });
       } catch {
         // Ignore outside Tauri runtime
       }
@@ -393,6 +486,7 @@
 
   onDestroy(() => {
     unlistenProgress?.();
+    unlistenPull?.();
     if (copyTimer) clearTimeout(copyTimer);
   });
 </script>
@@ -452,6 +546,82 @@
         </button>
       </div>
     </div>
+
+    <!-- Download Progress Tracker / Status Card (Directly above Model Name) -->
+    {#if pulling || (pullProgress && !pullProgress.done)}
+      <div class="model-download-card active" aria-live="polite">
+        <div class="download-card-header">
+          <div class="download-card-title">
+            <span class="icon-spin spinning"><RefreshCw size={13} /></span>
+            <span class="download-label">Downloading Model: <code>{model}</code></span>
+          </div>
+          <button
+            type="button"
+            class="btn-inline danger compact"
+            onclick={cancelPullModel}
+          >
+            Cancel Download
+          </button>
+        </div>
+        <div class="download-bar-track">
+          <div
+            class="download-bar-fill"
+            style="width: {Math.max(2, Math.min(100, pullProgress?.percent || 0))}%"
+          ></div>
+        </div>
+        <div class="download-card-meta">
+          <span class="download-bytes">
+            {#if (pullProgress?.total || 0) > 0}
+              <strong>{formatBytes(pullProgress.completed)}</strong> of {formatBytes(pullProgress.total)} ({pullProgress.percent.toFixed(1)}%)
+            {:else}
+              Connecting to Ollama…
+            {/if}
+          </span>
+          <span class="download-phase">{pullProgress?.status || "downloading…"}</span>
+        </div>
+      </div>
+    {:else if pullSuccess}
+      <div class="model-download-card success" aria-live="polite">
+        <div class="download-card-header">
+          <div class="download-card-title ok">
+            <CheckCircle2 size={13} />
+            <span class="download-label">Download Complete! <code>{model}</code> installed and verified.</span>
+          </div>
+          <button
+            type="button"
+            class="btn-inline compact"
+            onclick={() => (pullSuccess = false)}
+          >
+            Dismiss
+          </button>
+        </div>
+        <span class="download-subtext">VecGlypher is active in local Ollama on your RTX 5090. Ready to forge vector glyphs!</span>
+      </div>
+    {:else if backendStatus?.ok && !isModelInstalled && provider === "ollama"}
+      <div class="model-download-card uninstalled">
+        <div class="uninstalled-info">
+          <div class="uninstalled-title">
+            <AlertCircle size={13} />
+            <span>Model not yet downloaded in local Ollama</span>
+          </div>
+          <span class="uninstalled-sub">VecGlypher-27b-it (~16.6 GB GGUF) · D: drive has 80 GB available</span>
+        </div>
+        <button
+          type="button"
+          class="btn-inline primary-generate"
+          disabled={isDisabled || checkingBackend}
+          onclick={startPullModel}
+        >
+          <Download size={12} />
+          <span>Download &amp; Install Model (~16.6 GB)</span>
+        </button>
+      </div>
+    {:else if isModelInstalled}
+      <div class="model-installed-badge">
+        <Check size={11} />
+        <span>Model Installed &amp; Ready on GPU ({backendStatus?.models?.find(m => m.toLowerCase().includes(model.trim().toLowerCase()) || model.trim().toLowerCase().includes(m.toLowerCase())) || model})</span>
+      </div>
+    {/if}
 
     <div class="backend-fields">
       <label class="text-field endpoint-field">
@@ -1296,6 +1466,111 @@
     align-items: center;
     gap: 6px;
     margin-left: auto;
+  }
+
+  .model-download-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    background: var(--field);
+    border: 1px solid var(--line2);
+  }
+  .model-download-card.active {
+    border-color: var(--accent);
+    background: var(--accent-soft, var(--field));
+  }
+  .model-download-card.success {
+    border-color: var(--ok);
+    background: var(--field);
+  }
+  .model-download-card.uninstalled {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-color: var(--warn, #e5a50a);
+    background: var(--field);
+  }
+  .download-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .download-card-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 600 11px var(--sans);
+    color: var(--ink);
+  }
+  .download-card-title.ok {
+    color: var(--ok);
+  }
+  .download-label code {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--accent-2);
+  }
+  .download-subtext {
+    font: 500 10.5px var(--sans);
+    color: var(--ink2);
+  }
+  .uninstalled-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .uninstalled-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font: 600 11px var(--sans);
+    color: var(--warn, #e5a50a);
+  }
+  .uninstalled-sub {
+    font: 500 10px var(--mono);
+    color: var(--ink3);
+  }
+  .download-bar-track {
+    width: 100%;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--line2);
+    overflow: hidden;
+  }
+  .download-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: var(--accent);
+    transition: width 0.2s ease-out;
+  }
+  .download-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font: 500 10.5px var(--mono);
+    color: var(--ink2);
+  }
+  .download-phase {
+    color: var(--ink3);
+    font-size: 10px;
+    text-transform: capitalize;
+  }
+  .model-installed-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: var(--accent-soft, var(--field));
+    border: 1px solid var(--line2);
+    color: var(--ok);
+    font: 600 10.5px var(--sans);
+    width: fit-content;
   }
 
   .btn-inline {
