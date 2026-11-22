@@ -1361,21 +1361,24 @@
 
   .v-toolbar {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    padding: 6px 8px;
+    padding: 5px 7px;
     border-radius: 9px;
     background: var(--side);
     border: 1px solid var(--line);
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .v-tool-group {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
+    flex: none;
   }
 
   .v-zoom-group {
@@ -1383,16 +1386,18 @@
   }
 
   .v-tbtn {
-    height: 25px;
-    padding: 0 8px;
+    height: 24px;
+    padding: 0 6px;
     border: 1px solid var(--line);
     border-radius: 6px;
     background: var(--field);
     color: var(--ink2);
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    font: 600 11px var(--sans);
+    gap: 4px;
+    white-space: nowrap;
+    flex: none;
+    font: 600 10.5px var(--sans);
     transition: border-color 0.12s, background-color 0.12s, color 0.12s;
   }
 

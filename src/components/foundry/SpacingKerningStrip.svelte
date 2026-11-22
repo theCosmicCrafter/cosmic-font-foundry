@@ -738,10 +738,10 @@
 
   /* ---- 1. Optical Automation Bar ---- */
   .auto-bar {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     align-items: center;
-    gap: 10px;
+    gap: 8px 14px;
     padding: 8px 10px;
     border-radius: 9px;
     background: var(--win);
@@ -749,18 +749,17 @@
   }
   .auto-group {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 8px;
-    flex: 1;
-    min-width: 260px;
+    min-width: 0;
   }
   .auto-ctrl {
     display: flex;
     align-items: center;
     gap: 7px;
     flex: 1;
-    min-width: 190px;
+    min-width: 0;
   }
   .ctrl-lbl {
     font: 600 11px var(--sans);
@@ -799,9 +798,7 @@
     text-align: right;
   }
   .auto-sep {
-    width: 1px;
-    height: 22px;
-    background: var(--line);
+    display: none;
   }
 
   .btn-inline {

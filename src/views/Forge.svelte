@@ -3,7 +3,8 @@
   import {
     Download, Sparkles, RotateCcw, FlipHorizontal2, Eraser, Check, Contrast,
     Undo2, Redo2, Save, FolderUp, Spline, Layers, FileCode, Upload, Search, Scan,
-    PenTool, ArrowLeftRight, Combine, WandSparkles, ShieldCheck,
+    PenTool, ArrowLeftRight, Combine, WandSparkles, ShieldCheck, PanelLeft,
+    ChevronDown, ChevronUp, MoreHorizontal,
   } from "@lucide/svelte";
   import VectorGlyphEditor from "../components/foundry/VectorGlyphEditor.svelte";
   import ImageTraceDrawer from "../components/foundry/ImageTraceDrawer.svelte";
@@ -80,16 +81,22 @@
   let vectorGlyphQuery = $state("");
   let svgDrawerOpen = $state(false);
   let traceDrawerOpen = $state(false);
-  let aiDrawerOpen = $state(false);
+  let fileMenuOpen = $state(false);
+  let glyphRailOpen = $state(true);
+  let specimenExpanded = $state(false);
   let svgImportText = $state("");
   let vectorBusy = $state(false);
   let forking = $state(false);
   let ghostEntry = $state(null);
   let ghostPath = $state("");
   let caliperResults = $state([]);
-  let vectorTab = $state("draw"); // "draw" | "space" | "layout" | "styles" | "qa"
+  let vectorTab = $state("draw"); // "draw" | "ai" | "space" | "layout" | "styles" | "qa"
   let qaReport = $state(null);
   let ghostSeq = 0;
+
+  const showGlyphRail = $derived(
+    glyphRailOpen && (vectorTab === "draw" || vectorTab === "space" || vectorTab === "layout"),
+  );
 
   // ---- Live Preview & Compile Output ----
   let testPhrase = $state("");
@@ -1255,60 +1262,73 @@
 <div class="forge">
   <div class="forge-bar">
     <div class="mode-switch" role="tablist" aria-label="Foundry mode">
-      <button type="button" role="tab" aria-selected={mode === "modular"} class="mode-btn" class:active={mode === "modular"} onclick={() => switchStudioMode("modular")}>
-        <Layers size={12} />{t("forge.modeModular")}
+      <button type="button" role="tab" aria-selected={mode === "modular"} class="mode-btn" class:active={mode === "modular"} title={t("forge.modeModular")} onclick={() => switchStudioMode("modular")}>
+        <Layers size={12} />Modular
       </button>
-      <button type="button" role="tab" aria-selected={mode === "vector"} class="mode-btn" class:active={mode === "vector"} onclick={() => switchStudioMode("vector")}>
-        <Spline size={12} />{t("forge.modeVector")}
+      <button type="button" role="tab" aria-selected={mode === "vector"} class="mode-btn" class:active={mode === "vector"} title={t("forge.modeVector")} onclick={() => switchStudioMode("vector")}>
+        <Spline size={12} />Vector
       </button>
     </div>
 
-    <label class="name-box">
-      <span class="lbl">{t("forge.family")}</span>
-      <input bind:value={familyName} maxlength="40" spellcheck="false" placeholder="Nebula Sans" />
+    <label class="name-box" title={t("forge.family")}>
+      <input bind:value={familyName} maxlength="40" spellcheck="false" placeholder="Family name" />
     </label>
 
-    <div class="style-pills">
-      {#each ["Regular", "Bold", "Oblique"] as st (st)}
-        <button type="button" class="pill" class:active={styleName === st} onclick={() => (styleName = st)}>{st}</button>
-      {/each}
-    </div>
+    <select class="style-select" bind:value={styleName} aria-label="Font style">
+      <option value="Regular">Regular</option>
+      <option value="Bold">Bold</option>
+      <option value="Oblique">Oblique</option>
+    </select>
 
     <div class="bar-actions">
-      <span class="size-badge num">
-        {Math.max(1, Math.round(compiledBytes.length / 1024))} KB ·
-        {#if compileStats.contours != null}
-          {t("forge.vectorStats", {
-            glyphs: compileStats.glyphCount || Object.keys(glyphs).length + 2,
-            contours: compileStats.contours,
-            points: compileStats.points,
-          })}
-        {:else}
-          {compileStats.glyphCount || Object.keys(glyphs).length + 2} glyphs
-        {/if}
+      <span class="size-badge num" title={`${Math.max(1, Math.round(compiledBytes.length / 1024))} KB · ${compileStats.glyphCount || Object.keys(glyphs).length + 2} glyphs`}>
+        {Math.max(1, Math.round(compiledBytes.length / 1024))}K · {compileStats.glyphCount || Object.keys(glyphs).length + 2}g
       </span>
-      {#if inTauri}
-        <button type="button" class="btn" onclick={importUfo} disabled={vectorBusy}>
-          <FolderUp size={13} strokeWidth={2} />{t("forge.importUfo")}
+      <div class="file-menu-wrap">
+        <button
+          type="button"
+          class="btn"
+          aria-expanded={fileMenuOpen}
+          onclick={() => (fileMenuOpen = !fileMenuOpen)}
+        >
+          <MoreHorizontal size={13} />File
+          <ChevronDown size={11} />
         </button>
-        <button type="button" class="btn" onclick={exportUfo} disabled={vectorBusy}>
-          <Save size={13} strokeWidth={2} />{t("forge.exportUfo")}
-        </button>
-      {/if}
-      <button type="button" class="btn" title={t("forge.loadProj")} onclick={() => projectInput?.click()}>
-        <FolderUp size={13} strokeWidth={2} />{t("forge.loadProj")}
+        {#if fileMenuOpen}
+          <button
+            type="button"
+            class="file-menu-backdrop"
+            aria-label="Close file menu"
+            onclick={() => (fileMenuOpen = false)}
+          ></button>
+          <div class="file-menu-pop" role="menu">
+            <button type="button" role="menuitem" onclick={() => { fileMenuOpen = false; projectInput?.click(); }}>
+              <FolderUp size={12} />{t("forge.loadProj")}
+            </button>
+            <button type="button" role="menuitem" onclick={() => { fileMenuOpen = false; saveProject(); }}>
+              <Save size={12} />{t("forge.saveProj")}
+            </button>
+            {#if inTauri}
+              <div class="menu-sep"></div>
+              <button type="button" role="menuitem" disabled={vectorBusy} onclick={() => { fileMenuOpen = false; importUfo(); }}>
+                <FolderUp size={12} />{t("forge.importUfo")}
+              </button>
+              <button type="button" role="menuitem" disabled={vectorBusy} onclick={() => { fileMenuOpen = false; exportUfo(); }}>
+                <Save size={12} />{t("forge.exportUfo")}
+              </button>
+            {/if}
+            <div class="menu-sep"></div>
+            <button type="button" role="menuitem" disabled={!compiledBytes.length} onclick={() => { fileMenuOpen = false; exportWoff(); }}>
+              <Download size={12} />{t("forge.exportWoff")}
+            </button>
+          </div>
+        {/if}
+      </div>
+      <button type="button" class="btn" title={t("forge.export")} onclick={exportTtf} disabled={!compiledBytes.length}>
+        <Download size={13} strokeWidth={2} />.TTF
       </button>
-      <button type="button" class="btn" title={t("forge.saveProj")} onclick={saveProject}>
-        <Save size={13} strokeWidth={2} />{t("forge.saveProj")}
-      </button>
-      <button type="button" class="btn" onclick={exportTtf} disabled={!compiledBytes.length}>
-        <Download size={13} strokeWidth={2} />{t("forge.export")}
-      </button>
-      <button type="button" class="btn" onclick={exportWoff} disabled={!compiledBytes.length}>
-        <Download size={13} strokeWidth={2} />{t("forge.exportWoff")}
-      </button>
-      <button type="button" class="btn primary" onclick={installForged} disabled={installing || !compiledBytes.length}>
-        <Check size={13} strokeWidth={2.2} />{installing ? t("forge.installing") : t("forge.install")}
+      <button type="button" class="btn primary" title={t("forge.install")} onclick={installForged} disabled={installing || !compiledBytes.length}>
+        <Check size={13} strokeWidth={2.2} />{installing ? t("forge.installing") : "Install"}
       </button>
     </div>
   </div>
@@ -1530,41 +1550,118 @@
       </section>
     </div>
   {:else}
+    <!-- Vector Foundry Full-Width Tab Bar -->
+    <div class="vector-subtabs" role="tablist" aria-label="Vector Foundry Workspace">
+      {#if vectorTab === "draw" || vectorTab === "space" || vectorTab === "layout"}
+        <button
+          type="button"
+          class="mini rail-toggle"
+          class:on={glyphRailOpen}
+          title={glyphRailOpen ? "Hide Glyph Rail" : "Show Glyph Rail"}
+          onclick={() => (glyphRailOpen = !glyphRailOpen)}
+        >
+          <PanelLeft size={13} />
+        </button>
+      {/if}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={vectorTab === "draw"}
+        class="v-tab-btn"
+        class:on={vectorTab === "draw"}
+        onclick={() => (vectorTab = "draw")}
+      >
+        <PenTool size={12} />{t("forge.tabDraw")}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={vectorTab === "ai"}
+        class="v-tab-btn ai-tab"
+        class:on={vectorTab === "ai"}
+        onclick={() => (vectorTab = "ai")}
+      >
+        <Sparkles size={12} />{t("forge.aiGenerate")}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={vectorTab === "space"}
+        class="v-tab-btn"
+        class:on={vectorTab === "space"}
+        onclick={() => (vectorTab = "space")}
+      >
+        <ArrowLeftRight size={12} />{t("forge.tabSpace")}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={vectorTab === "layout"}
+        class="v-tab-btn"
+        class:on={vectorTab === "layout"}
+        onclick={() => (vectorTab = "layout")}
+      >
+        <Combine size={12} />{t("forge.tabLayout")}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={vectorTab === "styles"}
+        class="v-tab-btn"
+        class:on={vectorTab === "styles"}
+        onclick={() => (vectorTab = "styles")}
+      >
+        <WandSparkles size={12} />{t("forge.tabStyles")}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={vectorTab === "qa"}
+        class="v-tab-btn"
+        class:on={vectorTab === "qa"}
+        onclick={() => (vectorTab = "qa")}
+      >
+        <ShieldCheck size={12} />{t("forge.tabQa")}
+      </button>
+    </div>
+
     <!-- Vector Foundry Mode -->
-    <div class="workspace vector-ws">
-      <!-- Left Column: Glyph Picker -->
-      <section class="panel editor-col">
-        <div class="panel-head">
-          <span class="label">{t("forge.modeVector")} · {vectorGlyphEntries.length}</span>
-          <div class="tool-btns">
-            <button type="button" class="mini" title={t("forge.undo")} onclick={undoForge} disabled={!canUndo}><Undo2 size={12} /></button>
-            <button type="button" class="mini" title={t("forge.redo")} onclick={redoForge} disabled={!canRedo}><Redo2 size={12} /></button>
+    <div class="workspace vector-ws" class:rail-hidden={!showGlyphRail}>
+      {#if showGlyphRail}
+        <!-- Slim Left Glyph Rail -->
+        <section class="panel editor-col glyph-rail">
+          <div class="panel-head">
+            <span class="label">Glyphs · {vectorGlyphEntries.length}</span>
+            <div class="tool-btns">
+              <button type="button" class="mini" title={t("forge.undo")} onclick={undoForge} disabled={!canUndo}><Undo2 size={12} /></button>
+              <button type="button" class="mini" title={t("forge.redo")} onclick={redoForge} disabled={!canRedo}><Redo2 size={12} /></button>
+            </div>
           </div>
-        </div>
 
-        <label class="v-search">
-          <Search size={12} />
-          <input bind:value={vectorGlyphQuery} placeholder={t("spec.glyphSearch")} spellcheck="false" />
-        </label>
+          <label class="v-search">
+            <Search size={12} />
+            <input bind:value={vectorGlyphQuery} placeholder={t("spec.glyphSearch")} spellcheck="false" />
+          </label>
 
-        <div class="v-glyph-grid">
-          {#each vectorGlyphEntries as item (item.key)}
-            <button
-              type="button"
-              class="v-glyph-btn"
-              class:active={activeVectorKey === item.key}
-              class:empty-outline={!item.glyph.contours?.length}
-              title={`U+${item.hex} · ${item.glyph.name || item.char}`}
-              onclick={() => (activeVectorKey = item.key)}
-            >
-              <span>{item.char}</span>
-              <span class="v-hex num">{item.hex}</span>
-            </button>
-          {/each}
-        </div>
-      </section>
+          <div class="v-glyph-grid">
+            {#each vectorGlyphEntries as item (item.key)}
+              <button
+                type="button"
+                class="v-glyph-btn"
+                class:active={activeVectorKey === item.key}
+                class:empty-outline={!item.glyph.contours?.length}
+                title={`U+${item.hex} · ${item.glyph.name || item.char}`}
+                onclick={() => (activeVectorKey = item.key)}
+              >
+                <span>{item.char}</span>
+                <span class="v-hex num">{item.hex}</span>
+              </button>
+            {/each}
+          </div>
+        </section>
+      {/if}
 
-      <!-- Right Column: Interactive SVG Stage, PathOps, SVG Import, & Live Specimen -->
+      <!-- Right Column: Active Tool Surface & Compact Specimen Dock -->
       <section class="controls-col">
         {#if forking}
           <div class="panel forking-banner">
@@ -1573,75 +1670,21 @@
           </div>
         {/if}
 
-        <div class="vector-subtabs" role="tablist" aria-label="Vector Foundry Workspace">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={vectorTab === "draw"}
-            class="v-tab-btn"
-            class:on={vectorTab === "draw"}
-            onclick={() => (vectorTab = "draw")}
-          >
-            <PenTool size={13} />{t("forge.tabDraw")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={vectorTab === "space"}
-            class="v-tab-btn"
-            class:on={vectorTab === "space"}
-            onclick={() => (vectorTab = "space")}
-          >
-            <ArrowLeftRight size={13} />{t("forge.tabSpace")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={vectorTab === "layout"}
-            class="v-tab-btn"
-            class:on={vectorTab === "layout"}
-            onclick={() => (vectorTab = "layout")}
-          >
-            <Combine size={13} />{t("forge.tabLayout")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={vectorTab === "styles"}
-            class="v-tab-btn"
-            class:on={vectorTab === "styles"}
-            onclick={() => (vectorTab = "styles")}
-          >
-            <WandSparkles size={13} />{t("forge.tabStyles")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={vectorTab === "qa"}
-            class="v-tab-btn"
-            class:on={vectorTab === "qa"}
-            onclick={() => (vectorTab = "qa")}
-          >
-            <ShieldCheck size={13} />{t("forge.tabQa")}
-          </button>
-        </div>
-
         {#if vectorTab === "draw"}
         <div class="panel vector-stage-panel">
-          <div class="panel-head">
+          <div class="panel-head compact-head">
             <span class="label">
               “{activeVectorChar}”
               {#if activeVectorGlyph}
                 <span class="v-meta num">
-                  U+{(activeVectorGlyph.codepoint ?? 0).toString(16).toUpperCase().padStart(4, "0")} · {activeVectorGlyph.name} ·
-                  {activeVectorCounts.contours}c / {activeVectorCounts.points}p
+                  U+{(activeVectorGlyph.codepoint ?? 0).toString(16).toUpperCase().padStart(4, "0")} · {activeVectorCounts.contours}c/{activeVectorCounts.points}p
                 </span>
               {/if}
             </span>
             <div class="tool-btns">
               {#if activeVectorGlyph}
-                <label class="metric-input">
-                  <span>{t("forge.advanceWidth")}</span>
+                <label class="metric-input" title={t("forge.advanceWidth")}>
+                  <span>W</span>
                   <input
                     type="number"
                     step="10"
@@ -1649,8 +1692,8 @@
                     onchange={(e) => updateActiveVectorMetrics("advance_width", e.currentTarget.value)}
                   />
                 </label>
-                <label class="metric-input">
-                  <span>{t("forge.lsb")}</span>
+                <label class="metric-input" title={t("forge.lsb")}>
+                  <span>LSB</span>
                   <input
                     type="number"
                     step="10"
@@ -1669,31 +1712,29 @@
                   type="button"
                   class="btn-inline"
                   class:accent={traceDrawerOpen}
-                  onclick={() => (traceDrawerOpen = !traceDrawerOpen)}
+                  onclick={() => {
+                    traceDrawerOpen = !traceDrawerOpen;
+                    if (traceDrawerOpen) svgDrawerOpen = false;
+                  }}
                 >
                   <Scan size={12} />{t("forge.traceImage")}
-                </button>
-                <button
-                  type="button"
-                  class="btn-inline"
-                  class:accent={aiDrawerOpen}
-                  onclick={() => (aiDrawerOpen = !aiDrawerOpen)}
-                >
-                  <Sparkles size={12} />{t("forge.aiGenerate")}
                 </button>
               {/if}
               <button
                 type="button"
                 class="btn-inline"
                 class:accent={svgDrawerOpen}
-                onclick={() => (svgDrawerOpen = !svgDrawerOpen)}
+                onclick={() => {
+                  svgDrawerOpen = !svgDrawerOpen;
+                  if (svgDrawerOpen) traceDrawerOpen = false;
+                }}
               >
                 <FileCode size={12} />{t("forge.importSvg")}
               </button>
             </div>
           </div>
 
-          <!-- PathOps Toolbar -->
+          <!-- Single-Row Scrollable PathOps Toolbar -->
           <div class="pathops-bar">
             <div class="pathops-btns">
               {#each PATH_OPS as p (p.id)}
@@ -1707,7 +1748,7 @@
                 </button>
               {/each}
             </div>
-            <label class="toggle-chip" class:on={applyOpToAll}>
+            <label class="toggle-chip compact-chip" class:on={applyOpToAll}>
               <input type="checkbox" bind:checked={applyOpToAll} />
               <span>{t("forge.applyAll")}</span>
             </label>
@@ -1723,20 +1764,6 @@
               onApplyOutlineStroke={handleApplyOutlineStroke}
               onApplyCalligraphy={handleApplyCalligraphy}
               onclose={() => (traceDrawerOpen = false)}
-            />
-          {/if}
-
-          <!-- VecGlypher AI Vector Glyph & Font Batch Generator Drawer -->
-          {#if aiDrawerOpen}
-            <AiGlyphGeneratorDrawer
-              project={vectorProject}
-              activeKey={activeVectorKey}
-              activeChar={activeVectorChar}
-              upm={vectorMetrics.upm}
-              busy={vectorBusy}
-              onApplyGlyph={handleAiApplyGlyph}
-              onApplyProject={handleAiApplyProject}
-              onclose={() => (aiDrawerOpen = false)}
             />
           {/if}
 
@@ -1780,6 +1807,16 @@
             onKnifeSlice={handleKnifeSlice}
           />
         </div>
+        {:else if vectorTab === "ai"}
+          <AiGlyphGeneratorDrawer
+            project={vectorProject}
+            activeKey={activeVectorKey}
+            activeChar={activeVectorChar}
+            upm={vectorMetrics.upm}
+            busy={vectorBusy}
+            onApplyGlyph={handleAiApplyGlyph}
+            onApplyProject={handleAiApplyProject}
+          />
         {:else if vectorTab === "space"}
           <SpacingKerningStrip
             project={vectorProject}
@@ -1825,26 +1862,35 @@
           />
         {/if}
 
-        <!-- Live Compiled Specimen (Vector Mode) -->
-        <div class="panel specimen-panel">
+        <!-- Collapsible Live Compiled Specimen Dock (Vector Mode) -->
+        <div class="panel specimen-dock" class:expanded={specimenExpanded}>
           <div class="panel-head">
-            <span class="label">{t("forge.livePreview")}</span>
+            <button
+              type="button"
+              class="specimen-toggle"
+              onclick={() => (specimenExpanded = !specimenExpanded)}
+            >
+              {#if specimenExpanded}<ChevronDown size={13} />{:else}<ChevronUp size={13} />{/if}
+              <span class="label">{t("forge.livePreview")}</span>
+            </button>
             <div class="test-controls">
               <input class="test-input" bind:value={testPhrase} placeholder={t("forge.typeTest")} spellcheck="false" />
               <input class="test-size" type="range" min="18" max="72" bind:value={testSize} aria-label="Preview size" />
               <span class="num size-val">{testSize}px</span>
             </div>
           </div>
-          {#if compileError}
+          {#if compileError && inTauri}
             <div class="err-box">{compileError}</div>
           {/if}
-          <div
-            class="live-stage"
-            style:font-family={`"${liveFamilyId}", var(--sans)`}
-            style:font-size="{testSize}px"
-          >
-            {effectivePhrase}
-          </div>
+          {#if specimenExpanded}
+            <div
+              class="live-stage"
+              style:font-family={`"${liveFamilyId}", var(--sans)`}
+              style:font-size="{testSize}px"
+            >
+              {effectivePhrase}
+            </div>
+          {/if}
         </div>
       </section>
     </div>
@@ -1865,9 +1911,9 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    padding: 10px 14px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    padding: 8px 12px;
     border-radius: 12px;
     background: var(--side);
     border: 1px solid var(--line);
@@ -1879,10 +1925,11 @@
     background: var(--field);
     border: 1px solid var(--line2);
     gap: 2px;
+    flex: none;
   }
   .mode-btn {
     height: 26px;
-    padding: 0 10px;
+    padding: 0 9px;
     border: 0;
     border-radius: 6px;
     background: transparent;
@@ -1891,6 +1938,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
+    white-space: nowrap;
     transition: all 0.14s;
   }
   .mode-btn:hover { color: var(--ink); }
@@ -1899,25 +1947,64 @@
   .name-box {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 10px;
-    height: 30px;
+    gap: 6px;
+    padding: 0 9px;
+    height: 28px;
     border-radius: 8px;
     background: var(--field);
     border: 1px solid var(--line2);
+    flex: 0 1 180px;
+    min-width: 110px;
   }
-  .name-box .lbl { font: 700 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2); }
-  .name-box input { border: 0; outline: 0; background: transparent; font: 600 13px var(--sans); color: var(--ink); width: 140px; }
+  .name-box .lbl { font: 700 9.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2); flex: none; }
+  .name-box input { border: 0; outline: 0; background: transparent; font: 600 12.5px var(--sans); color: var(--ink); width: 100%; min-width: 60px; }
 
-  .style-pills { display: flex; gap: 4px; }
-  .pill {
-    height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px;
-    background: transparent; color: var(--ink2); font: 600 11.5px var(--sans); transition: all 0.14s;
+  .style-select {
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line2);
+    background: var(--field);
+    color: var(--ink);
+    font: 600 11.5px var(--sans);
+    outline: none;
+    flex: none;
   }
-  .pill:hover { background: var(--hov); color: var(--ink); }
-  .pill.active { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
 
-  .bar-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .bar-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+  .file-menu-wrap { position: relative; }
+  .file-menu-backdrop { position: fixed; inset: 0; z-index: 40; border: 0; background: transparent; padding: 0; }
+  .file-menu-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    min-width: 170px;
+    padding: 5px;
+    border-radius: 10px;
+    background: var(--side);
+    border: 1px solid var(--line2);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .file-menu-pop button {
+    height: 28px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink);
+    font: 500 11.5px var(--sans);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+  }
+  .file-menu-pop button:hover:not(:disabled) { background: var(--hov); }
+  .file-menu-pop button:disabled { opacity: 0.45; cursor: default; }
+  .menu-sep { height: 1px; background: var(--line); margin: 3px 4px; }
   .size-badge { font: 500 11px var(--mono); color: var(--ink3); padding-right: 4px; }
   .btn {
     height: 30px; padding: 0 11px; border: 1px solid var(--line2); border-radius: 8px;
@@ -1942,11 +2029,14 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 330px minmax(0, 1fr);
-    gap: 14px;
+    grid-template-columns: 316px minmax(0, 1fr);
+    gap: 12px;
   }
   .workspace.vector-ws {
-    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
+  .workspace.vector-ws.rail-hidden {
+    grid-template-columns: minmax(0, 1fr);
   }
   .panel {
     background: var(--side);
@@ -2017,7 +2107,7 @@
   .char-groups { display: flex; flex-direction: column; gap: 8px; }
   .char-group { display: flex; flex-direction: column; gap: 4px; }
   .grp-lbl { font: 600 9.5px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink3); }
-  .char-grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 3px; }
+  .char-grid { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 3px; }
   .char-btn {
     height: 24px; border: 1px solid var(--line); border-radius: 5px;
     background: var(--field); color: var(--ink2); font: 600 11.5px var(--mono);
@@ -2083,11 +2173,11 @@
   }
   .v-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 500 12px var(--sans); }
   .v-glyph-grid {
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
     overflow-y: auto; padding-right: 2px;
   }
   .v-glyph-btn {
-    height: 44px; border: 1px solid var(--line); border-radius: 7px;
+    height: 42px; border: 1px solid var(--line); border-radius: 7px;
     background: var(--field); color: var(--ink);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     font: 600 14px var(--sans); padding: 2px;
@@ -2102,38 +2192,46 @@
     background: var(--accent-soft); border-color: var(--accent); color: var(--ink); font-size: 12.5px; font-weight: 600;
   }
   .vector-subtabs {
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-    padding: 5px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line);
+    flex: none;
+    display: flex; align-items: center; gap: 4px; flex-wrap: nowrap;
+    overflow-x: auto; scrollbar-width: none;
+    padding: 4px 6px; border-radius: 10px; background: var(--side); border: 1px solid var(--line);
   }
+  .rail-toggle.on { color: var(--accent-2); border-color: var(--accent); background: var(--accent-soft); }
   .v-tab-btn {
-    height: 28px; padding: 0 11px; border: 1px solid transparent; border-radius: 7px;
-    display: inline-flex; align-items: center; gap: 6px;
+    height: 27px; padding: 0 10px; border: 1px solid transparent; border-radius: 7px;
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; flex: none;
     background: transparent; color: var(--ink2); font: 600 11.5px var(--sans); cursor: pointer;
   }
   .v-tab-btn:hover { background: var(--field); color: var(--ink); }
   .v-tab-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
-  .vector-stage-panel { flex: 1.4; min-height: 320px; }
+  .v-tab-btn.ai-tab { color: var(--accent-2); }
+  .v-tab-btn.ai-tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .vector-stage-panel { flex: 1 0 auto; min-height: 320px; }
+  .compact-head { gap: 6px; }
   .v-meta { margin-left: 6px; font-size: 11px; color: var(--accent-2); }
   .metric-input {
-    display: inline-flex; align-items: center; gap: 5px;
-    height: 24px; padding: 0 7px; border-radius: 6px; background: var(--field); border: 1px solid var(--line);
-    font: 600 10.5px var(--sans); color: var(--ink2);
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 24px; padding: 0 6px; border-radius: 6px; background: var(--field); border: 1px solid var(--line);
+    font: 600 10px var(--mono); color: var(--ink3);
   }
   .metric-input input {
-    width: 52px; border: 0; outline: 0; background: transparent; color: var(--ink);
+    width: 44px; border: 0; outline: 0; background: transparent; color: var(--ink);
     font: 600 11px var(--mono); text-align: right;
   }
   .pathops-bar {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 8px 10px; border-radius: 9px; background: var(--win); border: 1px solid var(--line);
+    display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 6px;
+    padding: 6px 8px; border-radius: 9px; background: var(--win); border: 1px solid var(--line);
+    overflow-x: auto; scrollbar-width: thin;
   }
-  .pathops-btns { display: flex; flex-wrap: wrap; gap: 5px; }
+  .pathops-btns { display: flex; flex-wrap: nowrap; gap: 4px; flex: none; }
   .op-btn {
-    height: 25px; padding: 0 9px; border: 1px solid var(--line2); border-radius: 6px;
-    background: var(--field); color: var(--ink); font: 600 11px var(--sans);
+    height: 24px; padding: 0 8px; border: 1px solid var(--line2); border-radius: 6px;
+    background: var(--field); color: var(--ink); font: 600 10.5px var(--sans); white-space: nowrap; flex: none;
   }
   .op-btn:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
   .op-btn:disabled { opacity: 0.45; cursor: default; }
+  .compact-chip { height: 24px; padding: 0 8px; font-size: 10.5px; white-space: nowrap; flex: none; }
 
   .svg-drawer {
     display: flex; flex-direction: column; gap: 8px;
@@ -2146,25 +2244,32 @@
   }
   .svg-drawer-actions { display: flex; justify-content: flex-end; gap: 6px; }
 
-  .specimen-panel { flex: 1; min-height: 160px; }
-  .test-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .fmt-mini { display: flex; gap: 3px; }
-  .f-pill { height: 24px; min-width: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--field); color: var(--ink2); font: 600 10.5px var(--sans); }
+  .specimen-panel { flex: 1 0 auto; min-height: 160px; }
+  .specimen-dock { flex: none; padding: 8px 12px; gap: 8px; }
+  .specimen-dock.expanded { min-height: 140px; }
+  .specimen-toggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 0; background: transparent; padding: 0; color: var(--ink2); cursor: pointer;
+  }
+  .specimen-toggle:hover { color: var(--ink); }
+  .test-controls { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+  .fmt-mini { display: flex; gap: 2px; }
+  .f-pill { height: 24px; min-width: 22px; padding: 0 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--field); color: var(--ink2); font: 600 10.5px var(--sans); }
   .f-pill.b { font-weight: 800; }
   .f-pill.i { font-style: italic; }
   .f-pill.u { text-decoration: underline; }
   .f-pill.s { text-decoration: line-through; }
   .f-pill.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .test-input {
-    height: 24px; width: 190px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px;
-    background: var(--field); color: var(--ink); font: 500 11.5px var(--sans);
+    height: 24px; width: 140px; min-width: 90px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--field); color: var(--ink); font: 500 11px var(--sans);
   }
-  .test-size { width: 72px; }
-  .size-val { font: 500 11px var(--mono); color: var(--ink3); width: 34px; text-align: right; }
+  .test-size { width: 64px; }
+  .size-val { font: 500 11px var(--mono); color: var(--ink3); width: 32px; text-align: right; }
   .live-stage {
     flex: 1;
-    min-height: 82px;
-    padding: 14px 16px;
+    min-height: 76px;
+    padding: 12px 14px;
     border-radius: 10px;
     background: var(--win);
     border: 1px solid var(--line);
@@ -2172,6 +2277,14 @@
     line-height: 1.3;
     word-break: break-word;
     overflow-y: auto;
+  }
+  .alphabet-strip {
+    font-size: 14px;
+    color: var(--ink2);
+    letter-spacing: 0.04em;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    overflow-x: hidden;
   }
   .alphabet-strip {
     padding: 8px 12px;

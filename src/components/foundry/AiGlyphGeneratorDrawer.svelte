@@ -15,6 +15,8 @@
     Download,
     CheckCircle2,
     AlertCircle,
+    Braces,
+    Dices,
   } from "@lucide/svelte";
   import { invokeCmd } from "../../lib/fonts.svelte.js";
   import { inTauri } from "../../lib/settings.svelte.js";
@@ -49,7 +51,106 @@
       label: "Geometric Mono",
       prompt: "geometric monospace, technical, sharp, coding",
     },
+    {
+      label: "Wildcard Sampler",
+      prompt: "__sans__, __weight__, __mood__, __contrast__, __era__ style",
+    },
+    {
+      label: "Serif Study",
+      prompt: "__serif__, __weight__, __texture__, __proportions__, __terminals__",
+    },
   ];
+
+  // Prompt wildcard collections — `__name__` expands to one random phrase per run.
+  // `{a|b|c}` inline choices are resolved by expandChoices() before token expansion.
+  const WILDCARD_COLLECTIONS = {
+    weight: [
+      "hairline weight",
+      "light weight",
+      "regular weight",
+      "medium weight",
+      "semibold weight",
+      "bold weight",
+      "black weight",
+    ],
+    contrast: [
+      "low stroke contrast",
+      "moderate stroke contrast",
+      "high stroke contrast",
+      "extreme stroke modulation",
+    ],
+    serif: [
+      "old-style serif",
+      "transitional serif",
+      "didone serif",
+      "slab serif",
+      "wedge serif",
+      "humanist serif",
+      "geometric serif",
+    ],
+    sans: [
+      "grotesque sans-serif",
+      "neo-grotesque sans-serif",
+      "humanist sans-serif",
+      "geometric sans-serif",
+      "square sans-serif",
+    ],
+    mood: [
+      "calm and businesslike",
+      "confident and authoritative",
+      "playful and friendly",
+      "elegant and luxurious",
+      "technical and precise",
+      "warm and approachable",
+      "bold and expressive",
+      "minimal and neutral",
+    ],
+    texture: [
+      "smooth uniform strokes",
+      "subtle stroke modulation",
+      "ink-trap terminals",
+      "brushed stroke texture",
+      "calligraphic stroke contrast",
+    ],
+    era: [
+      "contemporary",
+      "modern",
+      "retro",
+      "vintage",
+      "futuristic",
+      "timeless classic",
+    ],
+    terminals: [
+      "flat terminals",
+      "rounded terminals",
+      "angled terminals",
+      "slab terminals",
+      "sheared terminals",
+    ],
+    proportions: [
+      "narrow proportions",
+      "normal proportions",
+      "wide proportions",
+      "condensed proportions",
+      "extended proportions",
+    ],
+    spacing: [
+      "tight spacing",
+      "normal spacing",
+      "generous spacing",
+      "open spacing",
+    ],
+    display: [
+      "display size",
+      "text size",
+      "headline",
+      "poster",
+      "caption",
+    ],
+    mono: ["monospace", "proportional"],
+  };
+
+  const WILDCARD_NAMES = Object.keys(WILDCARD_COLLECTIONS);
 
   const UPPER_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const LOWER_CHARS = "abcdefghijklmnopqrstuvwxyz";
@@ -182,6 +283,100 @@
   let stylePrompt = $state("humanist sans-serif, 600 weight, calm, clean, normal style");
   let selectedExemplarKeys = $state([]);
   let temperature = $state(0.0);
+
+  // Prompt wildcards & resolved preview
+  let promptEl = $state(null);
+  let wildOpen = $state(false);
+  let previewNonce = $state(0);
+  let copiedResolved = $state(false);
+  let resolvedCopyTimer = null;
+
+  function pickOption(options, rng) {
+    return options[Math.floor(rng() * options.length)];
+  }
+
+  // Expands {a|b|c} choice groups inside-out so nested groups resolve correctly.
+  function expandChoices(text, rng) {
+    let out = text;
+    for (let guard = 0; guard < 64; guard++) {
+      const m = out.match(/\{([^{}]*)\}/);
+      if (!m) break;
+      const options = m[1].split("|").map((s) => s.trim()).filter(Boolean);
+      const repl = options.length ? pickOption(options, rng) : m[0];
+      out = out.slice(0, m.index) + repl + out.slice(m.index + m[0].length);
+    }
+    return out;
+  }
+
+  // Resolves {a|b} choices then __collection__ tokens. Unknown tokens stay literal
+  // and are reported so the preview can flag them. Each call rolls independently —
+  // one roll per Generate keeps batch glyphs stylistically consistent.
+  function resolvePrompt(raw, rng = Math.random) {
+    const used = new Set();
+    const unknown = new Set();
+    let text = expandChoices(raw, rng);
+    text = text.replace(/__([A-Za-z0-9_-]+)__/g, (whole, name) => {
+      const coll = WILDCARD_COLLECTIONS[name.toLowerCase()];
+      if (!coll?.length) {
+        unknown.add(name);
+        return whole;
+      }
+      used.add(name.toLowerCase());
+      return pickOption(coll, rng);
+    });
+    text = text
+      .replace(/\s*,\s*/g, ", ")
+      .replace(/,\s*,+/g, ",")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return { text, used: [...used], unknown: [...unknown] };
+  }
+
+  const resolvedPreview = $derived.by(() => {
+    void previewNonce;
+    return resolvePrompt(stylePrompt || "");
+  });
+
+  const wildcardTokenCount = $derived.by(() => {
+    const m = (stylePrompt || "").match(/__[A-Za-z0-9_-]+__/g);
+    return m ? m.length : 0;
+  });
+
+  const choiceGroupCount = $derived.by(() => {
+    const m = (stylePrompt || "").match(/\{[^{}]*\|[^{}]*\}/g);
+    return m ? m.length : 0;
+  });
+
+  function insertWildcard(name) {
+    const token = `__${name}__`;
+    const el = promptEl;
+    const start = el?.selectionStart ?? (stylePrompt || "").length;
+    const end = el?.selectionEnd ?? start;
+    stylePrompt = (stylePrompt || "").slice(0, start) + token + (stylePrompt || "").slice(end);
+    previewNonce += 1;
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = start + token.length;
+      el?.setSelectionRange(pos, pos);
+    });
+  }
+
+  function rerollPreview() {
+    previewNonce += 1;
+  }
+
+  async function copyResolvedPrompt() {
+    try {
+      await navigator.clipboard.writeText(resolvedPreview.text);
+      copiedResolved = true;
+      if (resolvedCopyTimer) clearTimeout(resolvedCopyTimer);
+      resolvedCopyTimer = setTimeout(() => {
+        copiedResolved = false;
+      }, 1600);
+    } catch {
+      // Clipboard unavailable — non-fatal
+    }
+  }
 
   // Scope & foundry post-processing
   let scope = $state("single");
@@ -406,6 +601,11 @@
       errorMsg = "Enter a VecGlypher style prompt before generating.";
       return;
     }
+    const resolvedPrompt = resolvePrompt(trimmedPrompt).text;
+    if (!resolvedPrompt) {
+      errorMsg = "Prompt resolves to empty after wildcard expansion.";
+      return;
+    }
     if (scope === "single" && !activeChar) {
       errorMsg = "Select an active glyph to generate.";
       return;
@@ -467,7 +667,7 @@
             endpoint: endpoint.trim(),
             provider,
             model: model.trim(),
-            style_prompt: trimmedPrompt,
+            style_prompt: resolvedPrompt,
             character: activeChar,
             exemplar_glyphs: selectedExemplars,
             temperature: Number(temperature),
@@ -485,7 +685,7 @@
             endpoint: endpoint.trim(),
             provider,
             model: model.trim(),
-            style_prompt: trimmedPrompt,
+            style_prompt: resolvedPrompt,
             chars: targetChars,
             exemplar_keys: selectedExemplarKeys,
             temperature: Number(temperature),
@@ -550,6 +750,7 @@
     unlistenProgress?.();
     unlistenPull?.();
     if (copyTimer) clearTimeout(copyTimer);
+    if (resolvedCopyTimer) clearTimeout(resolvedCopyTimer);
   });
 </script>
 
@@ -819,39 +1020,139 @@
         <span>VecGlypher Style Prompt</span>
       </span>
 
-      <div class="temp-switch" role="radiogroup" aria-label="Sampling temperature">
+      <div class="head-actions">
         <button
           type="button"
-          class="mode-btn"
-          class:active={temperature === 0}
-          role="radio"
-          aria-checked={temperature === 0}
-          disabled={isDisabled}
-          onclick={() => (temperature = 0.0)}
+          class="wild-toggle"
+          class:active={wildOpen}
+          class:has-tokens={wildcardTokenCount > 0}
+          aria-expanded={wildOpen}
+          title={"Wildcard collections and {a|b} inline choices — re-rolled on every Generate"}
+          onclick={() => (wildOpen = !wildOpen)}
         >
-          Greedy (0.0 · Exact Geometry)
+          <Braces size={11} />
+          <span>Wildcards</span>
+          {#if wildcardTokenCount > 0}
+            <span class="wild-count num">{wildcardTokenCount}</span>
+          {/if}
         </button>
-        <button
-          type="button"
-          class="mode-btn"
-          class:active={temperature !== 0}
-          role="radio"
-          aria-checked={temperature !== 0}
-          disabled={isDisabled}
-          onclick={() => (temperature = 0.7)}
-        >
-          Sampling (0.7 · Creative)
-        </button>
+
+        <div class="temp-switch" role="radiogroup" aria-label="Sampling temperature">
+          <button
+            type="button"
+            class="mode-btn"
+            class:active={temperature === 0}
+            role="radio"
+            aria-checked={temperature === 0}
+            disabled={isDisabled}
+            onclick={() => (temperature = 0.0)}
+          >
+            Greedy (0.0 · Exact)
+          </button>
+          <button
+            type="button"
+            class="mode-btn"
+            class:active={temperature !== 0}
+            role="radio"
+            aria-checked={temperature !== 0}
+            disabled={isDisabled}
+            onclick={() => (temperature = 0.7)}
+          >
+            Sample (0.7)
+          </button>
+        </div>
       </div>
     </div>
 
     <textarea
       class="prompt-input"
       rows="2"
+      bind:this={promptEl}
       bind:value={stylePrompt}
       disabled={isDisabled}
-      placeholder="Describe weight, contrast, mood, serif style, proportions…"
+      spellcheck="false"
+      placeholder={"Describe weight, contrast, mood, serif style, proportions… try __sans__ or {old-style|didone}"}
+      onkeydown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          handleGenerate();
+        }
+      }}
     ></textarea>
+
+    {#if wildOpen}
+      <div class="wild-panel">
+        <div class="wild-grid" role="group" aria-label="Wildcard collections">
+          {#each WILDCARD_NAMES as name (name)}
+            <button
+              type="button"
+              class="wild-chip"
+              title={`${name} → ${WILDCARD_COLLECTIONS[name].join(" / ")}`}
+              disabled={isDisabled}
+              onclick={() => insertWildcard(name)}
+            >
+              __{name}__
+            </button>
+          {/each}
+        </div>
+        <div class="wild-hint">
+          <code>{"{a|b|c}"}</code> inline choice · <code>__token__</code> collection · each Generate re-rolls all wildcards
+        </div>
+      </div>
+    {/if}
+
+    <div
+      class="resolve-panel"
+      class:active={resolvedPreview.used.length > 0 || resolvedPreview.unknown.length > 0}
+      aria-live="polite"
+    >
+      <div class="resolve-head">
+        <span class="resolve-lbl">Resolved</span>
+        <span class="resolve-count num" title="Characters in resolved prompt">{resolvedPreview.text.length}</span>
+        <div class="resolve-chips">
+          {#each resolvedPreview.used as u (u)}
+            <span class="resolve-chip">__{u}__</span>
+          {/each}
+          {#if choiceGroupCount > 0}
+            <span class="resolve-chip choice" title={"Inline {a|b} choice groups in prompt"}>
+              <Dices size={9} />{choiceGroupCount}
+            </span>
+          {/if}
+        </div>
+        <div class="resolve-actions">
+          <button
+            type="button"
+            class="resolve-btn"
+            title="Re-roll wildcard resolution"
+            disabled={isDisabled || (wildcardTokenCount === 0 && choiceGroupCount === 0)}
+            onclick={rerollPreview}
+          >
+            <Dices size={10} />
+          </button>
+          <button
+            type="button"
+            class="resolve-btn"
+            title="Copy resolved prompt"
+            disabled={!resolvedPreview.text}
+            onclick={copyResolvedPrompt}
+          >
+            {#if copiedResolved}
+              <Check size={10} />
+            {:else}
+              <Copy size={10} />
+            {/if}
+          </button>
+        </div>
+      </div>
+      <div class="resolve-text" class:muted={!resolvedPreview.text}>
+        {resolvedPreview.text || "Prompt resolves to empty."}
+      </div>
+      {#if resolvedPreview.unknown.length > 0}
+        <div class="resolve-warn">
+          Unknown token{resolvedPreview.unknown.length > 1 ? "s" : ""} left literal: {resolvedPreview.unknown.map((u) => `__${u}__`).join(", ")}
+        </div>
+      {/if}
+    </div>
 
     <div class="preset-row">
       {#each STYLE_PRESETS as preset (preset.prompt)}
@@ -1056,11 +1357,14 @@
 
   <div class="drawer-footer">
     <span class="footer-hint">
-      {#if selectedExemplarKeys.length > 0}
-        Conditioned on {selectedExemplarKeys.length} exemplar glyph(s) · temp {temperature.toFixed(1)}
-      {:else}
-        Text-only conditioning · temp {temperature.toFixed(1)}
+      {#if wildcardTokenCount > 0 || choiceGroupCount > 0}
+        {wildcardTokenCount + choiceGroupCount} wildcard{wildcardTokenCount + choiceGroupCount === 1 ? "" : "s"} re-roll per run ·
       {/if}
+      {#if selectedExemplarKeys.length > 0}
+        {selectedExemplarKeys.length} exemplar(s)
+      {:else}
+        text-only
+      {/if} · temp {temperature.toFixed(1)}
     </span>
 
     <div class="footer-actions">
@@ -1320,6 +1624,192 @@
   .status-tag.warn {
     background: var(--chip);
     color: var(--ink2);
+  }
+
+  .head-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .wild-toggle {
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line2);
+    background: var(--field);
+    color: var(--ink2);
+    font: 600 10.5px var(--sans);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: border-color 0.14s, background-color 0.14s, color 0.14s;
+  }
+  .wild-toggle:hover {
+    color: var(--ink);
+    border-color: var(--accent-2);
+  }
+  .wild-toggle.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent-2);
+  }
+  .wild-toggle.has-tokens {
+    border-color: var(--accent);
+  }
+  .wild-count {
+    min-width: 15px;
+    height: 14px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font: 700 9px var(--mono);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .wild-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 7px 8px;
+    border-radius: 8px;
+    background: var(--field);
+    border: 1px dashed var(--line2);
+  }
+  .wild-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .wild-chip {
+    height: 21px;
+    padding: 0 7px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--win, var(--side));
+    color: var(--ink2);
+    font: 600 10px var(--mono);
+    transition: border-color 0.12s, color 0.12s, background-color 0.12s;
+  }
+  .wild-chip:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent-2);
+    background: var(--accent-soft);
+  }
+  .wild-chip:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .wild-hint {
+    font: 500 10px var(--sans);
+    color: var(--ink3);
+  }
+  .wild-hint code {
+    font: 600 10px var(--mono);
+    color: var(--ink2);
+    background: var(--win, var(--side));
+    padding: 0 4px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+  }
+
+  .resolve-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--field);
+    border: 1px solid var(--line);
+    transition: border-color 0.14s;
+  }
+  .resolve-panel.active {
+    border-color: var(--accent);
+  }
+  .resolve-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .resolve-lbl {
+    font: 700 9.5px var(--sans);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink3);
+    flex: none;
+  }
+  .resolve-count {
+    font: 500 10px var(--mono);
+    color: var(--ink3);
+    flex: none;
+  }
+  .resolve-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .resolve-chip {
+    height: 16px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    color: var(--accent-2);
+    font: 600 9.5px var(--mono);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .resolve-chip.choice {
+    background: var(--field);
+    border-color: var(--line2);
+    color: var(--ink2);
+  }
+  .resolve-actions {
+    display: inline-flex;
+    gap: 3px;
+    flex: none;
+  }
+  .resolve-btn {
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--win, var(--side));
+    color: var(--ink2);
+    display: inline-grid;
+    place-items: center;
+    transition: border-color 0.12s, color 0.12s;
+  }
+  .resolve-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent-2);
+  }
+  .resolve-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .resolve-text {
+    font: 500 11px/1.45 var(--mono);
+    color: var(--ink);
+    word-break: break-word;
+    max-height: 54px;
+    overflow-y: auto;
+  }
+  .resolve-text.muted {
+    color: var(--ink3);
+  }
+  .resolve-warn {
+    font: 500 10px var(--sans);
+    color: var(--warn, #e5a50a);
   }
 
   .prompt-input {
