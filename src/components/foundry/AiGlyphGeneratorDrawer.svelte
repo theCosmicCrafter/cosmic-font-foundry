@@ -311,8 +311,10 @@
       });
       backendStatus = status;
       if (status?.models?.length && !status.models.includes(model)) {
-        const preferred = status.models.find((m) => /vecglypher|omnisvg|gemma3/i.test(m));
-        model = preferred || status.models[0];
+        const installedVecGlypher = status.models.find((m) => /vecglypher/i.test(m));
+        if (installedVecGlypher) {
+          model = installedVecGlypher;
+        }
       }
     } catch (e) {
       backendStatus = {
@@ -379,6 +381,10 @@
         ? "All Basic Latin glyphs already have outlines in this project."
         : "Open or create a foundry project to run batch generation.";
       return;
+    }
+
+    if (!backendStatus && inTauri) {
+      await checkBackend();
     }
 
     if (backendStatus?.ok && !isModelInstalled && provider === "ollama") {
@@ -478,6 +484,7 @@
             }
           }
         });
+        checkBackend();
       } catch {
         // Ignore outside Tauri runtime
       }
@@ -595,7 +602,7 @@
             Dismiss
           </button>
         </div>
-        <span class="download-subtext">VecGlypher is active in local Ollama on your RTX 5090. Ready to forge vector glyphs!</span>
+        <span class="download-subtext">VecGlypher is active in local Ollama on your GPU. Ready to forge vector glyphs!</span>
       </div>
     {:else if backendStatus?.ok && !isModelInstalled && provider === "ollama"}
       <div class="model-download-card uninstalled">
@@ -604,7 +611,7 @@
             <AlertCircle size={13} />
             <span>Model not yet downloaded in local Ollama</span>
           </div>
-          <span class="uninstalled-sub">VecGlypher-27b-it (~16.6 GB GGUF) · D: drive has 80 GB available</span>
+          <span class="uninstalled-sub">VecGlypher-27b-it (~16.6 GB GGUF) · Pulls directly into your local Ollama model store</span>
         </div>
         <button
           type="button"
