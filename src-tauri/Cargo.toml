@@ -13,6 +13,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 cosmic-core = { path = "core" }
+cosmic-foundry = { path = "foundry" }
 tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-store = "2"
 tauri-plugin-single-instance = "2"

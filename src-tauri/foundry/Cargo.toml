@@ -1,0 +1,22 @@
+[package]
+name = "cosmic-foundry"
+version = "0.3.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+cosmic-core = { path = "../core" }
+kurbo = { version = "0.13", features = ["serde"] }
+linesweeper = "0.5"
+skrifa = "0.50"
+write-fonts = { version = "0.56", features = ["read"] }
+norad = "0.19"
+subsetter = { version = "0.2", default-features = false, features = ["variable-fonts"] }
+svgtypes = "0.16"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "webp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3.27"
