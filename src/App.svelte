@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import {
-    Search, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart,
+    Search, ScanSearch, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart,
     WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles, Rss, Code2, Check,
   } from "@lucide/svelte";
 
@@ -20,6 +20,7 @@
   import SelectionBar from "./components/SelectionBar.svelte";
   import SmartScanModal from "./components/SmartScanModal.svelte";
   import CustomSourcesModal from "./components/CustomSourcesModal.svelte";
+  import VisualFontFinderModal from "./components/VisualFontFinderModal.svelte";
   import Settings from "./views/Settings.svelte";
   import Specimen from "./views/Specimen.svelte";
   import Compare from "./views/Compare.svelte";
@@ -60,10 +61,29 @@
   const sel = new SvelteSet();
   let detailName = $state(null);
   let googleDetailName = $state(null);
+  let forgeForkTarget = $state(null);
   let compareNames = $state([]);
   let settingsTab = $state(null);
   let scanOpen = $state(false);
   let customSourcesOpen = $state(false);
+  let visualFinderOpen = $state(false);
+  let outlineDupGroups = $state([]);
+  let outlineDupBusy = $state(false);
+  let outlineDupScanned = $state(false);
+
+  async function scanRenamedOutlineDuplicates() {
+    if (!inTauri || outlineDupBusy) return;
+    outlineDupBusy = true;
+    try {
+      const groups = await invokeCmd("foundry_find_outline_duplicates", {});
+      outlineDupGroups = Array.isArray(groups) ? groups : [];
+      outlineDupScanned = true;
+    } catch (err) {
+      notify("err", t("err.one"), String(err));
+    } finally {
+      outlineDupBusy = false;
+    }
+  }
   let fmt = $state({ bold: false, italic: false, underline: false, strike: false, uppercase: false });
   let colOpen = $state(false);
   let tagOpen = $state(false);
@@ -904,6 +924,9 @@
           {/if}
         {/if}
         {#if isNormalView && !inDiscover && !inDiagnostics}
+          <button type="button" class="pill scan-btn" onclick={() => (visualFinderOpen = true)}>
+            <ScanSearch size={12} strokeWidth={2} />{t("visual.btn")}
+          </button>
           <button type="button" class="pill scan-btn" onclick={() => (scanOpen = true)}>
             <Search size={12} strokeWidth={2} />{t("scan.sidebarBtn")}
           </button>
@@ -955,10 +978,12 @@
             options={[
               "all",
               "google",
+              "bunny",
               "fontshare",
               "fontsource",
               "adobe_dev",
               "fontsquirrel",
+              "nerdfonts",
               ...(hasEnabledCustomSources ? ["custom"] : []),
             ].map((v) => ({ value: v, label: t("src." + v) }))}
             value={discoverSource.startsWith("custom:") ? "custom" : discoverSource}
@@ -1085,7 +1110,44 @@
         <span class="diag-stat"><b>{fonts.diagnostics.style_conflicts}</b> {t("diag.conflicts")}</span>
         <span class="diag-stat"><b>{fonts.diagnostics.corrupt_files}</b> {t("diag.corrupt")}</span>
         <span class="diag-hint">{t("diag.quarantineHint")}</span>
+        <button
+          type="button"
+          class="pill scan-btn"
+          disabled={outlineDupBusy || !inTauri}
+          onclick={scanRenamedOutlineDuplicates}
+        >
+          <Layers size={12} strokeWidth={2} />
+          {outlineDupBusy ? t("diag.outlineDupScanning") : t("diag.outlineDupBtn")}
+        </button>
       </div>
+      {#if outlineDupScanned}
+        <div class="dup-panel">
+          {#if outlineDupGroups.length === 0}
+            <span class="dup-empty">{t("diag.outlineDupNone")}</span>
+          {:else}
+            <span class="dup-title">{t("diag.outlineDupFound", { n: outlineDupGroups.length })}</span>
+            <div class="dup-list">
+              {#each outlineDupGroups.slice(0, 12) as grp (grp.digest)}
+                <div class="dup-group">
+                  <span class="num dup-hash">{grp.digest.slice(0, 10)} · {grp.glyphs_hashed}g</span>
+                  <div class="dup-files">
+                    {#each grp.files as item (item.path)}
+                      <button
+                        type="button"
+                        class="dup-chip"
+                        title={item.path}
+                        onclick={() => (detailName = item.family_hint)}
+                      >
+                        {item.family_hint || item.path}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
     {/if}
 
     {#if detailFamily}
@@ -1100,6 +1162,11 @@
         ontoggle={() => toggleOne(detailFamily)}
         onfav={() => toggleFavorite(detailFamily.name)}
         onopenfamily={(name) => (detailName = name)}
+        onfork={(fam) => {
+          forgeForkTarget = { path: fam.file, name: fam.name, license_tier: fam.license_tier };
+          detailName = null;
+          goTo("forge");
+        }}
       />
     {:else if googleDetail}
       <Specimen
@@ -1122,7 +1189,7 @@
         onremove={(n) => (compareNames = compareNames.length <= 2 ? [] : compareNames.filter((x) => x !== n))}
       />
     {:else if inForge}
-      <Forge {sample} onInstalled={() => goTo("installed")} />
+      <Forge {sample} forkFont={forgeForkTarget} onForkConsumed={() => (forgeForkTarget = null)} onInstalled={() => goTo("installed")} />
     {:else if inDiscover}
       {#if discover.list.length && googleList.length}
         <VirtualList items={googleList} height={Math.ceil(34 + size * 1.58)} getKey={(g) => `${g.source ?? "google"}::${g.source_id ?? g.name}::${g.name}`} row={googleRowSnippet} onVisible={onVisibleGoogle} padBottom={60} />
@@ -1270,6 +1337,17 @@
     />
   {/if}
 
+  <VisualFontFinderModal
+    open={visualFinderOpen}
+    fonts={fonts.list}
+    onClose={() => (visualFinderOpen = false)}
+    onSelectFamily={(name) => (detailName = name)}
+    onForkInFoundry={(target) => {
+      forgeForkTarget = target;
+      goTo("forge");
+    }}
+  />
+
   <Toasts />
 
   {#if splash}
@@ -1382,10 +1460,36 @@
   }
   .folder-banner span, .project-banner span { flex: 1; }
   .project-banner { background: var(--accent-soft); color: var(--ink); border: 1px solid rgba(91, 77, 247, 0.25); }
-  .diag-summary { gap: 18px; }
+  .diag-summary { gap: 18px; flex-wrap: wrap; }
   .diag-stat { font-size: 12px; color: var(--ink2); }
   .diag-stat b { color: var(--ink); font-weight: 700; }
   .diag-hint { margin-left: auto; font-size: 11.5px; color: var(--ink3); }
+  .dup-panel {
+    flex: none;
+    margin: 0 24px 10px;
+    padding: 10px 14px;
+    border-radius: 9px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .dup-empty { font-size: 12px; color: var(--ink3); }
+  .dup-title { font-size: 12px; font-weight: 700; color: var(--ink); }
+  .dup-list { display: flex; flex-direction: column; gap: 6px; max-height: 150px; overflow-y: auto; }
+  .dup-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dup-hash { font-size: 11px; color: var(--ink3); }
+  .dup-files { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dup-chip {
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line2);
+    background: var(--field);
+    color: var(--ink);
+    font: 600 11px var(--sans);
+  }
+  .dup-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
 
   .drop-veil { position: absolute; inset: 0; z-index: 9; padding: 14px; background: var(--win); animation: cf-fade 0.15s ease-out; }
   .frame { height: 100%; border: 1.5px dashed var(--accent); border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; background: var(--accent-soft); }

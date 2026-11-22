@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import { X, RefreshCw, Sparkles, Folder, Layers, Check, Search, Square } from "@lucide/svelte";
+  import { X, RefreshCw, Sparkles, Folder, Layers, Check, Search, Square, ShieldCheck, Archive } from "@lucide/svelte";
   import {
     fonts,
     installFontFiles,
@@ -137,6 +137,37 @@
       }
     } finally {
       busyAll = false;
+    }
+  }
+
+  const LICENSE_LABELS = {
+    ofl: "OFL",
+    apache: "Apache",
+    mit: "MIT",
+    public_domain: "Public Domain",
+    personal_only: "Personal Only",
+    commercial: "Commercial",
+    unknown: "Unknown",
+  };
+
+  let triageBusy = $state(false);
+  let triageError = $state("");
+  let triageTarget = $state("");
+  let triageReport = $state(null);
+
+  async function runTriage(pickCmd) {
+    if (!inTauri || triageBusy) return;
+    triageBusy = true;
+    triageError = "";
+    try {
+      const p = await invokeCmd(pickCmd);
+      if (!p) return;
+      triageTarget = p;
+      triageReport = await invokeCmd("foundry_triage_archive", { path: p });
+    } catch (e) {
+      triageError = String(e);
+    } finally {
+      triageBusy = false;
     }
   }
 </script>
@@ -284,6 +315,92 @@
           </div>
         {/if}
       </section>
+
+      <!-- Safe Archive / Folder License Triage -->
+      <section class="triage-card">
+        <div class="triage-head">
+          <div class="triage-title">
+            <ShieldCheck size={14} strokeWidth={2.2} />
+            <div class="triage-title-col">
+              <span class="label">Safe Archive / Folder Triage</span>
+              {#if triageTarget}
+                <span class="triage-path num" title={triageTarget}>{triageTarget}</span>
+              {/if}
+            </div>
+          </div>
+          <div class="triage-actions">
+            <button
+              type="button"
+              class="btn sm"
+              onclick={() => runTriage("foundry_pick_triage_file")}
+              disabled={!inTauri || triageBusy}
+            >
+              <Archive size={12} />Triage .ZIP / Font
+            </button>
+            <button
+              type="button"
+              class="btn sm"
+              onclick={() => runTriage("sync_choose_folder")}
+              disabled={!inTauri || triageBusy}
+            >
+              <Folder size={12} />Triage Folder
+            </button>
+          </div>
+        </div>
+
+        {#if triageBusy}
+          <div class="triage-status">Scanning entries, validating archive safety, and hashing outlines…</div>
+        {/if}
+
+        {#if triageError}
+          <div class="err-box">{triageError}</div>
+        {:else if triageReport}
+          <div class="triage-summary">
+            <span class="t-pill num">Scanned: <strong>{triageReport.scanned_files}</strong></span>
+            <span class="t-pill num" class:t-pill-danger={triageReport.rejected_unsafe > 0}>
+              Rejected Unsafe: <strong>{triageReport.rejected_unsafe}</strong>
+            </span>
+            <span class="t-pill num" class:t-pill-warn={triageReport.duplicate_count > 0}>
+              Outline Duplicates: <strong>{triageReport.duplicate_count}</strong>
+            </span>
+          </div>
+
+          {#if !triageReport.fonts?.length}
+            <div class="triage-empty">No valid font files found in target.</div>
+          {:else}
+            <div class="triage-list">
+              {#each triageReport.fonts as font, idx (`${font.source_entry}-${idx}`)}
+                {@const lic = font.license_class ?? "unknown"}
+                <div class="triage-row">
+                  <div class="t-main">
+                    <span class="t-fam" title={font.source_entry}>{font.family}</span>
+                    <span class="t-sub">{font.subfamily}</span>
+                  </div>
+                  <div class="t-meta">
+                    <span
+                      class="lic-pill"
+                      class:lic-ok={lic === "ofl" || lic === "mit"}
+                      class:lic-open={lic === "apache" || lic === "public_domain"}
+                      class:lic-warn={lic === "personal_only"}
+                      class:lic-danger={lic === "commercial"}
+                      class:lic-muted={lic === "unknown"}
+                      title={font.license_summary || lic}
+                    >
+                      {LICENSE_LABELS[lic] ?? lic}
+                    </span>
+                    {#if font.is_duplicate}
+                      <span class="dup-tag">DUPLICATE</span>
+                    {/if}
+                    <span class="digest num" title={font.outline_digest}>
+                      {(font.outline_digest ?? "").slice(0, 6)}
+                    </span>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      </section>
     </div>
   </div>
 </div>
@@ -354,6 +471,34 @@
 
   .empty-scan { padding: 32px 16px; text-align: center; font-size: 12.5px; color: var(--ink3); border-radius: 10px; background: var(--side); border: 1px dashed var(--line2); }
   .err-box { padding: 10px 12px; border-radius: 8px; background: rgba(251, 113, 133, 0.14); color: var(--danger); font-size: 12px; }
+
+  .triage-card { padding: 12px 14px; border-radius: 12px; background: var(--side); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+  .triage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .triage-title { display: flex; align-items: center; gap: 8px; color: var(--accent-2); min-width: 0; }
+  .triage-title-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .triage-path { font: 400 11px var(--mono); color: var(--ink3); max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .triage-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .triage-status { font-size: 11.5px; color: var(--ink2); padding: 6px 10px; border-radius: 8px; background: var(--field); border: 1px solid var(--line); }
+  .triage-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .t-pill { font: 500 11px var(--mono); padding: 3px 8px; border-radius: 999px; background: var(--field); border: 1px solid var(--line); color: var(--ink2); }
+  .t-pill-danger { background: rgba(251, 113, 133, 0.14); border-color: rgba(251, 113, 133, 0.4); color: var(--danger); }
+  .t-pill-warn { background: rgba(251, 191, 36, 0.14); border-color: rgba(251, 191, 36, 0.4); color: var(--warn); }
+  .triage-empty { padding: 12px; text-align: center; font-size: 11.5px; color: var(--ink3); border-radius: 8px; background: var(--field); border: 1px dashed var(--line2); }
+  .triage-list { max-height: 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; padding-right: 2px; }
+  .triage-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border-radius: 8px; background: var(--field); border: 1px solid var(--line); }
+  .t-main { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex: 1; }
+  .t-fam { font-size: 12px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .t-sub { font-size: 11px; color: var(--ink3); flex: none; }
+  .t-meta { display: flex; align-items: center; gap: 6px; flex: none; }
+  .lic-pill { font: 700 10px var(--mono); padding: 2px 7px; border-radius: 999px; border: 1px solid transparent; text-transform: uppercase; }
+  .lic-ok { background: rgba(45, 212, 191, 0.14); border-color: rgba(45, 212, 191, 0.35); color: var(--ok); }
+  .lic-open { background: var(--cyan-soft); border-color: rgba(56, 189, 248, 0.35); color: var(--accent-2); }
+  .lic-warn { background: rgba(251, 191, 36, 0.14); border-color: rgba(251, 191, 36, 0.4); color: var(--warn); }
+  .lic-danger { background: rgba(251, 113, 133, 0.14); border-color: rgba(251, 113, 133, 0.4); color: var(--danger); }
+  .lic-muted { background: var(--side); border-color: var(--line2); color: var(--ink3); }
+  .dup-tag { font: 700 9.5px var(--mono); padding: 2px 6px; border-radius: 4px; background: rgba(251, 191, 36, 0.14); color: var(--warn); }
+  .digest { font: 500 10.5px var(--mono); color: var(--ink3); min-width: 46px; text-align: right; }
+
   :global(.spin) { animation: cf-spin 0.9s linear infinite; }
   @keyframes cf-spin { to { transform: rotate(360deg); } }
 </style>

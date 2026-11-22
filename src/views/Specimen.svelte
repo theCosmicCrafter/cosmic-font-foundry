@@ -1,5 +1,5 @@
 <script>
-  import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check, Sun, Moon } from "@lucide/svelte";
+  import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check, Sun, Moon, WandSparkles, Scissors, Eye, EyeOff } from "@lucide/svelte";
   import HeartIcon from "../components/HeartIcon.svelte";
   import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont, installFamilyToWindows, invokeCmd } from "../lib/fonts.svelte.js";
   import { inTauri, settings } from "../lib/settings.svelte.js";
@@ -22,6 +22,7 @@
     onfav,
     onInstallGoogle = null,
     onopenfamily = null,
+    onfork = null,
   } = $props();
 
   let specBold = $state(false);
@@ -189,10 +190,26 @@
   let glyphQuery = $state("");
   let glyphLimit = $state(240);
 
+  // ---- Vector outline inspector & subset export ----
+  let inspectedGlyph = $state(null);
+  let inspectedChar = $state("");
+  let inspectedCode = $state(null);
+  let inspectingGlyph = $state(false);
+  let showOutlineNodes = $state(true);
+  let inspectSeq = 0;
+
+  let subsetOpen = $state(false);
+  let subsetText = $state("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;!?");
+  let subsetting = $state(false);
+
   $effect(() => {
     glyphBlock = "All";
     glyphQuery = "";
     glyphLimit = 240;
+    inspectedGlyph = null;
+    inspectedChar = "";
+    inspectedCode = null;
+    subsetOpen = false;
     if (!f?.file) {
       glyphs = [];
       return;
@@ -265,6 +282,81 @@
     copyText(lines.join("\n"), "CSS");
   }
 
+  function handleFork() {
+    if (!f || !onfork) return;
+    if (f.license_tier && f.license_tier !== "free_commercial") {
+      notify("warn", t("spec.forkNonFreeWarn"), f.license || "");
+    }
+    onfork(f);
+  }
+
+  async function runSubsetExport() {
+    if (!inTauri || !f?.file || subsetting || !subsetText.trim()) return;
+    subsetting = true;
+    try {
+      const axes = Object.entries(axisValues).map(([k, v]) => [k, Number(v)]);
+      const savedPath = await invokeCmd("foundry_subset_font", {
+        path: f.file,
+        text: subsetText,
+        axes,
+      });
+      if (savedPath) {
+        notify("ok", t("spec.subsetSuccess"), savedPath);
+        subsetOpen = false;
+      }
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      subsetting = false;
+    }
+  }
+
+  async function onGlyphClick(g) {
+    copyText(g.char);
+    if (!inTauri || !f?.file) return;
+    const seq = ++inspectSeq;
+    const path = f.file;
+    inspectedCode = g.code;
+    inspectedChar = g.char;
+    inspectingGlyph = true;
+    try {
+      const info = await invokeCmd("foundry_inspect_glyph", { path, codepoint: g.code });
+      if (seq === inspectSeq && f?.file === path) {
+        inspectedGlyph = info;
+      }
+    } catch (e) {
+      if (seq === inspectSeq) {
+        inspectedGlyph = null;
+        notify("err", t("err.one"), String(e));
+      }
+    } finally {
+      if (seq === inspectSeq) inspectingGlyph = false;
+    }
+  }
+
+  function detectAbsoluteHandles(contours) {
+    for (const c of contours ?? []) {
+      for (const a of c.anchors ?? []) {
+        if (Math.abs(a.x) > 1 || Math.abs(a.y) > 1) {
+          if ((a.h_in?.[0] === 0 && a.h_in?.[1] === 0) || (a.h_out?.[0] === 0 && a.h_out?.[1] === 0)) {
+            return false;
+          }
+          if (Math.abs((a.h_in?.[0] ?? 0) - a.x) < 0.01 && Math.abs((a.h_in?.[1] ?? 0) - a.y) < 0.01) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  function handleTipSvg(anchor, handle, ascender, absHandles) {
+    const hx = absHandles ? (handle?.[0] ?? anchor.x) : anchor.x + (handle?.[0] ?? 0);
+    const hy = absHandles ? (handle?.[1] ?? anchor.y) : anchor.y + (handle?.[1] ?? 0);
+    const hasHandle = Math.abs(hx - anchor.x) > 0.05 || Math.abs(hy - anchor.y) > 0.05;
+    return { x: hx, y: ascender - hy, hasHandle };
+  }
+
   const googleDownloadPct = $derived(isGoogle ? discover.downloads[familyName] : null);
 </script>
 
@@ -296,6 +388,12 @@
     <button type="button" class="chip" onclick={onfav}>
       <span class="heart" class:fav><HeartIcon filled={fav} size={13} /></span>{fav ? t("fav.is") : t("fav.add")}
     </button>
+
+    {#if f && f.file && onfork}
+      <button type="button" class="chip fork-btn" onclick={handleFork}>
+        <WandSparkles size={13} strokeWidth={2} />{t("spec.forkFoundry")}
+      </button>
+    {/if}
 
     {#if isGoogle}
       {#if googleDownloadPct != null}
@@ -374,10 +472,43 @@
       <section class="panel">
         <div class="panel-head">
           <span class="label">{t("spec.opentype")}</span>
-          {#if !rawAxes.length}
-            <button type="button" class="mini-btn accent" onclick={copyCssSnippet}><Copy size={11} />{t("spec.copyCss")}</button>
-          {/if}
+          <div class="panel-actions">
+            {#if inTauri && f?.file}
+              <button
+                type="button"
+                class="mini-btn"
+                class:accent={subsetOpen}
+                onclick={() => (subsetOpen = !subsetOpen)}
+              >
+                <Scissors size={11} />{t("spec.subsetFont")}
+              </button>
+            {/if}
+            {#if !rawAxes.length}
+              <button type="button" class="mini-btn accent" onclick={copyCssSnippet}><Copy size={11} />{t("spec.copyCss")}</button>
+            {/if}
+          </div>
         </div>
+        {#if subsetOpen && inTauri && f?.file}
+          <div class="subset-popover">
+            <input
+              type="text"
+              class="subset-input"
+              bind:value={subsetText}
+              placeholder={t("spec.subsetPlaceholder")}
+              spellcheck="false"
+            />
+            <div class="subset-foot">
+              {#if rawAxes.length}
+                <span class="subset-axes num">
+                  {rawAxes.map((ax) => `${ax.tag}:${Number(axisValues[ax.tag] ?? ax.default ?? ax.min)}`).join(" · ")}
+                </span>
+              {/if}
+              <button type="button" class="mini-btn accent" disabled={subsetting || !subsetText.trim()} onclick={runSubsetExport}>
+                <Download size={11} />{t("spec.subsetExport")}
+              </button>
+            </div>
+          </div>
+        {/if}
         <div class="features">
           {#each featureList as tag (tag)}
             <button
@@ -614,18 +745,110 @@
           {/each}
         </div>
       {/if}
+      {#if inTauri && f?.file && (inspectingGlyph || inspectedGlyph)}
+        <div class="outline-inspector">
+          <div class="outline-head">
+            <span class="label">
+              {t("spec.outlineInspector")} · “{inspectedChar}”
+              {#if inspectedGlyph}
+                <span class="outline-gname num">U+{inspectedCode?.toString(16).toUpperCase().padStart(4, "0")} · {inspectedGlyph.glyph_name}</span>
+              {/if}
+            </span>
+            <div class="outline-actions">
+              {#if inspectedGlyph}
+                <button
+                  type="button"
+                  class="mini-btn"
+                  class:accent={showOutlineNodes}
+                  onclick={() => (showOutlineNodes = !showOutlineNodes)}
+                >
+                  {#if showOutlineNodes}<Eye size={11} />{:else}<EyeOff size={11} />{/if}
+                  {t("forge.showNodes")}
+                </button>
+                <button type="button" class="mini-btn" onclick={() => copyText(inspectedChar)}>
+                  <Copy size={11} />{t("copy")}
+                </button>
+                <button type="button" class="mini-btn accent" onclick={() => copyText(inspectedGlyph.svg_path, "SVG <path>")}>
+                  <Copy size={11} />{t("spec.copySvg")}
+                </button>
+              {/if}
+              <button
+                type="button"
+                class="mini-btn"
+                aria-label={t("close")}
+                onclick={() => ((inspectedGlyph = null), (inspectedCode = null))}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          </div>
+
+          {#if inspectedGlyph}
+            {@const info = inspectedGlyph}
+            {@const vb = info.view_box ?? [0, 0, info.upm || 1000, info.upm || 1000]}
+            {@const absHandles = detectAbsoluteHandles(info.contours)}
+            {@const sw = Math.max(1, (info.upm || 1000) * 0.003)}
+            {@const nodeR = Math.max(2.5, (info.upm || 1000) * 0.01)}
+            <div class="outline-body">
+              <div class="outline-svg-wrap">
+                <svg class="outline-svg" viewBox={vb.join(" ")} preserveAspectRatio="xMidYMid meet">
+                  <!-- Origin (x=0) & Advance Width lines -->
+                  <line x1="0" y1={vb[1]} x2="0" y2={vb[1] + vb[3]} class="guide-origin" stroke-width={sw} />
+                  <line x1={info.advance_width} y1={vb[1]} x2={info.advance_width} y2={vb[1] + vb[3]} class="guide-adv" stroke-width={sw} />
+                  <!-- Baseline (y = info.ascender) -->
+                  <line x1={vb[0]} y1={info.ascender} x2={vb[0] + vb[2]} y2={info.ascender} class="guide-base" stroke-width={sw * 1.2} />
+                  <!-- Glyph outline -->
+                  <path d={info.svg_path} class="glyph-path" />
+                  <!-- Anchor dots & handles -->
+                  {#if showOutlineNodes && info.contours?.length}
+                    {#each info.contours as contour}
+                      {#each contour.anchors as pt}
+                        {@const ax = pt.x}
+                        {@const ay = info.ascender - pt.y}
+                        {@const hin = handleTipSvg(pt, pt.h_in, info.ascender, absHandles)}
+                        {@const hout = handleTipSvg(pt, pt.h_out, info.ascender, absHandles)}
+                        {#if hin.hasHandle}
+                          <line x1={ax} y1={ay} x2={hin.x} y2={hin.y} class="handle-line" stroke-width={sw} />
+                          <circle cx={hin.x} cy={hin.y} r={nodeR * 0.7} class="handle-dot" />
+                        {/if}
+                        {#if hout.hasHandle}
+                          <line x1={ax} y1={ay} x2={hout.x} y2={hout.y} class="handle-line" stroke-width={sw} />
+                          <circle cx={hout.x} cy={hout.y} r={nodeR * 0.7} class="handle-dot" />
+                        {/if}
+                        {#if pt.smooth}
+                          <circle cx={ax} cy={ay} r={nodeR} class="anchor-smooth" />
+                        {:else}
+                          <rect x={ax - nodeR} y={ay - nodeR} width={nodeR * 2} height={nodeR * 2} class="anchor-corner" />
+                        {/if}
+                      {/each}
+                    {/each}
+                  {/if}
+                </svg>
+              </div>
+              <div class="outline-metrics">
+                <span class="m-pill"><b>{t("spec.upm")}</b> <span class="num">{info.upm}</span></span>
+                <span class="m-pill"><b>{t("spec.advance")}</b> <span class="num">{info.advance_width}</span></span>
+                <span class="m-pill"><b>{t("spec.lsb")}</b> <span class="num">{info.lsb}</span></span>
+                <span class="m-pill"><b>{t("spec.contours")}</b> <span class="num">{info.contour_count}</span></span>
+                <span class="m-pill"><b>{t("spec.points")}</b> <span class="num">{info.point_count}</span></span>
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <div class="glyphs">
         {#each shownGlyphs as g (g.code)}
           <button
             type="button"
             class="glyph"
+            class:selected={inspectedCode === g.code}
             title={`${t("copy")} U+${g.hex}`}
             style:font-family={previewStyle.family}
             style:font-weight={axisValues.wght ?? previewStyle.weight}
             style:font-style={previewStyle.italic ? "italic" : "normal"}
             style:font-variation-settings={variationCss}
             style:font-feature-settings={featureCss}
-            onclick={() => copyText(g.char)}>{g.char}</button
+            onclick={() => onGlyphClick(g)}>{g.char}</button
           >
         {/each}
       </div>
@@ -832,6 +1055,47 @@
     transition: background-color 0.12s, color 0.12s, transform 0.12s;
   }
   .glyph:hover { background: var(--accent); color: #fff; transform: scale(1.06); }
+  .glyph.selected { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--ink); }
+  .fork-btn { background: var(--cyan-soft); color: var(--accent-2); }
+  .fork-btn:hover { background: var(--accent-2); color: #090b12; }
+  .subset-popover {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 10px; border-radius: 9px; background: var(--win); border: 1px solid var(--line2);
+  }
+  .subset-input {
+    height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line2);
+    background: var(--field); color: var(--ink); font: 500 12px var(--mono);
+  }
+  .subset-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .subset-axes { font-size: 11px; color: var(--ink3); }
+  .outline-inspector {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px 14px; border-radius: 12px; background: var(--side); border: 1px solid var(--line2);
+  }
+  .outline-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .outline-gname { margin-left: 6px; font-size: 11px; color: var(--accent-2); }
+  .outline-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .outline-body { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+  .outline-svg-wrap {
+    width: 190px; height: 170px; border-radius: 10px; background: var(--win); border: 1px solid var(--line);
+    display: grid; place-items: center; padding: 8px; flex: none;
+  }
+  .outline-svg { width: 100%; height: 100%; overflow: visible; color: var(--ink); }
+  .guide-origin { stroke: rgba(56, 189, 248, 0.45); stroke-dasharray: 18 14; }
+  .guide-adv { stroke: rgba(56, 189, 248, 0.3); stroke-dasharray: 18 14; }
+  .guide-base { stroke: rgba(242, 107, 33, 0.55); }
+  .glyph-path { fill: currentColor; fill-opacity: 0.2; stroke: var(--ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .handle-line { stroke: var(--accent-2); opacity: 0.75; }
+  .handle-dot { fill: var(--accent-2); }
+  .anchor-smooth { fill: var(--accent); stroke: var(--win); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+  .anchor-corner { fill: #fbbf24; stroke: var(--win); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+  .outline-metrics { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
+  .m-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 8px; background: var(--field); border: 1px solid var(--line);
+    font-size: 11.5px; color: var(--ink2);
+  }
+  .m-pill b { font-weight: 600; color: var(--ink3); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
   .style-row { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; }
   .style-row .n { font-size: 10.5px; color: var(--ink3); }
   .paths { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding-top: 14px; border-top: 1px solid var(--line); }

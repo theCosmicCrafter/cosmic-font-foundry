@@ -455,6 +455,7 @@ function demoResponse(cmd, args = {}) {
   if (cmd === "backed_up_count") return Promise.resolve(0);
   if (cmd === "font_characters") return Promise.resolve([...Array(94)].map((_, i) => 33 + i));
   if (cmd === "detect_tuna_migration") return Promise.resolve({ available: false });
+  if (cmd === "discover_search_github_fonts") return Promise.resolve([]);
   return Promise.reject("desktop app required");
 }
 
