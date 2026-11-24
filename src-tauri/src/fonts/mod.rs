@@ -89,16 +89,7 @@ fn read_json<T: for<'a> Deserialize<'a> + Default>(path: &Path) -> T {
 }
 
 fn write_json<T: Serialize>(path: &Path, val: &T) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = path.with_extension("tmp");
-    fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(val).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    inventory::write_json_atomic(path, val)
 }
 
 pub fn load_deactivated(env: &Environment) -> Vec<SavedFont> {

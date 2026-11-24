@@ -263,13 +263,7 @@ pub fn merge_manifest_into_library(
 }
 
 pub fn write_manifest_atomic(path: &Path, manifest: &CosmicManifest) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = path.with_extension("tmp");
-    let data = serde_json::to_vec_pretty(manifest).map_err(|e| e.to_string())?;
-    fs::write(&tmp, data).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    super::inventory::write_json_atomic(path, manifest)
 }
 
 pub fn sync_manifest_folder(
@@ -523,6 +517,40 @@ pub struct PackageResult {
     pub missing_families: Vec<String>,
 }
 
+fn license_tier_label(tier: super::reader::LicenseTier) -> &'static str {
+    match tier {
+        super::reader::LicenseTier::FreeCommercial => "Free / Commercial-Safe",
+        super::reader::LicenseTier::PersonalOnly => "Personal Use Only (DO NOT SHIP COMMERCIALLY)",
+        super::reader::LicenseTier::Commercial => "Commercial / Proprietary",
+        super::reader::LicenseTier::Unknown => "Unknown (verify before commercial use)",
+    }
+}
+
+fn unique_archive_name(src: &Path, used_names: &mut HashSet<String>) -> String {
+    let raw_name = src
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "font.ttf".into());
+    if used_names.insert(raw_name.to_lowercase()) {
+        return raw_name;
+    }
+    let stem = Path::new(&raw_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "font".into());
+    let ext = Path::new(&raw_name)
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
+    for idx in 2.. {
+        let candidate = format!("{stem}_{idx}{ext}");
+        if used_names.insert(candidate.to_lowercase()) {
+            return candidate;
+        }
+    }
+    raw_name
+}
+
 pub fn package_collection_zip(
     dest_zip: &Path,
     collection_name: &str,
@@ -544,14 +572,7 @@ pub fn package_collection_zip(
         };
         families_included += 1;
         licenses.push_str(&format!("=== {} ===\n", fam.name));
-        let tier_label = match fam.license_tier {
-            super::reader::LicenseTier::FreeCommercial => "Free / Commercial-Safe",
-            super::reader::LicenseTier::PersonalOnly => {
-                "Personal Use Only (DO NOT SHIP COMMERCIALLY)"
-            }
-            super::reader::LicenseTier::Commercial => "Commercial / Proprietary",
-            super::reader::LicenseTier::Unknown => "Unknown (verify before commercial use)",
-        };
+        let tier_label = license_tier_label(fam.license_tier);
         licenses.push_str(&format!("License Tier: {tier_label}\n"));
         if !fam.sha256.is_empty() {
             licenses.push_str(&format!("SHA-256: {}\n", fam.sha256));
@@ -577,28 +598,7 @@ pub fn package_collection_zip(
         for path_str in &fam.files {
             let src = Path::new(path_str);
             let Ok(bytes) = fs::read(src) else { continue };
-            let raw_name = src
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "font.ttf".into());
-            let mut archive_name = raw_name.clone();
-            if !used_names.insert(archive_name.to_lowercase()) {
-                let stem = Path::new(&raw_name)
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "font".into());
-                let ext = Path::new(&raw_name)
-                    .extension()
-                    .map(|s| format!(".{}", s.to_string_lossy()))
-                    .unwrap_or_default();
-                for idx in 2.. {
-                    let candidate = format!("{stem}_{idx}{ext}");
-                    if used_names.insert(candidate.to_lowercase()) {
-                        archive_name = candidate;
-                        break;
-                    }
-                }
-            }
+            let archive_name = unique_archive_name(src, &mut used_names);
             zip.add_file(&format!("fonts/{archive_name}"), &bytes)?;
             font_files += 1;
         }
@@ -649,14 +649,7 @@ pub fn export_design_kit_zip(
             continue;
         };
         families_included += 1;
-        let tier_label = match fam.license_tier {
-            super::reader::LicenseTier::FreeCommercial => "Free / Commercial-Safe",
-            super::reader::LicenseTier::PersonalOnly => {
-                "Personal Use Only (DO NOT SHIP COMMERCIALLY)"
-            }
-            super::reader::LicenseTier::Commercial => "Commercial / Proprietary",
-            super::reader::LicenseTier::Unknown => "Unknown (verify before commercial use)",
-        };
+        let tier_label = license_tier_label(fam.license_tier);
         notice.push_str(&format!("=== {} ===\nTier: {tier_label}\n", fam.name));
         if let Some(ref l) = fam.license {
             notice.push_str(&format!("License: {l}\n"));
@@ -669,28 +662,7 @@ pub fn export_design_kit_zip(
         for st in &fam.styles {
             let src = Path::new(&st.file);
             let Ok(bytes) = fs::read(src) else { continue };
-            let raw_name = src
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "font.ttf".into());
-            let mut archive_name = raw_name.clone();
-            if !used_names.insert(archive_name.to_lowercase()) {
-                let stem = Path::new(&raw_name)
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "font".into());
-                let ext = Path::new(&raw_name)
-                    .extension()
-                    .map(|s| format!(".{}", s.to_string_lossy()))
-                    .unwrap_or_default();
-                for idx in 2.. {
-                    let candidate = format!("{stem}_{idx}{ext}");
-                    if used_names.insert(candidate.to_lowercase()) {
-                        archive_name = candidate;
-                        break;
-                    }
-                }
-            }
+            let archive_name = unique_archive_name(src, &mut used_names);
             let mut has_woff = false;
             let raw_stem = Path::new(&archive_name)
                 .file_stem()

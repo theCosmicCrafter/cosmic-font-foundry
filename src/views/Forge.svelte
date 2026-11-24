@@ -23,8 +23,6 @@
     buildPresetGlyphs,
     cloneGrid,
     resizeGlyphsResolution,
-    compileTrueTypeFont,
-    compileWoffFont,
   } from "../lib/forge.js";
   import { fonts, installForgedFont, invokeCmd } from "../lib/fonts.svelte.js";
   import { settings, inTauri } from "../lib/settings.svelte.js";
@@ -210,14 +208,19 @@
       const seq = ++compileSeq;
 
       if (!inTauri) {
-        try {
-          const bytes = compileTrueTypeFont(jsPayload);
-          compiledBytes = bytes;
-          compileStats = { glyphCount: Object.keys(glyphs).length + 2, contours: null, points: null };
-          compileError = "";
-          applyLiveFontFace(bytes, seq);
-        } catch (err) {
-          compileError = String(err);
+        if (import.meta.env.DEV) {
+          import("../lib/dev-forge-compiler.js")
+            .then(({ compileTrueTypeFont }) => {
+              if (seq !== compileSeq) return;
+              const bytes = compileTrueTypeFont(jsPayload);
+              compiledBytes = bytes;
+              compileStats = { glyphCount: Object.keys(glyphs).length + 2, contours: null, points: null };
+              compileError = "";
+              applyLiveFontFace(bytes, seq);
+            })
+            .catch((err) => {
+              if (seq === compileSeq) compileError = String(err);
+            });
         }
         return;
       }
@@ -1137,9 +1140,15 @@
   async function exportWoff() {
     if (!compiledBytes.length) return;
     try {
-      const woff = inTauri
-        ? new Uint8Array(await invokeCmd("foundry_compile_woff", { ttfBytes: Array.from(compiledBytes) }))
-        : await compileWoffFont(compiledBytes);
+      let woff;
+      if (inTauri) {
+        woff = new Uint8Array(await invokeCmd("foundry_compile_woff", { ttfBytes: Array.from(compiledBytes) }));
+      } else if (import.meta.env.DEV) {
+        const { compileWoffFont } = await import("../lib/dev-forge-compiler.js");
+        woff = await compileWoffFont(compiledBytes);
+      } else {
+        return;
+      }
       const file = `${fontSlug()}.woff`;
       downloadBlob(new Blob([woff], { type: "font/woff" }), file);
       notify("ok", t("forge.woffExported"), file);

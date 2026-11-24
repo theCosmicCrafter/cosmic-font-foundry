@@ -8,8 +8,6 @@ path = [
   "src/**",
   "src-tauri/**",
   "public/**",
-  "design/**",
-  "docs/**",
   "winget/**",
   ".github/**",
   "*.md",

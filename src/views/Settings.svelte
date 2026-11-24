@@ -92,11 +92,15 @@
   let vaultBusy = $state(false);
   let cleanupScan = $state(null);
   let cleanupSelected = $state(new Set());
+  let syncTabLoaded = false;
 
-  if (inTauri) {
-    invokeCmd("detect_tuna_migration").then((s) => (tunaStatus = s)).catch(() => {});
-    invokeCmd("vault_stats").then((s) => (vaultStats = s)).catch(() => {});
-  }
+  $effect(() => {
+    if (inTauri && tab === "sync" && !syncTabLoaded) {
+      syncTabLoaded = true;
+      invokeCmd("detect_tuna_migration").then((s) => (tunaStatus = s)).catch(() => {});
+      invokeCmd("vault_stats").then((s) => (vaultStats = s)).catch(() => {});
+    }
+  });
 
   function formatBytes(bytes) {
     if (!bytes) return "0 B";

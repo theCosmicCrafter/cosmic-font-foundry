@@ -4,16 +4,22 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { Search, Layers, Check, Circle } from "@lucide/svelte";
   import en from "./i18n/en.js";
-  import es from "./i18n/es.js";
 
   let lang = $state(window.__COSMIC__?.settings?.language ?? "en");
+  let esDict = $state(null);
   let families = $state([]);
   let collections = $state([]);
   let q = $state("");
   let activeIndex = $state(0);
   let inputEl = $state();
 
-  const tr = (key) => (lang === "es" ? es : en)[key] ?? en[key] ?? key;
+  $effect(() => {
+    if (lang === "es" && !esDict) {
+      import("./i18n/es.js").then((m) => (esDict = m.default)).catch(() => {});
+    }
+  });
+
+  const tr = (key) => (lang === "es" && esDict ? esDict : en)[key] ?? en[key] ?? key;
 
   async function refreshData() {
     try {

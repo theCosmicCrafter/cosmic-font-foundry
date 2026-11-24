@@ -1,5 +1,4 @@
 export default {
-  brandName: "Cosmic Font Foundry",
   settings: "Settings",
   syncAndExport: "Sync & Export",
   shortcuts: "Shortcuts",
@@ -143,7 +142,6 @@ export default {
   "g.notInstalled": "Not installed",
   "g.previewNote": "Live web preview from open-source foundries. Install to use across Windows desktop apps.",
   "fav.wishlist": "Add to favorites (without installing)",
-  "g.loading": "Loading open font catalogs…",
   "g.offline": "Unable to load open font catalogs.",
   "g.retry": "Retry",
 
@@ -410,8 +408,6 @@ export default {
   "quick.placeholder": "Search families or collections… (Enter to toggle, Esc to close)",
   "quick.empty": "No matching fonts or collections",
   "quick.collections": "Collections",
-  "quick.fonts": "Families",
-  "quick.toggle": "Toggle",
 
   "forge.family": "Family",
   "forge.export": "Export .ttf",
@@ -469,7 +465,6 @@ export default {
   "forge.opFixWinding": "Fix Winding",
   "forge.forking": "Forking into Vector Foundry…",
   "forge.forkedOk": "Forked “{n}” into Vector Foundry.",
-  "forge.vectorStats": "{glyphs} glyphs · {contours} contours · {points} pts",
   "forge.traceImage": "Trace Image",
   "forge.traceTraced": "Image traced into glyph.",
   "forge.traceEmpty": "No trace shapes detected in image.",

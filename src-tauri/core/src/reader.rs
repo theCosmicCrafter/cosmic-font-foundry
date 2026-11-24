@@ -37,64 +37,132 @@ pub enum LicenseTier {
     Unknown,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LicenseClass {
+    Ofl,
+    Apache,
+    Mit,
+    PublicDomain,
+    PersonalOnly,
+    Commercial,
+    Unknown,
+}
+
+impl LicenseClass {
+    pub fn to_tier(self) -> LicenseTier {
+        match self {
+            Self::Ofl | Self::Apache | Self::Mit | Self::PublicDomain => {
+                LicenseTier::FreeCommercial
+            }
+            Self::PersonalOnly => LicenseTier::PersonalOnly,
+            Self::Commercial => LicenseTier::Commercial,
+            Self::Unknown => LicenseTier::Unknown,
+        }
+    }
+}
+
+fn contains_word(haystack_lower: &str, word: &str) -> bool {
+    haystack_lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|tok| tok == word)
+}
+
+/// Classifies an embedded license or copyright notice string into a granular `LicenseClass`.
+pub fn classify_license_class(text: &str) -> LicenseClass {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return LicenseClass::Unknown;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+
+    if lower.contains("sil open font license")
+        || lower.contains("open font license")
+        || lower.contains("scripts.sil.org/ofl")
+        || contains_word(&lower, "ofl")
+    {
+        return LicenseClass::Ofl;
+    }
+    if lower.contains("apache") {
+        return LicenseClass::Apache;
+    }
+    if lower.contains("mit license")
+        || lower.contains("permission is hereby granted")
+        || contains_word(&lower, "mit")
+    {
+        return LicenseClass::Mit;
+    }
+    if lower.contains("cc0")
+        || lower.contains("public domain")
+        || lower.contains("unlicense")
+        || lower.contains("creative commons zero")
+    {
+        return LicenseClass::PublicDomain;
+    }
+    if lower.contains("personal use")
+        || lower.contains("demo only")
+        || lower.contains("evaluation only")
+        || lower.contains("non-commercial")
+        || lower.contains("noncommercial")
+        || lower.contains("for personal")
+        || lower.contains("free for personal")
+        || lower.contains("not for commercial")
+        || contains_word(&lower, "trial")
+    {
+        return LicenseClass::PersonalOnly;
+    }
+    if lower.contains("all rights reserved")
+        || lower.contains("commercial license")
+        || lower.contains("commercial use")
+        || lower.contains("proprietary")
+        || lower.contains("eula")
+        || lower.contains("copyright")
+    {
+        return LicenseClass::Commercial;
+    }
+
+    LicenseClass::Unknown
+}
+
 /// Classifies OpenType license text/URL into a practical commercial-use tier.
 pub fn classify_license(license: Option<&str>, license_url: Option<&str>) -> LicenseTier {
     let combined = format!(
         "{} {}",
         license.unwrap_or_default(),
         license_url.unwrap_or_default()
-    )
-    .to_lowercase();
-    let trimmed = combined.trim();
-    if trimmed.is_empty() {
+    );
+    let lower = combined.trim().to_ascii_lowercase();
+    if lower.is_empty() {
         return LicenseTier::Unknown;
     }
-    if [
-        "personal use",
-        "non-commercial",
-        "noncommercial",
-        "demo only",
-        "evaluation only",
-        "free for personal",
-        "not for commercial",
-    ]
-    .iter()
-    .any(|kw| trimmed.contains(kw))
-    {
-        return LicenseTier::PersonalOnly;
+    let class = classify_license_class(&lower);
+    match class {
+        LicenseClass::PersonalOnly => return LicenseTier::PersonalOnly,
+        LicenseClass::Ofl
+        | LicenseClass::Apache
+        | LicenseClass::Mit
+        | LicenseClass::PublicDomain => {
+            return LicenseTier::FreeCommercial;
+        }
+        _ => {}
     }
-    if [
-        "open font license",
-        "scripts.sil.org/ofl",
-        "ofl",
-        "apache",
-        "mit license",
-        "mit ",
-        "ubuntu font",
-        "public domain",
-        "cc0",
-        "unlicense",
-        "gpl",
-        "free for commercial",
-    ]
-    .iter()
-    .any(|kw| trimmed.contains(kw))
+    if ["ubuntu font", "gpl", "free for commercial"]
+        .iter()
+        .any(|kw| lower.contains(kw))
     {
         return LicenseTier::FreeCommercial;
     }
-    if [
-        "all rights reserved",
-        "eula",
-        "commercial",
-        "proprietary",
-        "monotype",
-        "linotype",
-        "myfonts",
-        "fontspring",
-        "adobe",
-    ]
-    .iter()
-    .any(|kw| trimmed.contains(kw))
+    if matches!(class, LicenseClass::Commercial)
+        || [
+            "commercial",
+            "monotype",
+            "linotype",
+            "myfonts",
+            "fontspring",
+            "adobe",
+        ]
+        .iter()
+        .any(|kw| lower.contains(kw))
     {
         return LicenseTier::Commercial;
     }

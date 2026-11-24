@@ -49,10 +49,8 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Run core & Windows unit tests
-        run: |
-          cargo test --manifest-path src-tauri/core/Cargo.toml
-          cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Run core, foundry & Windows unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --locked
 
       - name: Build installer (signed if updater key is configured)
         shell: pwsh
@@ -84,7 +82,7 @@ jobs:
           Copy-Item "src-tauri/target/release/cosmic-font-foundry.exe" "$dir/Cosmic Font Foundry.exe"
           Copy-Item LICENSE "$dir/LICENSE.txt"
           Copy-Item THIRD-PARTY-NOTICES.md $dir
-          Copy-Item licenses "$dir/licenses" -Recurse
+          Copy-Item LICENSES "$dir/licenses" -Recurse
           Compress-Archive "$dir/*" "out/Cosmic-Font-Foundry_${v}_x64-portable.zip"
           Copy-Item $setup "out/$outSetup"
 
@@ -122,7 +120,7 @@ jobs:
         if: github.ref_type == 'tag'
         shell: pwsh
         run: |
-          $notesFile = ".github/notas/$env:TAG.md"
+          $notesFile = ".github/releases/$env:TAG.md"
           $body = if (Test-Path $notesFile) { (Get-Content $notesFile -Raw).TrimEnd() } else { "Release $env:TAG" }
           $fence = [string][char]96 * 3
           $body += "`n`n### SHA-256`n$fence`n" + ((Get-Content out/SHA256SUMS.txt) -join "`n") + "`n$fence`n"

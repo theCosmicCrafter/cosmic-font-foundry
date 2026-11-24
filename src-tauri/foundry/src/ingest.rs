@@ -10,20 +10,9 @@ use crate::import::import_svg_glyph;
 use crate::model::{compute_bbox, FontMetrics, FoundryProject, GlyphOutline};
 use crate::outline_hash::fingerprint_font_bytes;
 use crate::typography::auto_space_project;
+pub use cosmic_core::reader::{classify_license_class as classify_license, LicenseClass};
 
 const MAX_DIR_WALK_DEPTH: usize = 16;
-
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LicenseClass {
-    Ofl,
-    Apache,
-    Mit,
-    PublicDomain,
-    PersonalOnly,
-    Commercial,
-    Unknown,
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TriagedFont {
@@ -43,63 +32,6 @@ pub struct ArchiveTriageReport {
     pub rejected_unsafe: usize,
     pub duplicate_count: usize,
     pub fonts: Vec<TriagedFont>,
-}
-
-fn contains_word(haystack_lower: &str, word: &str) -> bool {
-    haystack_lower
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|tok| tok == word)
-}
-
-/// Classifies an embedded license or copyright notice string into a `LicenseClass`.
-pub fn classify_license(text: &str) -> LicenseClass {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return LicenseClass::Unknown;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-
-    if lower.contains("sil open font license")
-        || lower.contains("open font license")
-        || contains_word(&lower, "ofl")
-    {
-        return LicenseClass::Ofl;
-    }
-    if lower.contains("apache") {
-        return LicenseClass::Apache;
-    }
-    if lower.contains("mit license")
-        || lower.contains("permission is hereby granted")
-        || contains_word(&lower, "mit")
-    {
-        return LicenseClass::Mit;
-    }
-    if lower.contains("cc0")
-        || lower.contains("public domain")
-        || lower.contains("unlicense")
-        || lower.contains("creative commons zero")
-    {
-        return LicenseClass::PublicDomain;
-    }
-    if lower.contains("personal use")
-        || lower.contains("demo only")
-        || lower.contains("non-commercial")
-        || lower.contains("noncommercial")
-        || lower.contains("for personal")
-        || contains_word(&lower, "trial")
-    {
-        return LicenseClass::PersonalOnly;
-    }
-    if lower.contains("all rights reserved")
-        || lower.contains("commercial license")
-        || lower.contains("commercial use")
-        || lower.contains("proprietary")
-        || lower.contains("copyright")
-    {
-        return LicenseClass::Commercial;
-    }
-
-    LicenseClass::Unknown
 }
 
 fn is_allowed_font_ext(ext: &str) -> bool {

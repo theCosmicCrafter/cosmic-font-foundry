@@ -54,8 +54,6 @@ $effect.root(() => {
   });
 });
 
-export const isFavorite = (name) => library.favorites.includes(name);
-
 export function toggleFavorite(name) {
   const idx = library.favorites.indexOf(name);
   if (idx >= 0) library.favorites.splice(idx, 1);
@@ -222,11 +220,6 @@ export function createSmartCollection(name, rules = {}) {
   const id = "sc" + Date.now().toString(36) + (nextColSeq++).toString(36);
   library.smartCollections.push({ id, name: clean, rules: { ...rules } });
   return id;
-}
-
-export function renameSmartCollection(id, name) {
-  const sc = library.smartCollections.find((c) => c.id === id);
-  if (sc && name.trim()) sc.name = name.trim();
 }
 
 export function deleteSmartCollection(id) {

@@ -1,7 +1,7 @@
 <script>
   import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check, Sun, Moon, WandSparkles, Scissors, Eye, EyeOff } from "@lucide/svelte";
   import HeartIcon from "../components/HeartIcon.svelte";
-  import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont, installFamilyToWindows, invokeCmd } from "../lib/fonts.svelte.js";
+  import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont, installFamiliesToWindows, invokeCmd } from "../lib/fonts.svelte.js";
   import { inTauri, settings } from "../lib/settings.svelte.js";
   import { tagsForFamily, addTagToFamily, removeTagFromFamily } from "../lib/library.svelte.js";
   import { loadGoogleFullSpecimen, discover, installGoogleFont } from "../lib/discover.svelte.js";
@@ -50,7 +50,7 @@
     if (!f || installingWin) return;
     installingWin = true;
     try {
-      await installFamilyToWindows(f.name, settings.installFor === "all");
+      await installFamiliesToWindows([f.name], settings.installFor === "all");
     } finally {
       installingWin = false;
     }

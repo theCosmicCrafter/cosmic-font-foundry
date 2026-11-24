@@ -1,5 +1,6 @@
 mod agent;
 mod ai_runtime;
+mod commands;
 pub mod fonts;
 mod google;
 mod startup;
@@ -7,12 +8,15 @@ mod tray;
 pub mod vault;
 pub mod win;
 
-use cosmic_core::{migrate, similarity, sync};
+pub(crate) use commands::ai::{
+    ensure_prime_model_downloaded, run_vecglypher_inference, AiPullProgressPayload,
+};
+use cosmic_core::sync;
 use fonts::{
     cache::Cache, changes, summarize_diagnostics, Environment, FontFamily, InventoryDiagnostics,
     Origin,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
@@ -33,7 +37,7 @@ const LIBRARY_FILE: &str = "library.json";
 const BG_LIGHT: (u8, u8, u8, u8) = (0xfd, 0xf9, 0xf4, 255);
 const BG_DARK: (u8, u8, u8, u8) = (0x09, 0x08, 0x0c, 255);
 
-fn err(e: impl ToString) -> String {
+pub(crate) fn err(e: impl ToString) -> String {
     e.to_string()
 }
 
@@ -45,9 +49,9 @@ pub(crate) struct AppState {
     pub(crate) disabled_folder_fonts: Mutex<HashSet<String>>,
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
     scan_cancel: Arc<AtomicBool>,
-    ai_cancel: Arc<AtomicBool>,
-    ai_pull_cancel: Arc<AtomicBool>,
-    llama_child: Mutex<Option<std::process::Child>>,
+    pub(crate) ai_cancel: Arc<AtomicBool>,
+    pub(crate) ai_pull_cancel: Arc<AtomicBool>,
+    pub(crate) llama_child: Mutex<Option<std::process::Child>>,
 }
 
 impl AppState {
@@ -69,7 +73,7 @@ impl AppState {
         list
     }
 
-    fn refresh(
+    pub(crate) fn refresh(
         &self,
     ) -> (
         Vec<FontFamily>,
@@ -130,7 +134,7 @@ impl AppState {
     }
 }
 
-async fn bg<T: Send + 'static>(
+pub(crate) async fn bg<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(err)?
@@ -173,11 +177,12 @@ async fn refresh_fonts(app: AppHandle) -> Result<Value, String> {
     .await
 }
 
-pub(crate) fn toggle_families_sync(
+fn toggle_families_inner(
     app: &AppHandle,
     families: Vec<String>,
     activate: bool,
     system_unlocked: bool,
+    notify_main: bool,
 ) -> Result<ToggleResponse, String> {
     let state = app.state::<AppState>();
     let entries = state.collect_entries();
@@ -201,18 +206,33 @@ pub(crate) fn toggle_families_sync(
         outcome,
         diagnostics,
     };
-    let _ = app.emit("inventory-updated", &resp.families);
+    if notify_main {
+        let _ = app.emit("inventory-updated", &resp.families);
+    } else {
+        let _ = app.emit_to("quick", "inventory-updated", &resp.families);
+    }
     Ok(resp)
+}
+
+pub(crate) fn toggle_families_sync(
+    app: &AppHandle,
+    families: Vec<String>,
+    activate: bool,
+    system_unlocked: bool,
+) -> Result<ToggleResponse, String> {
+    toggle_families_inner(app, families, activate, system_unlocked, true)
 }
 
 #[tauri::command]
 async fn toggle_fonts(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     families: Vec<String>,
     activate: bool,
     system_unlocked: bool,
 ) -> Result<ToggleResponse, String> {
-    bg(move || toggle_families_sync(&app, families, activate, system_unlocked)).await
+    let notify_main = window.label() != "main";
+    bg(move || toggle_families_inner(&app, families, activate, system_unlocked, notify_main)).await
 }
 
 #[tauri::command]
@@ -240,12 +260,12 @@ async fn install_fonts(
         }
     })
     .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(resp)
 }
 
 #[derive(Serialize, Clone)]
-struct VaultImportResponse {
+pub(crate) struct VaultImportResponse {
     report: vault::VaultImportReport,
     stats: vault::VaultStats,
     folders: Vec<FolderInfo>,
@@ -277,7 +297,8 @@ async fn vault_stats(app: AppHandle) -> Result<vault::VaultStats, String> {
     bg(move || {
         let state = app.state::<AppState>();
         let vault_path = vault::load_vault_path(&state.env.data_dir);
-        Ok(vault::compute_vault_stats(&vault_path))
+        let cache = state.cache.lock().unwrap();
+        Ok(vault::compute_vault_stats_cached(&vault_path, Some(&cache)))
     })
     .await
 }
@@ -296,7 +317,8 @@ async fn choose_vault_folder(app: AppHandle) -> Result<Option<vault::VaultStats>
         ensure_vault_watched(&app, &state, &path);
         let (families, _, _, _) = state.refresh();
         let _ = app.emit("inventory-updated", &families);
-        Ok(Some(vault::compute_vault_stats(&path)))
+        let cache = state.cache.lock().unwrap();
+        Ok(Some(vault::compute_vault_stats_cached(&path, Some(&cache))))
     })
     .await
 }
@@ -327,7 +349,10 @@ async fn import_folder_to_vault(
             )?;
             ensure_vault_watched(&app, &state, &vault_path);
             let (families, _, diagnostics, _) = state.refresh();
-            let stats = vault::compute_vault_stats(&vault_path);
+            let stats = {
+                let cache = state.cache.lock().unwrap();
+                vault::compute_vault_stats_cached(&vault_path, Some(&cache))
+            };
             let folders = folder_list(&state);
             Ok(VaultImportResponse {
                 report,
@@ -339,7 +364,7 @@ async fn import_folder_to_vault(
         }
     })
     .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(Some(resp))
 }
 
@@ -413,15 +438,6 @@ fn collect_family_paths(state: &AppState, families: &[String]) -> Vec<PathBuf> {
 }
 
 #[tauri::command]
-async fn install_family_to_windows(
-    app: AppHandle,
-    family: String,
-    install_for_all: bool,
-) -> Result<ToggleResponse, String> {
-    install_families_to_windows(app, vec![family], install_for_all).await
-}
-
-#[tauri::command]
 async fn install_families_to_windows(
     app: AppHandle,
     families: Vec<String>,
@@ -445,7 +461,7 @@ async fn install_families_to_windows(
         }
     })
     .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(resp)
 }
 
@@ -466,7 +482,10 @@ async fn copy_families_to_vault(
             let report = vault::import_to_vault(&vault_path, &paths, false)?;
             ensure_vault_watched(&app, &state, &vault_path);
             let (families, _, diagnostics, _) = state.refresh();
-            let stats = vault::compute_vault_stats(&vault_path);
+            let stats = {
+                let cache = state.cache.lock().unwrap();
+                vault::compute_vault_stats_cached(&vault_path, Some(&cache))
+            };
             let folders = folder_list(&state);
             Ok(VaultImportResponse {
                 report,
@@ -478,7 +497,7 @@ async fn copy_families_to_vault(
         }
     })
     .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(resp)
 }
 
@@ -585,7 +604,7 @@ async fn restore_system_fonts(app: AppHandle) -> Result<ToggleResponse, String> 
         }
     })
     .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(resp)
 }
 
@@ -622,13 +641,13 @@ async fn quarantine_font(app: AppHandle, path: String) -> Result<ToggleResponse,
         }
     })
     .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(resp)
 }
 
 // ---- Watched Folders & Project Manifests ----
 
-fn save_folders(state: &AppState) {
+pub(crate) fn save_folders(state: &AppState) {
     let paths: Vec<String> = state
         .folders
         .lock()
@@ -643,7 +662,7 @@ fn save_folders(state: &AppState) {
     );
 }
 
-fn watch_folders(app: &AppHandle) {
+pub(crate) fn watch_folders(app: &AppHandle) {
     use notify::Watcher;
     let state = app.state::<AppState>();
     let (tx, rx) = mpsc::channel::<()>();
@@ -743,12 +762,6 @@ async fn remove_watched_folder(app: AppHandle, path: String) -> Result<Vec<Folde
         Ok(folder_list(&state))
     })
     .await
-}
-
-#[tauri::command]
-fn project_manifests(state: State<AppState>) -> Vec<sync::DetectedProject> {
-    let folders = state.folders.lock().unwrap().clone();
-    sync::scan_project_manifests(&folders)
 }
 
 #[derive(Serialize, Clone)]
@@ -1166,7 +1179,7 @@ async fn google_install(app: AppHandle, family: String) -> Result<ToggleResponse
     .await?;
 
     let _ = app.emit("download", json!({ "family": family, "pct": 100 }));
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(resp)
 }
 
@@ -1254,1488 +1267,8 @@ async fn install_forged_font(
         })
     })
     .await?;
-    let _ = app.emit("inventory-updated", &resp.families);
+    let _ = app.emit_to("quick", "inventory-updated", &resp.families);
     Ok(resp)
-}
-
-// ---- Cosmic Foundry Vector Studio & Search Engines ----
-
-#[tauri::command]
-async fn foundry_compile_modular(
-    req: cosmic_foundry::model::ModularForgeRequest,
-) -> Result<cosmic_foundry::model::CompiledFontResult, String> {
-    bg(move || {
-        let project = cosmic_foundry::modular::modular_to_project(&req);
-        cosmic_foundry::compiler::compile_ttf(&project, false)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_modular_to_project(
-    req: cosmic_foundry::model::ModularForgeRequest,
-) -> Result<cosmic_foundry::model::FoundryProject, String> {
-    bg(move || Ok(cosmic_foundry::modular::modular_to_project(&req))).await
-}
-
-#[tauri::command]
-async fn foundry_compile_project(
-    project: cosmic_foundry::model::FoundryProject,
-    clean_outlines: bool,
-) -> Result<cosmic_foundry::model::CompiledFontResult, String> {
-    bg(move || cosmic_foundry::compiler::compile_ttf(&project, clean_outlines)).await
-}
-
-#[tauri::command]
-async fn foundry_compile_woff(ttf_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
-    bg(move || cosmic_foundry::compiler::compile_woff(&ttf_bytes)).await
-}
-
-#[tauri::command]
-async fn foundry_fork_font(
-    path: String,
-    new_family: Option<String>,
-) -> Result<cosmic_foundry::model::FoundryProject, String> {
-    bg(
-        move || {
-            cosmic_foundry::import::fork_font_file(Path::new(&path), new_family.as_deref(), 256)
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-async fn foundry_inspect_glyph(
-    path: String,
-    codepoint: u32,
-) -> Result<cosmic_foundry::model::GlyphInspectInfo, String> {
-    bg(move || cosmic_foundry::import::inspect_glyph_outline(Path::new(&path), codepoint)).await
-}
-
-#[tauri::command]
-async fn foundry_import_svg_glyph(
-    svg: String,
-    upm: u16,
-) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
-    bg(move || cosmic_foundry::import::import_svg_glyph(&svg, upm)).await
-}
-
-#[tauri::command]
-async fn foundry_transform_glyph(
-    contours: Vec<cosmic_foundry::model::Contour>,
-    op: cosmic_foundry::model::GlyphTransformOp,
-) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
-    bg(move || Ok(cosmic_foundry::pathops::apply_transform(&contours, &op))).await
-}
-
-#[tauri::command]
-async fn foundry_trace_image(
-    bytes: Vec<u8>,
-    opts: cosmic_foundry::trace::TraceOptions,
-) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
-    bg(move || cosmic_foundry::trace::trace_image_bytes(&bytes, &opts)).await
-}
-
-#[tauri::command]
-async fn foundry_trace_sheet(
-    bytes: Vec<u8>,
-    cols: usize,
-    rows: usize,
-    chars: String,
-    opts: cosmic_foundry::trace::TraceOptions,
-) -> Result<std::collections::BTreeMap<String, Vec<cosmic_foundry::model::Contour>>, String> {
-    bg(move || cosmic_foundry::trace::trace_glyph_sheet(&bytes, cols, rows, &chars, &opts)).await
-}
-
-#[tauri::command]
-async fn foundry_measure_stems(
-    contours: Vec<cosmic_foundry::model::Contour>,
-    p0: [f64; 2],
-    p1: [f64; 2],
-) -> Result<Vec<cosmic_foundry::edit::StemMeasurement>, String> {
-    bg(move || {
-        Ok(cosmic_foundry::edit::measure_stem_thickness(
-            &contours, p0, p1,
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_slice_contours(
-    contours: Vec<cosmic_foundry::model::Contour>,
-    p0: [f64; 2],
-    p1: [f64; 2],
-) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
-    bg(move || {
-        Ok(cosmic_foundry::edit::slice_contours_with_line(
-            &contours, p0, p1,
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_boolean_op(
-    a: Vec<cosmic_foundry::model::Contour>,
-    b: Vec<cosmic_foundry::model::Contour>,
-    op: String,
-) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
-    bg(move || Ok(cosmic_foundry::edit::boolean_op_contours(&a, &b, &op))).await
-}
-
-#[tauri::command]
-async fn foundry_outline_stroke(
-    contours: Vec<cosmic_foundry::model::Contour>,
-    width: f64,
-    round_caps: bool,
-) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
-    bg(move || {
-        Ok(cosmic_foundry::pathops::outline_stroke(
-            &contours, width, round_caps,
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_export_ufo(
-    app: AppHandle,
-    project: cosmic_foundry::model::FoundryProject,
-) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let slug: String = format!("{}-{}", project.family_name, project.style_name)
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    let default_name = format!("{}.ufo", slug.trim_matches('-'));
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .set_file_name(&default_name)
-        .add_filter("Unified Font Object (.ufo)", &["ufo"])
-        .blocking_save_file()
-    else {
-        return Ok(None);
-    };
-    let mut dest = picked.into_path().map_err(err)?;
-    if dest.extension().is_none() {
-        dest = dest.with_extension("ufo");
-    }
-    bg(move || {
-        cosmic_foundry::compiler::export_ufo(&project, &dest)?;
-        Ok(Some(dest.to_string_lossy().into_owned()))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_import_ufo(
-    app: AppHandle,
-) -> Result<Option<cosmic_foundry::model::FoundryProject>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let Some(picked) = app.dialog().file().blocking_pick_folder() else {
-        return Ok(None);
-    };
-    let src = picked.into_path().map_err(err)?;
-    bg(move || Ok(Some(cosmic_foundry::compiler::import_ufo(&src)?))).await
-}
-
-#[tauri::command]
-async fn foundry_subset_font(
-    app: AppHandle,
-    path: String,
-    text: String,
-    axes: Vec<(String, f32)>,
-) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let src_path = PathBuf::from(&path);
-    let stem = src_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("font");
-    let ext = src_path
-        .extension()
-        .and_then(|s| s.to_str())
-        .filter(|e| e.eq_ignore_ascii_case("otf") || e.eq_ignore_ascii_case("ttf"))
-        .unwrap_or("ttf");
-    let default_name = format!("{stem}-subset.{ext}");
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .set_file_name(&default_name)
-        .add_filter("Font File", &["ttf", "otf"])
-        .blocking_save_file()
-    else {
-        return Ok(None);
-    };
-    let dest = picked.into_path().map_err(err)?;
-    bg(move || {
-        let bytes = cosmic_foundry::compiler::subset_font(Path::new(&path), &text, &axes)?;
-        fs::write(&dest, bytes).map_err(err)?;
-        Ok(Some(dest.to_string_lossy().into_owned()))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn discover_search_github_fonts(
-    query: String,
-) -> Result<Vec<google::GithubFontRepo>, String> {
-    google::search_github_fonts(&query).await
-}
-
-#[derive(serde::Serialize)]
-struct CompositesResult {
-    project: cosmic_foundry::model::FoundryProject,
-    created: usize,
-}
-
-#[tauri::command]
-async fn foundry_auto_space(
-    mut project: cosmic_foundry::model::FoundryProject,
-    target_sidebearing: f64,
-) -> Result<cosmic_foundry::model::FoundryProject, String> {
-    bg(move || {
-        cosmic_foundry::typography::auto_space_project(&mut project, target_sidebearing);
-        Ok(project)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_auto_kern(
-    mut project: cosmic_foundry::model::FoundryProject,
-    target_gap: f64,
-    min_abs_kern: i16,
-) -> Result<cosmic_foundry::model::FoundryProject, String> {
-    bg(move || {
-        cosmic_foundry::typography::auto_kern_project(&mut project, target_gap, min_abs_kern);
-        Ok(project)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_generate_composites(
-    mut project: cosmic_foundry::model::FoundryProject,
-) -> Result<CompositesResult, String> {
-    bg(move || {
-        let created = cosmic_foundry::typography::generate_latin_composites(&mut project);
-        Ok(CompositesResult { project, created })
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_apply_linked_metrics(
-    mut project: cosmic_foundry::model::FoundryProject,
-) -> Result<cosmic_foundry::model::FoundryProject, String> {
-    bg(move || {
-        cosmic_foundry::typography::apply_linked_metrics(&mut project);
-        Ok(project)
-    })
-    .await
-}
-
-#[derive(serde::Serialize)]
-struct AutofixResult {
-    project: cosmic_foundry::model::FoundryProject,
-    fixed: usize,
-    report: cosmic_foundry::qa::QaReport,
-}
-
-#[tauri::command]
-async fn foundry_generate_style(
-    project: cosmic_foundry::model::FoundryProject,
-    kind: cosmic_foundry::styles::StyleVariantKind,
-    amount: f64,
-) -> Result<cosmic_foundry::model::FoundryProject, String> {
-    bg(move || {
-        Ok(cosmic_foundry::styles::generate_style_variant(
-            &project, kind, amount,
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_compile_variable_ttf(
-    app: AppHandle,
-    base: cosmic_foundry::model::FoundryProject,
-    masters: Vec<cosmic_foundry::variable::VariableMaster>,
-) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let raw_family = if base.family_name.trim().is_empty() {
-        "CosmicFont"
-    } else {
-        base.family_name.trim()
-    };
-    let clean_stem: String = raw_family
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
-    let default_name = if clean_stem.is_empty() {
-        "CosmicFont-Variable.ttf".to_string()
-    } else {
-        format!("{clean_stem}-Variable.ttf")
-    };
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .set_file_name(&default_name)
-        .add_filter("Variable TrueType Font", &["ttf"])
-        .blocking_save_file()
-    else {
-        return Ok(None);
-    };
-    let dest = picked.into_path().map_err(err)?;
-    bg(move || {
-        let bytes = cosmic_foundry::variable::compile_variable_ttf(&base, &masters)?;
-        fs::write(&dest, bytes).map_err(err)?;
-        Ok(Some(dest.to_string_lossy().into_owned()))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_audit_project(
-    project: cosmic_foundry::model::FoundryProject,
-) -> Result<cosmic_foundry::qa::QaReport, String> {
-    bg(move || Ok(cosmic_foundry::qa::audit_project(&project))).await
-}
-
-#[tauri::command]
-async fn foundry_autofix_project(
-    mut project: cosmic_foundry::model::FoundryProject,
-) -> Result<AutofixResult, String> {
-    bg(move || {
-        let (fixed, report) = cosmic_foundry::qa::autofix_project(&mut project);
-        Ok(AutofixResult {
-            project,
-            fixed,
-            report,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-async fn library_visual_match_image(
-    state: State<'_, AppState>,
-    bytes: Vec<u8>,
-    sample_chars: String,
-    top_k: Option<usize>,
-) -> Result<Vec<cosmic_foundry::retype::VisualMatchHit>, String> {
-    let candidates: Vec<(String, String)> = {
-        let cache = state.cache.lock().map_err(err)?;
-        cache
-            .families
-            .iter()
-            .filter(|f| !f.file.is_empty())
-            .map(|f| (f.name.clone(), f.file.clone()))
-            .collect()
-    };
-    bg(move || {
-        let opts = cosmic_foundry::trace::TraceOptions::default();
-        let contours = cosmic_foundry::trace::trace_image_bytes(&bytes, &opts)?;
-        if contours.is_empty() {
-            return Err("No trace shapes detected in image".to_string());
-        }
-        Ok(cosmic_foundry::retype::match_outline_against_fonts(
-            &contours,
-            &candidates,
-            &sample_chars,
-            top_k.unwrap_or(8),
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn library_visual_match_svg(
-    state: State<'_, AppState>,
-    svg_text: String,
-    sample_chars: String,
-    top_k: Option<usize>,
-) -> Result<Vec<cosmic_foundry::retype::VisualMatchHit>, String> {
-    let candidates: Vec<(String, String)> = {
-        let cache = state.cache.lock().map_err(err)?;
-        cache
-            .families
-            .iter()
-            .filter(|f| !f.file.is_empty())
-            .map(|f| (f.name.clone(), f.file.clone()))
-            .collect()
-    };
-    bg(move || {
-        let contours = cosmic_foundry::import::import_svg_glyph(&svg_text, 1000)?;
-        if contours.is_empty() {
-            return Err("No valid outlines parsed from SVG".to_string());
-        }
-        Ok(cosmic_foundry::retype::match_outline_against_fonts(
-            &contours,
-            &candidates,
-            &sample_chars,
-            top_k.unwrap_or(8),
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_vibe_search(
-    state: State<'_, AppState>,
-    query: String,
-    top_k: Option<usize>,
-) -> Result<Vec<cosmic_foundry::vibe::VibeMatchHit>, String> {
-    let candidates: Vec<(String, String, String)> = {
-        let cache = state.cache.lock().map_err(err)?;
-        cache
-            .families
-            .iter()
-            .filter(|f| !f.file.is_empty())
-            .map(|f| (f.name.clone(), f.file.clone(), f.category.clone()))
-            .collect()
-    };
-    bg(move || {
-        Ok(cosmic_foundry::vibe::search_fonts_by_vibe(
-            &query,
-            &candidates,
-            top_k.unwrap_or(10),
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_find_outline_duplicates(
-    state: State<'_, AppState>,
-    paths: Option<Vec<String>>,
-) -> Result<Vec<cosmic_foundry::outline_hash::DuplicateGroup>, String> {
-    let target_paths: Vec<PathBuf> = if let Some(explicit) = paths {
-        explicit
-            .into_iter()
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from)
-            .collect()
-    } else {
-        let cache = state.cache.lock().map_err(err)?;
-        let mut seen = HashSet::new();
-        let mut list = Vec::new();
-        for fam in &cache.families {
-            for p in &fam.files {
-                if !p.is_empty() && seen.insert(p.clone()) {
-                    list.push(PathBuf::from(p));
-                }
-            }
-        }
-        list
-    };
-    bg(move || {
-        Ok(cosmic_foundry::outline_hash::find_outline_duplicates(
-            &target_paths,
-        ))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn foundry_triage_archive(
-    path: String,
-) -> Result<cosmic_foundry::ingest::ArchiveTriageReport, String> {
-    bg(move || cosmic_foundry::ingest::triage_path(Path::new(&path))).await
-}
-
-#[tauri::command]
-async fn foundry_pick_triage_file(app: AppHandle) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .add_filter(
-            "Font Archive or File",
-            &["zip", "ttf", "otf", "woff", "woff2"],
-        )
-        .blocking_pick_file()
-    else {
-        return Ok(None);
-    };
-    let path = picked.into_path().map_err(err)?;
-    Ok(Some(path.to_string_lossy().into_owned()))
-}
-
-// ---- VecGlypher AI Font Generation (C++/CUDA Ollama & OpenAI/vLLM + Pure-Rust) ----
-
-#[derive(Serialize)]
-struct AiBackendStatus {
-    ok: bool,
-    models: Vec<String>,
-    has_vecglypher: bool,
-    recommended_pull: String,
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct AiGlyphRequest {
-    endpoint: String,
-    provider: String,
-    model: String,
-    style_prompt: String,
-    character: String,
-    #[serde(default)]
-    exemplar_glyphs: Vec<cosmic_foundry::model::GlyphOutline>,
-    #[serde(default)]
-    temperature: f32,
-    #[serde(default)]
-    upm: u16,
-}
-
-#[derive(Deserialize)]
-struct AiFontBatchRequest {
-    project: cosmic_foundry::model::FoundryProject,
-    endpoint: String,
-    provider: String,
-    model: String,
-    style_prompt: String,
-    chars: String,
-    #[serde(default)]
-    exemplar_keys: Vec<String>,
-    #[serde(default)]
-    temperature: f32,
-    #[serde(default)]
-    auto_space_kern: bool,
-    #[serde(default)]
-    auto_composites: bool,
-    #[serde(default)]
-    auto_fix_qa: bool,
-}
-
-#[derive(Clone, Serialize)]
-struct AiGlyphProgressPayload {
-    current: usize,
-    total: usize,
-    character: String,
-    status: String,
-}
-
-pub(crate) fn resolve_prime_vecglypher_model(model: &str) -> Result<String, String> {
-    let trimmed = model.trim();
-    if trimmed.is_empty() {
-        return Ok(cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF.to_string());
-    }
-    if !trimmed.to_ascii_lowercase().contains("vecglypher") {
-        return Err(format!(
-            "Prime model lock: refusing to substitute '{}' for VecGlypher-27b-it. \
-             Only VecGlypher prime models ({}) are trained to emit native glyph SVG outlines; \
-             switching models will corrupt glyph generation.",
-            trimmed,
-            cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF
-        ));
-    }
-    Ok(trimmed.to_string())
-}
-
-pub(crate) async fn ensure_prime_model_downloaded(
-    app: Option<&AppHandle>,
-    cancel_flag: Option<&AtomicBool>,
-    endpoint: &str,
-    provider: &str,
-    model: &str,
-) -> Result<(String, String), String> {
-    let prime_model = resolve_prime_vecglypher_model(model)?;
-    if provider.eq_ignore_ascii_case("builtin") {
-        let Some(a) = app else {
-            return Err("Built-in managed engine requires desktop app context.".into());
-        };
-        let state = a.state::<AppState>();
-        ai_runtime::provision_and_start_builtin(
-            &state.env.data_dir,
-            &state.llama_child,
-            Some(a),
-            cancel_flag,
-        )
-        .await?;
-        return Ok((ai_runtime::BUILTIN_ENDPOINT.to_string(), prime_model));
-    }
-    if !provider.eq_ignore_ascii_case("ollama") {
-        return Ok((endpoint.to_string(), prime_model));
-    }
-
-    let status = probe_remote_ai_backend(endpoint, provider).await?;
-    if !status.ok {
-        return Err(format!(
-            "Local Ollama backend unreachable ({}) — cannot verify or download prime model '{}'.",
-            status.message, prime_model
-        ));
-    }
-
-    let target_lower = prime_model.to_ascii_lowercase();
-    if let Some(installed) = status.models.iter().find(|m| {
-        let lower = m.to_ascii_lowercase();
-        lower == target_lower
-            || lower.contains(&target_lower)
-            || target_lower.contains(&lower)
-            || lower.contains("vecglypher")
-    }) {
-        return Ok((endpoint.to_string(), installed.clone()));
-    }
-
-    // Prime model is not installed yet: halt production and wait for full download & verification.
-    pull_ollama_model_internal(app, cancel_flag, endpoint, &prime_model).await?;
-    Ok((endpoint.to_string(), prime_model))
-}
-
-pub(crate) async fn run_vecglypher_inference(
-    client: &reqwest::Client,
-    endpoint: &str,
-    provider: &str,
-    model: &str,
-    cfg: &cosmic_foundry::vecglypher::VecGlypherPromptConfig,
-    images_b64: &[String],
-) -> Result<String, String> {
-    let base = endpoint.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("AI backend endpoint cannot be empty".into());
-    }
-    let prime_model = resolve_prime_vecglypher_model(model)?;
-    let model_name = prime_model.as_str();
-
-    if provider.eq_ignore_ascii_case("ollama") {
-        let url = format!("{base}/api/chat");
-        let payload =
-            cosmic_foundry::vecglypher::build_ollama_chat_payload(model_name, cfg, images_b64);
-        let resp = client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("Ollama request failed ({url}): {e}"))?;
-        let status = resp.status();
-        let val: Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("Invalid Ollama JSON response ({status}): {e}"))?;
-        if let Some(err_msg) = val["error"].as_str() {
-            return Err(format!("Ollama error: {err_msg}"));
-        }
-        val["message"]["content"]
-            .as_str()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| format!("Ollama response missing message.content ({status})"))
-    } else {
-        let url = if base.ends_with("/v1") {
-            format!("{base}/chat/completions")
-        } else {
-            format!("{base}/v1/chat/completions")
-        };
-        let payload =
-            cosmic_foundry::vecglypher::build_openai_chat_payload(model_name, cfg, images_b64);
-        let resp = client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("OpenAI/vLLM request failed ({url}): {e}"))?;
-        let status = resp.status();
-        let val: Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("Invalid OpenAI/vLLM JSON response ({status}): {e}"))?;
-        if let Some(err_msg) = val["error"]["message"]
-            .as_str()
-            .or_else(|| val["error"].as_str())
-        {
-            return Err(format!("OpenAI/vLLM error: {err_msg}"));
-        }
-        val["choices"][0]["message"]["content"]
-            .as_str()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| {
-                format!("OpenAI/vLLM response missing choices[0].message.content ({status})")
-            })
-    }
-}
-
-#[tauri::command]
-async fn foundry_ai_check_backend(
-    state: State<'_, AppState>,
-    endpoint: String,
-    provider: String,
-) -> Result<AiBackendStatus, String> {
-    if provider.eq_ignore_ascii_case("builtin") {
-        let has_engine = ai_runtime::has_builtin_engine(&state.env.data_dir);
-        let has_model = ai_runtime::has_builtin_model(&state.env.data_dir);
-        let healthy = ai_runtime::builtin_server_healthy().await;
-        let ready = has_engine && has_model;
-        let models = if ready {
-            vec![cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF.to_string()]
-        } else {
-            Vec::new()
-        };
-        let message = if ready && healthy {
-            "Built-in llama.cpp GPU engine running on 127.0.0.1:17421 (VecGlypher ready).".into()
-        } else if ready {
-            "Built-in llama.cpp GPU engine & VecGlypher-27b-it installed (auto-starts on Generate)."
-                .into()
-        } else if has_engine {
-            "Built-in llama.cpp GPU engine installed. Click Download to fetch VecGlypher-27b-it (~16.55 GB)."
-                .into()
-        } else {
-            "Zero-setup Built-in Engine — 1-click downloads portable llama.cpp GPU engine (~37 MB) + VecGlypher-27b-it (~16.55 GB)."
-                .into()
-        };
-        return Ok(AiBackendStatus {
-            ok: true,
-            models,
-            has_vecglypher: ready,
-            recommended_pull: "Automatic 1-Click Built-in Install".into(),
-            message,
-        });
-    }
-    probe_remote_ai_backend(&endpoint, &provider).await
-}
-
-async fn probe_remote_ai_backend(
-    endpoint: &str,
-    provider: &str,
-) -> Result<AiBackendStatus, String> {
-    let recommended_pull = format!(
-        "ollama run {}",
-        cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF
-    );
-    let base = endpoint.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Ok(AiBackendStatus {
-            ok: false,
-            models: Vec::new(),
-            has_vecglypher: false,
-            recommended_pull,
-            message: "Endpoint URL is empty.".into(),
-        });
-    }
-
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(4))
-        .build()
-    else {
-        return Ok(AiBackendStatus {
-            ok: false,
-            models: Vec::new(),
-            has_vecglypher: false,
-            recommended_pull,
-            message: "Failed to initialize HTTP client.".into(),
-        });
-    };
-
-    let url = if provider.eq_ignore_ascii_case("ollama") {
-        format!("{base}/api/tags")
-    } else if base.ends_with("/v1") {
-        format!("{base}/models")
-    } else {
-        format!("{base}/v1/models")
-    };
-
-    let resp = match client.get(&url).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok(AiBackendStatus {
-                ok: false,
-                models: Vec::new(),
-                has_vecglypher: false,
-                recommended_pull,
-                message: format!("Backend unreachable at {url}: {e}"),
-            });
-        }
-    };
-
-    if !resp.status().is_success() {
-        return Ok(AiBackendStatus {
-            ok: false,
-            models: Vec::new(),
-            has_vecglypher: false,
-            recommended_pull,
-            message: format!("Backend returned HTTP {} at {url}", resp.status()),
-        });
-    }
-
-    let val: Value = match resp.json().await {
-        Ok(v) => v,
-        Err(e) => {
-            return Ok(AiBackendStatus {
-                ok: false,
-                models: Vec::new(),
-                has_vecglypher: false,
-                recommended_pull,
-                message: format!("Invalid JSON from {url}: {e}"),
-            });
-        }
-    };
-
-    let mut models = Vec::new();
-    if provider.eq_ignore_ascii_case("ollama") {
-        if let Some(arr) = val["models"].as_array() {
-            for item in arr {
-                if let Some(name) = item["name"].as_str().or_else(|| item["model"].as_str()) {
-                    models.push(name.to_string());
-                }
-            }
-        }
-    } else if let Some(arr) = val["data"].as_array() {
-        for item in arr {
-            if let Some(id) = item["id"].as_str() {
-                models.push(id.to_string());
-            }
-        }
-    }
-
-    let has_vecglypher = models
-        .iter()
-        .any(|m| m.to_ascii_lowercase().contains("vecglypher"));
-    let message = if has_vecglypher {
-        format!(
-            "Connected ({} models loaded, VecGlypher ready).",
-            models.len()
-        )
-    } else {
-        format!(
-            "Connected ({} models loaded). Pull VecGlypher-27b-it for dedicated SVG glyph synthesis.",
-            models.len()
-        )
-    };
-
-    Ok(AiBackendStatus {
-        ok: true,
-        models,
-        has_vecglypher,
-        recommended_pull,
-        message,
-    })
-}
-
-fn build_glyph_from_contours(
-    ch: char,
-    contours: Vec<cosmic_foundry::model::Contour>,
-    upm: u16,
-) -> cosmic_foundry::model::GlyphOutline {
-    let bbox = cosmic_foundry::model::compute_bbox(&contours);
-    let width_span = (bbox[2] - bbox[0]).max(0.0);
-    let pad = (upm as f64) * 0.12;
-    let min_adv = (upm as f64) * 0.30;
-    let advance_width = (width_span + pad).round().max(min_adv) as i32;
-    let lsb = bbox[0].round() as i32;
-    cosmic_foundry::model::GlyphOutline {
-        codepoint: ch as u32,
-        name: format!("uni{:04X}", ch as u32),
-        advance_width,
-        lsb,
-        contours,
-    }
-}
-
-#[tauri::command]
-async fn foundry_ai_generate_glyph(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    req: AiGlyphRequest,
-) -> Result<cosmic_foundry::model::GlyphOutline, String> {
-    let ch = req
-        .character
-        .chars()
-        .next()
-        .ok_or_else(|| "Target character cannot be empty".to_string())?;
-    let upm = if req.upm == 0 { 1000 } else { req.upm };
-    let temp = if req.temperature <= 0.0 {
-        0.7
-    } else {
-        req.temperature
-    };
-
-    let (effective_endpoint, verified_model) = ensure_prime_model_downloaded(
-        Some(&app),
-        Some(&state.ai_pull_cancel),
-        &req.endpoint,
-        &req.provider,
-        &req.model,
-    )
-    .await?;
-
-    let mut images_b64 = Vec::new();
-    for g in req.exemplar_glyphs.iter().take(8) {
-        if !g.contours.is_empty() {
-            if let Ok(b64) = cosmic_foundry::vecglypher::render_glyph_exemplar_base64(g, upm, 192) {
-                images_b64.push(b64);
-            }
-        }
-    }
-
-    let cfg = cosmic_foundry::vecglypher::VecGlypherPromptConfig {
-        style_prompt: req.style_prompt,
-        target_text: ch.to_string(),
-        temperature: temp,
-        ..Default::default()
-    };
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(err)?;
-
-    let raw = run_vecglypher_inference(
-        &client,
-        &effective_endpoint,
-        &req.provider,
-        &verified_model,
-        &cfg,
-        &images_b64,
-    )
-    .await?;
-    let contours = cosmic_foundry::vecglypher::decode_vecglypher_svg(&raw, upm)?;
-    Ok(build_glyph_from_contours(ch, contours, upm))
-}
-
-#[tauri::command]
-async fn foundry_ai_generate_font_batch(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    req: AiFontBatchRequest,
-) -> Result<cosmic_foundry::model::FoundryProject, String> {
-    use std::sync::atomic::Ordering;
-    state.ai_cancel.store(false, Ordering::SeqCst);
-
-    let (effective_endpoint, verified_model) = ensure_prime_model_downloaded(
-        Some(&app),
-        Some(&state.ai_pull_cancel),
-        &req.endpoint,
-        &req.provider,
-        &req.model,
-    )
-    .await?;
-
-    let mut project = req.project;
-    let upm = if project.metrics.upm == 0 {
-        1000
-    } else {
-        project.metrics.upm
-    };
-    let temp = if req.temperature <= 0.0 {
-        0.7
-    } else {
-        req.temperature
-    };
-
-    let mut images_b64 = Vec::new();
-    for key in req.exemplar_keys.iter().take(8) {
-        if let Some(g) = project.glyphs.get(key) {
-            if !g.contours.is_empty() {
-                if let Ok(b64) =
-                    cosmic_foundry::vecglypher::render_glyph_exemplar_base64(g, upm, 192)
-                {
-                    images_b64.push(b64);
-                }
-            }
-        }
-    }
-
-    let mut target_chars = Vec::new();
-    let mut seen_cp = HashSet::new();
-    for ch in req.chars.chars() {
-        if !ch.is_control() && seen_cp.insert(ch as u32) {
-            target_chars.push(ch);
-        }
-    }
-    if target_chars.is_empty() {
-        return Err("Character batch cannot be empty".into());
-    }
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(err)?;
-
-    let total = target_chars.len();
-    for (idx, ch) in target_chars.into_iter().enumerate() {
-        if state.ai_cancel.load(Ordering::SeqCst) {
-            let _ = app.emit(
-                "ai-glyph-progress",
-                AiGlyphProgressPayload {
-                    current: idx,
-                    total,
-                    character: ch.to_string(),
-                    status: "cancelled".into(),
-                },
-            );
-            break;
-        }
-
-        let _ = app.emit(
-            "ai-glyph-progress",
-            AiGlyphProgressPayload {
-                current: idx + 1,
-                total,
-                character: ch.to_string(),
-                status: "generating".into(),
-            },
-        );
-
-        let cfg = cosmic_foundry::vecglypher::VecGlypherPromptConfig {
-            style_prompt: req.style_prompt.clone(),
-            target_text: ch.to_string(),
-            temperature: temp,
-            ..Default::default()
-        };
-
-        if let Ok(raw) = run_vecglypher_inference(
-            &client,
-            &effective_endpoint,
-            &req.provider,
-            &verified_model,
-            &cfg,
-            &images_b64,
-        )
-        .await
-        {
-            if let Ok(contours) = cosmic_foundry::vecglypher::decode_vecglypher_svg(&raw, upm) {
-                let glyph = build_glyph_from_contours(ch, contours, upm);
-                project.glyphs.insert((ch as u32).to_string(), glyph);
-            }
-        }
-    }
-
-    if req.auto_composites {
-        let _ = cosmic_foundry::typography::generate_latin_composites(&mut project);
-    }
-    if req.auto_space_kern {
-        let sb = ((upm as f64) * 0.06).round();
-        let gap = ((upm as f64) * 0.08).round();
-        cosmic_foundry::typography::auto_space_project(&mut project, sb);
-        cosmic_foundry::typography::auto_kern_project(&mut project, gap, 10);
-    }
-    if req.auto_fix_qa {
-        let _ = cosmic_foundry::qa::autofix_project(&mut project);
-    }
-
-    let _ = app.emit(
-        "ai-glyph-progress",
-        AiGlyphProgressPayload {
-            current: total,
-            total,
-            character: String::new(),
-            status: "done".into(),
-        },
-    );
-
-    Ok(project)
-}
-
-#[tauri::command]
-async fn foundry_ai_cancel_batch(state: State<'_, AppState>) -> Result<bool, String> {
-    use std::sync::atomic::Ordering;
-    state.ai_cancel.store(true, Ordering::SeqCst);
-    Ok(true)
-}
-
-#[derive(Clone, Serialize)]
-pub(crate) struct AiPullProgressPayload {
-    pub(crate) status: String,
-    pub(crate) completed: u64,
-    pub(crate) total: u64,
-    pub(crate) percent: f32,
-    pub(crate) done: bool,
-    pub(crate) error: Option<String>,
-}
-
-pub(crate) async fn pull_ollama_model_internal(
-    app: Option<&AppHandle>,
-    cancel_flag: Option<&AtomicBool>,
-    endpoint: &str,
-    model: &str,
-) -> Result<(), String> {
-    use std::sync::atomic::Ordering;
-    if let Some(flag) = cancel_flag {
-        flag.store(false, Ordering::SeqCst);
-    }
-
-    let prime_model = resolve_prime_vecglypher_model(model)?;
-    let base = endpoint.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return Err("Endpoint URL is empty.".into());
-    }
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(7200))
-        .build()
-        .map_err(err)?;
-
-    let url = format!("{base}/api/pull");
-    let payload = json!({
-        "name": prime_model,
-        "stream": true
-    });
-
-    let resp = client
-        .post(&url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to initiate model pull at {url}: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Ollama pull error ({status}): {body}"));
-    }
-
-    let mut stream = resp;
-    let mut buffer = String::new();
-    let mut last_total = 0u64;
-
-    while let Some(chunk) = stream
-        .chunk()
-        .await
-        .map_err(|e| format!("Stream read error: {e}"))?
-    {
-        if cancel_flag.is_some_and(|f| f.load(Ordering::SeqCst)) {
-            if let Some(a) = app {
-                let _ = a.emit(
-                    "ai-pull-progress",
-                    AiPullProgressPayload {
-                        status: "Download cancelled by user.".into(),
-                        completed: 0,
-                        total: last_total,
-                        percent: 0.0,
-                        done: true,
-                        error: Some("Cancelled".into()),
-                    },
-                );
-            }
-            return Err("Prime model download cancelled by user — halting generation.".into());
-        }
-
-        let chunk_str = String::from_utf8_lossy(&chunk);
-        buffer.push_str(&chunk_str);
-
-        while let Some(newline_pos) = buffer.find('\n') {
-            let line = buffer[..newline_pos].trim().to_string();
-            buffer.drain(..=newline_pos);
-            if line.is_empty() {
-                continue;
-            }
-            if let Ok(val) = serde_json::from_str::<Value>(&line) {
-                if let Some(err_msg) = val["error"].as_str() {
-                    if let Some(a) = app {
-                        let _ = a.emit(
-                            "ai-pull-progress",
-                            AiPullProgressPayload {
-                                status: format!("Error: {err_msg}"),
-                                completed: 0,
-                                total: last_total,
-                                percent: 0.0,
-                                done: true,
-                                error: Some(err_msg.to_string()),
-                            },
-                        );
-                    }
-                    return Err(format!("Ollama error: {err_msg}"));
-                }
-
-                let status_str = val["status"].as_str().unwrap_or("downloading").to_string();
-                let completed = val["completed"].as_u64().unwrap_or(0);
-                let total = val["total"].as_u64().unwrap_or(last_total);
-                if total > 0 {
-                    last_total = total;
-                }
-                let percent = if total > 0 {
-                    ((completed as f64 / total as f64) * 100.0) as f32
-                } else if status_str == "success" {
-                    100.0
-                } else {
-                    0.0
-                };
-                let done = status_str == "success";
-
-                if let Some(a) = app {
-                    let _ = a.emit(
-                        "ai-pull-progress",
-                        AiPullProgressPayload {
-                            status: if done {
-                                "Model downloaded and verified successfully!".into()
-                            } else {
-                                status_str
-                            },
-                            completed,
-                            total,
-                            percent,
-                            done,
-                            error: None,
-                        },
-                    );
-                }
-
-                if done {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    Err(
-        "Prime model download stream ended before verification completed — halting generation."
-            .into(),
-    )
-}
-
-#[tauri::command]
-async fn foundry_ai_pull_model(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    endpoint: String,
-    model: String,
-    provider: Option<String>,
-) -> Result<(), String> {
-    if provider
-        .as_deref()
-        .unwrap_or("ollama")
-        .eq_ignore_ascii_case("builtin")
-    {
-        return ai_runtime::provision_and_start_builtin(
-            &state.env.data_dir,
-            &state.llama_child,
-            Some(&app),
-            Some(&state.ai_pull_cancel),
-        )
-        .await;
-    }
-    pull_ollama_model_internal(Some(&app), Some(&state.ai_pull_cancel), &endpoint, &model).await
-}
-
-#[tauri::command]
-async fn foundry_ai_cancel_pull(state: State<'_, AppState>) -> Result<bool, String> {
-    use std::sync::atomic::Ordering;
-    state.ai_pull_cancel.store(true, Ordering::SeqCst);
-    Ok(true)
-}
-
-// ---- BYO-Sync, Portability, Collection ZIP & Migration ----
-
-fn device_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "Windows-PC".into())
-}
-
-#[tauri::command]
-async fn sync_choose_folder(app: AppHandle) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let Some(picked) = app.dialog().file().blocking_pick_folder() else {
-        return Ok(None);
-    };
-    let path = picked.into_path().map_err(err)?;
-    Ok(Some(path.to_string_lossy().into_owned()))
-}
-
-#[tauri::command]
-async fn sync_manifest_now(
-    app: AppHandle,
-    sync_dir: String,
-    library: sync::LibraryState,
-    push_local: bool,
-) -> Result<sync::SyncResult, String> {
-    bg(move || {
-        let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
-        sync::sync_manifest_folder(
-            Path::new(&sync_dir),
-            &library,
-            &families,
-            &device_name(),
-            push_local,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-async fn export_profile_bundle(
-    app: AppHandle,
-    library: sync::LibraryState,
-) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .set_file_name("cosmic-profile.json")
-        .add_filter("Cosmic Manifest", &["json"])
-        .blocking_save_file()
-    else {
-        return Ok(None);
-    };
-    let dest = picked.into_path().map_err(err)?;
-    bg(move || {
-        let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
-        sync::export_profile_json(&dest, &library, &families, &device_name())?;
-        Ok(Some(dest.to_string_lossy().into_owned()))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn import_profile_bundle(
-    app: AppHandle,
-    library: sync::LibraryState,
-) -> Result<Option<sync::SyncResult>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .add_filter("Cosmic Manifest", &["json"])
-        .blocking_pick_file()
-    else {
-        return Ok(None);
-    };
-    let src = picked.into_path().map_err(err)?;
-    bg(move || {
-        let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
-        let res = sync::import_profile_json(&src, &library, &families)?;
-        Ok(Some(res))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn export_collection_zip(
-    app: AppHandle,
-    collection_name: String,
-    fonts: Vec<String>,
-) -> Result<Option<sync::PackageResult>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let safe_name: String = collection_name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .set_file_name(format!("{safe_name}-fonts.zip"))
-        .add_filter("ZIP Archive", &["zip"])
-        .blocking_save_file()
-    else {
-        return Ok(None);
-    };
-    let dest = picked.into_path().map_err(err)?;
-    bg(move || {
-        let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
-        let res = sync::package_collection_zip(&dest, &collection_name, &fonts, &families)?;
-        Ok(Some(res))
-    })
-    .await
-}
-
-#[tauri::command]
-fn find_similar_fonts(
-    state: State<AppState>,
-    family: String,
-    limit: Option<usize>,
-) -> Vec<similarity::SimilarMatch> {
-    let families = state.cache.lock().unwrap().families.clone();
-    similarity::find_similar_families(&family, &families, limit.unwrap_or(8))
-}
-
-#[tauri::command]
-fn suggest_font_pairings(
-    state: State<AppState>,
-    family: String,
-    limit: Option<usize>,
-) -> Vec<similarity::SimilarMatch> {
-    let families = state.cache.lock().unwrap().families.clone();
-    similarity::suggest_pairings(&family, &families, limit.unwrap_or(6))
-}
-
-#[tauri::command]
-async fn export_design_kit_zip(
-    app: AppHandle,
-    heading_family: String,
-    body_family: String,
-    base_px: f32,
-    ratio: f32,
-) -> Result<Option<sync::PackageResult>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .set_file_name("cosmic-design-kit.zip")
-        .add_filter("ZIP Archive", &["zip"])
-        .blocking_save_file()
-    else {
-        return Ok(None);
-    };
-    let dest = picked.into_path().map_err(err)?;
-    bg(move || {
-        let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
-        let res = sync::export_design_kit_zip(
-            &dest,
-            &heading_family,
-            &body_family,
-            base_px,
-            ratio,
-            &families,
-        )?;
-        Ok(Some(res))
-    })
-    .await
-}
-
-#[tauri::command]
-fn detect_tuna_migration(state: State<AppState>) -> migrate::TunaMigrationStatus {
-    let Some(tuna_dir) = migrate::default_tuna_dir(&state.env.data_dir) else {
-        return migrate::TunaMigrationStatus::default();
-    };
-    migrate::detect_tuna_fonts(&tuna_dir)
-}
-
-#[tauri::command]
-async fn run_tuna_migration(app: AppHandle) -> Result<Value, String> {
-    bg(move || {
-        let state = app.state::<AppState>();
-        let tuna_dir = migrate::default_tuna_dir(&state.env.data_dir)
-            .ok_or_else(|| "tuna-fonts data folder not found".to_string())?;
-        let (report, library, folders) =
-            migrate::import_from_tuna_fonts(&tuna_dir, &state.env.data_dir)?;
-        {
-            let mut lock = state.folders.lock().unwrap();
-            for f in &folders {
-                if !lock
-                    .iter()
-                    .any(|x| fonts::path_key(x) == fonts::path_key(f))
-                {
-                    lock.push(f.clone());
-                    let _ = app.asset_protocol_scope().allow_directory(f, true);
-                }
-            }
-        }
-        save_folders(&state);
-        watch_folders(&app);
-        let (families, _, diagnostics, projects) = state.refresh();
-        Ok(json!({
-            "report": report,
-            "library": library,
-            "families": families,
-            "diagnostics": diagnostics,
-            "projects": projects
-        }))
-    })
-    .await
 }
 
 // ---- Global Shortcut, System Links & Explorer ----
@@ -2858,7 +1391,6 @@ pub fn run() {
             refresh_fonts,
             toggle_fonts,
             install_fonts,
-            install_family_to_windows,
             install_families_to_windows,
             copy_families_to_vault,
             vault_stats,
@@ -2876,7 +1408,6 @@ pub fn run() {
             watch_folder_path,
             scan_computer_fonts,
             cancel_computer_scan,
-            project_manifests,
             google_catalog,
             google_install,
             custom_sources_list,
@@ -2885,54 +1416,53 @@ pub fn run() {
             custom_source_toggle,
             custom_source_sync,
             install_forged_font,
-            foundry_compile_modular,
-            foundry_modular_to_project,
-            foundry_compile_project,
-            foundry_compile_woff,
-            foundry_fork_font,
-            foundry_inspect_glyph,
-            foundry_import_svg_glyph,
-            foundry_transform_glyph,
-            foundry_trace_image,
-            foundry_trace_sheet,
-            foundry_measure_stems,
-            foundry_slice_contours,
-            foundry_boolean_op,
-            foundry_outline_stroke,
-            foundry_auto_space,
-            foundry_auto_kern,
-            foundry_generate_composites,
-            foundry_apply_linked_metrics,
-            foundry_generate_style,
-            foundry_compile_variable_ttf,
-            foundry_audit_project,
-            foundry_autofix_project,
-            library_visual_match_image,
-            library_visual_match_svg,
-            foundry_vibe_search,
-            foundry_find_outline_duplicates,
-            foundry_triage_archive,
-            foundry_pick_triage_file,
-            foundry_ai_check_backend,
-            foundry_ai_generate_glyph,
-            foundry_ai_generate_font_batch,
-            foundry_ai_cancel_batch,
-            foundry_ai_pull_model,
-            foundry_ai_cancel_pull,
-            foundry_export_ufo,
-            foundry_import_ufo,
-            foundry_subset_font,
-            discover_search_github_fonts,
-            sync_choose_folder,
-            sync_manifest_now,
-            export_profile_bundle,
-            import_profile_bundle,
-            export_collection_zip,
-            find_similar_fonts,
-            suggest_font_pairings,
-            export_design_kit_zip,
-            detect_tuna_migration,
-            run_tuna_migration,
+            commands::foundry::foundry_compile_modular,
+            commands::foundry::foundry_modular_to_project,
+            commands::foundry::foundry_compile_project,
+            commands::foundry::foundry_compile_woff,
+            commands::foundry::foundry_fork_font,
+            commands::foundry::foundry_inspect_glyph,
+            commands::foundry::foundry_import_svg_glyph,
+            commands::foundry::foundry_transform_glyph,
+            commands::foundry::foundry_trace_image,
+            commands::foundry::foundry_trace_sheet,
+            commands::foundry::foundry_measure_stems,
+            commands::foundry::foundry_slice_contours,
+            commands::foundry::foundry_outline_stroke,
+            commands::foundry::foundry_auto_space,
+            commands::foundry::foundry_auto_kern,
+            commands::foundry::foundry_generate_composites,
+            commands::foundry::foundry_apply_linked_metrics,
+            commands::foundry::foundry_generate_style,
+            commands::foundry::foundry_compile_variable_ttf,
+            commands::foundry::foundry_audit_project,
+            commands::foundry::foundry_autofix_project,
+            commands::foundry::library_visual_match_image,
+            commands::foundry::library_visual_match_svg,
+            commands::foundry::foundry_vibe_search,
+            commands::foundry::foundry_find_outline_duplicates,
+            commands::foundry::foundry_triage_archive,
+            commands::foundry::foundry_pick_triage_file,
+            commands::ai::foundry_ai_check_backend,
+            commands::ai::foundry_ai_generate_glyph,
+            commands::ai::foundry_ai_generate_font_batch,
+            commands::ai::foundry_ai_cancel_batch,
+            commands::ai::foundry_ai_pull_model,
+            commands::ai::foundry_ai_cancel_pull,
+            commands::foundry::foundry_export_ufo,
+            commands::foundry::foundry_import_ufo,
+            commands::foundry::foundry_subset_font,
+            commands::foundry::discover_search_github_fonts,
+            commands::sync_cmds::sync_choose_folder,
+            commands::sync_cmds::sync_manifest_now,
+            commands::sync_cmds::export_profile_bundle,
+            commands::sync_cmds::import_profile_bundle,
+            commands::sync_cmds::export_collection_zip,
+            commands::sync_cmds::find_similar_fonts,
+            commands::sync_cmds::suggest_font_pairings,
+            commands::sync_cmds::export_design_kit_zip,
+            commands::sync_cmds::detect_tuna_migration,
+            commands::sync_cmds::run_tuna_migration,
             set_global_shortcut,
             is_portable,
             open_web,

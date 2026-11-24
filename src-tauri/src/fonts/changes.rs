@@ -31,25 +31,7 @@ fn filename(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
-    let p = dir.join(name);
-    if !p.exists() {
-        return p;
-    }
-    let base = Path::new(name);
-    let stem = base
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let ext = base
-        .extension()
-        .map(|s| format!(".{}", s.to_string_lossy()))
-        .unwrap_or_default();
-    (2..)
-        .map(|i| dir.join(format!("{stem} ({i}){ext}")))
-        .find(|p| !p.exists())
-        .unwrap()
-}
+pub use cosmic_core::inventory::unique_path;
 
 pub fn move_file(from: &Path, to: &Path) -> Result<(), String> {
     if let Some(parent) = to.parent() {

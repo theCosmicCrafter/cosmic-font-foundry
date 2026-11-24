@@ -39,6 +39,38 @@ pub fn path_key(path: &Path) -> String {
     path.to_string_lossy().to_lowercase()
 }
 
+/// Atomically writes JSON to `path` via a `.tmp` sibling and rename.
+pub fn write_json_atomic<T: Serialize>(path: &Path, val: &T) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("tmp");
+    let data = serde_json::to_vec_pretty(val).map_err(|e| e.to_string())?;
+    fs::write(&tmp, data).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// Returns `dir.join(name)` if unused, otherwise appends ` (2)`, ` (3)`, … before the extension.
+pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let p = dir.join(name);
+    if !p.exists() {
+        return p;
+    }
+    let base = Path::new(name);
+    let stem = base
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = base
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
+    (2..)
+        .map(|i| dir.join(format!("{stem} ({i}){ext}")))
+        .find(|cand| !cand.exists())
+        .unwrap()
+}
+
 pub fn list_fonts(dir: &Path, recursive: bool) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];

@@ -42,12 +42,9 @@ jobs:
           components: rustfmt, clippy
       - run: npm ci
       - run: npm run vite:build
-      - run: cargo fmt --manifest-path src-tauri/core/Cargo.toml -- --check
-      - run: cargo fmt --manifest-path src-tauri/foundry/Cargo.toml -- --check
-      - run: cargo clippy --manifest-path src-tauri/core/Cargo.toml --all-targets -- -D warnings
-      - run: cargo clippy --manifest-path src-tauri/foundry/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/core/Cargo.toml
-      - run: cargo test --manifest-path src-tauri/foundry/Cargo.toml
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml -p cosmic-core -p cosmic-foundry --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml -p cosmic-core -p cosmic-foundry --locked
 
   windows:
     runs-on: windows-latest
@@ -62,11 +59,6 @@ jobs:
           components: rustfmt, clippy
       - run: npm ci
       - run: npm run vite:build
-      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - run: cargo fmt --manifest-path src-tauri/foundry/Cargo.toml -- --check
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo clippy --manifest-path src-tauri/foundry/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/core/Cargo.toml
-      - run: cargo test --manifest-path src-tauri/foundry/Cargo.toml
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --locked

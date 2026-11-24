@@ -634,6 +634,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "ttf-parser",
 ]
 
@@ -675,6 +676,7 @@ dependencies = [
  "skrifa 0.50.0",
  "subsetter",
  "svgtypes",
+ "tempfile",
  "thiserror 2.0.21",
  "write-fonts 0.56.0",
 ]

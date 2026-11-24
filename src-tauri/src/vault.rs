@@ -81,18 +81,10 @@ pub fn load_vault_path(data_dir: &Path) -> PathBuf {
 }
 
 pub fn save_vault_path(data_dir: &Path, path: &Path) -> Result<(), String> {
-    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let cfg = VaultConfig {
         path: path.to_path_buf(),
     };
-    let tmp = data_dir.join("vault-config.tmp");
-    let target = data_dir.join("vault-config.json");
-    fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(&cfg).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &target).map_err(|e| e.to_string())
+    cosmic_core::inventory::write_json_atomic(&data_dir.join("vault-config.json"), &cfg)
 }
 
 fn sanitize_folder_name(name: &str) -> String {
@@ -114,25 +106,7 @@ fn sanitize_folder_name(name: &str) -> String {
 }
 
 fn unique_dest(dir: &Path, filename: &str) -> PathBuf {
-    let candidate = dir.join(filename);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let p = Path::new(filename);
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("font");
-    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
-    for i in 1..10_000 {
-        let name = if ext.is_empty() {
-            format!("{stem}-{i}")
-        } else {
-            format!("{stem}-{i}.{ext}")
-        };
-        let next = dir.join(name);
-        if !next.exists() {
-            return next;
-        }
-    }
-    dir.join(filename)
+    cosmic_core::inventory::unique_path(dir, filename)
 }
 
 #[cfg(windows)]
@@ -173,6 +147,13 @@ fn disk_free_bytes(_path: &Path) -> Option<u64> {
 }
 
 pub fn compute_vault_stats(vault_dir: &Path) -> VaultStats {
+    compute_vault_stats_cached(vault_dir, None)
+}
+
+pub fn compute_vault_stats_cached(
+    vault_dir: &Path,
+    cache: Option<&crate::fonts::cache::Cache>,
+) -> VaultStats {
     let exists = vault_dir.is_dir();
     let mut total_files = 0usize;
     let mut total_bytes = 0u64;
@@ -184,7 +165,13 @@ pub fn compute_vault_stats(vault_dir: &Path) -> VaultStats {
             if let Ok(meta) = fs::metadata(&file) {
                 total_bytes = total_bytes.saturating_add(meta.len());
             }
-            if let Ok(faces) = reader::read_faces(&file) {
+            let cached_family = cache
+                .and_then(|c| c.faces(&file))
+                .and_then(|faces| faces.into_iter().next())
+                .map(|f| f.family);
+            if let Some(fam) = cached_family {
+                families.insert(fam.to_lowercase());
+            } else if let Ok(faces) = reader::read_faces(&file) {
                 if let Some(first) = faces.first() {
                     families.insert(first.family.to_lowercase());
                 }

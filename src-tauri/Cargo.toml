@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "core", "foundry"]
+resolver = "2"
+
 [package]
 name = "cosmic-font-foundry"
 version = "0.3.0"

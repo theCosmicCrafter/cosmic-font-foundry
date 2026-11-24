@@ -1,5 +1,4 @@
 export default {
-  brandName: "Cosmic Font Foundry",
   settings: "Ajustes",
   syncAndExport: "Sincronizar",
   shortcuts: "Atajos",
@@ -143,7 +142,6 @@ export default {
   "g.notInstalled": "No instalada",
   "g.previewNote": "Vista previa web de fundiciones abiertas. Instálala para usarla en tus aplicaciones.",
   "fav.wishlist": "Añadir a favoritas (sin instalar)",
-  "g.loading": "Cargando catálogos de fuentes…",
   "g.offline": "No se pudo descargar el catálogo.",
   "g.retry": "Reintentar",
 
@@ -410,8 +408,6 @@ export default {
   "quick.placeholder": "Buscar familias o colecciones… (Enter alterna, Esc cierra)",
   "quick.empty": "Sin fuentes ni colecciones coincidentes",
   "quick.collections": "Colecciones",
-  "quick.fonts": "Familias",
-  "quick.toggle": "Alternar",
 
   "forge.family": "Familia",
   "forge.export": "Exportar .ttf",
@@ -469,7 +465,6 @@ export default {
   "forge.opFixWinding": "Corregir dirección",
   "forge.forking": "Bifurcando en estudio vectorial…",
   "forge.forkedOk": "“{n}” bifurcada en estudio vectorial.",
-  "forge.vectorStats": "{glyphs} glifos · {contours} contornos · {points} pts",
   "forge.traceImage": "Trazar imagen",
   "forge.traceTraced": "Imagen trazada al glifo.",
   "forge.traceEmpty": "No se detectaron formas trazables en la imagen.",
