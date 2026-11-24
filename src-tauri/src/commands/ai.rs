@@ -139,6 +139,20 @@ pub(crate) async fn ensure_prime_model_downloaded(
     Ok((endpoint.to_string(), prime_model))
 }
 
+fn format_inference_transport_error(label: &str, url: &str, e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        format!(
+            "{label} request timed out after 300s ({url}). If running on CPU/shared RAM, try a simpler prompt or check GPU VRAM availability."
+        )
+    } else if e.is_connect() {
+        format!(
+            "{label} backend refused or dropped connection ({url}): {e}. Check that the inference server is running."
+        )
+    } else {
+        format!("{label} request failed ({url}): {e}")
+    }
+}
+
 pub(crate) async fn run_vecglypher_inference(
     client: &reqwest::Client,
     endpoint: &str,
@@ -163,7 +177,7 @@ pub(crate) async fn run_vecglypher_inference(
             .json(&payload)
             .send()
             .await
-            .map_err(|e| format!("Ollama request failed ({url}): {e}"))?;
+            .map_err(|e| format_inference_transport_error("Ollama", &url, &e))?;
         let status = resp.status();
         let val: Value = resp
             .json()
@@ -182,6 +196,11 @@ pub(crate) async fn run_vecglypher_inference(
         } else {
             format!("{base}/v1/chat/completions")
         };
+        let label = if provider.eq_ignore_ascii_case("builtin") {
+            "Built-in llama.cpp"
+        } else {
+            "OpenAI/vLLM"
+        };
         let payload =
             cosmic_foundry::vecglypher::build_openai_chat_payload(model_name, cfg, images_b64);
         let resp = client
@@ -189,23 +208,23 @@ pub(crate) async fn run_vecglypher_inference(
             .json(&payload)
             .send()
             .await
-            .map_err(|e| format!("OpenAI/vLLM request failed ({url}): {e}"))?;
+            .map_err(|e| format_inference_transport_error(label, &url, &e))?;
         let status = resp.status();
         let val: Value = resp
             .json()
             .await
-            .map_err(|e| format!("Invalid OpenAI/vLLM JSON response ({status}): {e}"))?;
+            .map_err(|e| format!("Invalid {label} JSON response ({status}): {e}"))?;
         if let Some(err_msg) = val["error"]["message"]
             .as_str()
             .or_else(|| val["error"].as_str())
         {
-            return Err(format!("OpenAI/vLLM error: {err_msg}"));
+            return Err(format!("{label} error: {err_msg}"));
         }
         val["choices"][0]["message"]["content"]
             .as_str()
             .map(ToOwned::to_owned)
             .ok_or_else(|| {
-                format!("OpenAI/vLLM response missing choices[0].message.content ({status})")
+                format!("{label} response missing choices[0].message.content ({status})")
             })
     }
 }
@@ -569,6 +588,14 @@ async fn infer_glyph_resilient(
     match first {
         Ok(contours) => Ok(contours),
         Err(first_err) => {
+            // Only retry at higher temperature if the model returned output that failed SVG
+            // decoding; do not burn another full request timeout on transport/connection errors.
+            if first_err.contains("timed out")
+                || first_err.contains("refused or dropped connection")
+                || first_err.contains("request failed")
+            {
+                return Err(first_err);
+            }
             let retry_temp = (temp + 0.35).clamp(0.2, 0.85);
             attempt(retry_temp, false).await.map_err(|_| first_err)
         }
@@ -607,7 +634,7 @@ pub(crate) async fn foundry_ai_generate_glyph(
     );
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(err)?;
 
@@ -688,7 +715,7 @@ pub(crate) async fn foundry_ai_generate_font_batch(
     }
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(err)?;
 

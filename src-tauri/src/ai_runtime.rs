@@ -31,7 +31,7 @@ const MIN_CUSTOM_GGUF_BYTES: u64 = 100_000_000; // >100 MB sanity floor for user
 const APPROX_GGUF_DOWNLOAD_BYTES: u64 = 17_800_000_000; // ~16.58 GiB
 const DISK_HEADROOM_BYTES: u64 = 512 * 1024 * 1024;
 const AI_CONFIG_FILE: &str = "ai-config.json";
-const DEFAULT_IDLE_SLEEP_SECS: u32 = 300;
+const DEFAULT_IDLE_SLEEP_SECS: u32 = 900;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -746,6 +746,8 @@ fn spawn_llama_server(
         .arg(BUILTIN_PORT.to_string())
         .arg("--alias")
         .arg(cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF)
+        .arg("--ctx-size")
+        .arg("2048")
         .arg("--parallel")
         .arg("1")
         .arg("--flash-attn")
@@ -763,19 +765,14 @@ fn spawn_llama_server(
 
     match mode {
         "gpu" => {
-            cmd.arg("--ngl").arg("99").arg("--ctx-size").arg("2048");
+            cmd.arg("--ngl").arg("99");
         }
         "cpu" => {
-            cmd.arg("--device")
-                .arg("none")
-                .arg("--ngl")
-                .arg("0")
-                .arg("--ctx-size")
-                .arg("2048");
+            cmd.arg("--device").arg("none").arg("--ngl").arg("0");
         }
         _ => {
-            // Auto-fit leaves --ngl and --ctx-size unset so llama-server dynamically fits layers
-            // into currently free VRAM + system RAM without crashing lower-VRAM GPUs.
+            // Auto-fit leaves --ngl unset while capping --ctx-size at 2048 (instead of the
+            // model's 131K training context) so KV cache stays ~120 MB and layers fit in VRAM.
             cmd.arg("--fit")
                 .arg("on")
                 .arg("--fit-ctx")

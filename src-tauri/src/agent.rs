@@ -1360,7 +1360,7 @@ fn execute_tool(
                 )
                 .await?;
                 let client = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(120))
+                    .timeout(Duration::from_secs(300))
                     .build()
                     .map_err(|e| e.to_string())?;
                 crate::run_vecglypher_inference(
