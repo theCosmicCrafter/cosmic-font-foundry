@@ -1,8 +1,9 @@
 use cosmic_foundry::model::{compute_bbox, Anchor, Contour, GlyphOutline};
 use cosmic_foundry::vecglypher::{
     build_ollama_chat_payload, build_openai_chat_payload, decode_vecglypher_svg,
-    format_user_prompt, render_glyph_exemplar_base64, render_glyph_exemplar_png,
-    VecGlypherPromptConfig, VECGLYPHER_RECOMMENDED_GGUF, VECGLYPHER_SYSTEM_PROMPT,
+    format_user_prompt, format_user_prompt_with_svg_exemplars, glyph_to_compact_svg_path,
+    render_glyph_exemplar_base64, render_glyph_exemplar_png, VecGlypherPromptConfig,
+    VECGLYPHER_RECOMMENDED_GGUF, VECGLYPHER_SYSTEM_PROMPT,
 };
 use image::GenericImageView;
 
@@ -212,4 +213,50 @@ fn test_render_glyph_exemplar_png_and_base64() {
     let decoded_small = image::load_from_memory(&clamped_small).expect("decode 32x32");
     assert_eq!(decoded_small.dimensions(), (32, 32));
     assert!(decoded_small.to_luma8().pixels().all(|p| p.0[0] == 255));
+}
+
+#[test]
+fn test_compact_svg_exemplars_fallback_prompt_and_payload() {
+    let square = Contour {
+        anchors: vec![
+            Anchor::on_curve(100.0, 0.0),
+            Anchor::on_curve(100.0, 700.0),
+            Anchor::on_curve(600.0, 700.0),
+            Anchor::on_curve(600.0, 0.0),
+        ],
+        closed: true,
+    };
+    let glyph = GlyphOutline {
+        codepoint: 'H' as u32,
+        name: "H".to_string(),
+        advance_width: 700,
+        lsb: 100,
+        contours: vec![square],
+    };
+    let svg_path = glyph_to_compact_svg_path(&glyph, 1000).expect("svg path generated");
+    assert!(svg_path.starts_with(r#"<path d="M100 800"#));
+    assert!(svg_path.contains("L100 100"));
+    assert!(svg_path.ends_with(r#"Z"/>"#));
+
+    let prompt = format_user_prompt_with_svg_exemplars(
+        "geometric bold sans",
+        "A",
+        &[('H', svg_path.clone())],
+    );
+    assert!(prompt.contains("Reference SVG glyph exemplars"));
+    assert!(prompt.contains(&format!("H: {svg_path}")));
+
+    let cfg = VecGlypherPromptConfig {
+        style_prompt: "geometric bold sans".into(),
+        target_text: "A".into(),
+        svg_exemplars: vec![('H', svg_path.clone())],
+        ..Default::default()
+    };
+    let payload = build_openai_chat_payload("vecglypher", &cfg, &[]);
+    assert_eq!(payload["top_k"], 20);
+    assert_eq!(payload["min_p"], 0.0);
+    let user_msg = payload["messages"][1]["content"]
+        .as_str()
+        .expect("text prompt string");
+    assert!(user_msg.contains(&svg_path));
 }

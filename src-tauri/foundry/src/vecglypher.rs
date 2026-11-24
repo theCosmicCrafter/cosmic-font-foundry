@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::Cursor;
 
 use image::{DynamicImage, GrayImage, ImageFormat};
@@ -25,6 +26,8 @@ pub struct VecGlypherPromptConfig {
     pub top_k: u32,
     pub repetition_penalty: f32,
     pub max_tokens: u32,
+    #[serde(default)]
+    pub svg_exemplars: Vec<(char, String)>,
 }
 
 impl Default for VecGlypherPromptConfig {
@@ -37,6 +40,7 @@ impl Default for VecGlypherPromptConfig {
             top_k: 20,
             repetition_penalty: 1.05,
             max_tokens: 1024,
+            svg_exemplars: Vec::new(),
         }
     }
 }
@@ -52,13 +56,88 @@ pub fn format_user_prompt(style_prompt: &str, target_text: &str) -> String {
     format!("Font design requirements: {style}\nText content: {target_text}")
 }
 
+/// Serializes a non-empty `GlyphOutline` into a compact `<path d="..."/>` string in VecGlypher's
+/// 1000-unit Y-down SVG coordinate space (baseline at `y = 800`), for text-only GGUF exemplars.
+pub fn glyph_to_compact_svg_path(glyph: &GlyphOutline, upm: u16) -> Option<String> {
+    if glyph.contours.is_empty() {
+        return None;
+    }
+    let scale = 1000.0 / f64::from(upm.max(100));
+    let map_pt = |p: Point| -> (i64, i64) {
+        (
+            (p.x * scale).round() as i64,
+            (800.0 - p.y * scale).round() as i64,
+        )
+    };
+    let mut d = String::new();
+    for contour in &glyph.contours {
+        let bp = contour.to_bezpath();
+        for el in bp.elements() {
+            match *el {
+                PathEl::MoveTo(p) => {
+                    let (x, y) = map_pt(p);
+                    let _ = write!(&mut d, "M{x} {y}");
+                }
+                PathEl::LineTo(p) => {
+                    let (x, y) = map_pt(p);
+                    let _ = write!(&mut d, "L{x} {y}");
+                }
+                PathEl::QuadTo(c1, p) => {
+                    let (cx, cy) = map_pt(c1);
+                    let (x, y) = map_pt(p);
+                    let _ = write!(&mut d, "Q{cx} {cy} {x} {y}");
+                }
+                PathEl::CurveTo(c1, c2, p) => {
+                    let (x1, y1) = map_pt(c1);
+                    let (x2, y2) = map_pt(c2);
+                    let (x, y) = map_pt(p);
+                    let _ = write!(&mut d, "C{x1} {y1} {x2} {y2} {x} {y}");
+                }
+                PathEl::ClosePath => d.push('Z'),
+            }
+        }
+    }
+    if d.is_empty() {
+        None
+    } else {
+        Some(format!(r#"<path d="{d}"/>"#))
+    }
+}
+
+/// Formats the VecGlypher prompt with compact inline SVG path exemplars for text-only endpoints.
+pub fn format_user_prompt_with_svg_exemplars(
+    style_prompt: &str,
+    target_text: &str,
+    exemplars: &[(char, String)],
+) -> String {
+    let mut prompt = format_user_prompt(style_prompt, target_text);
+    if exemplars.is_empty() {
+        return prompt;
+    }
+    prompt.push_str(
+        "\nReference SVG glyph exemplars (match stroke weight, proportions, and terminals):",
+    );
+    for (ch, svg_path) in exemplars.iter().take(4) {
+        let _ = write!(&mut prompt, "\n{ch}: {svg_path}");
+    }
+    prompt
+}
+
 /// Builds an Ollama `/api/chat` request payload with optional base64 PNG exemplar images.
 pub fn build_ollama_chat_payload(
     model: &str,
     cfg: &VecGlypherPromptConfig,
     images_b64: &[String],
 ) -> serde_json::Value {
-    let prompt_text = format_user_prompt(&cfg.style_prompt, &cfg.target_text);
+    let prompt_text = if images_b64.is_empty() && !cfg.svg_exemplars.is_empty() {
+        format_user_prompt_with_svg_exemplars(
+            &cfg.style_prompt,
+            &cfg.target_text,
+            &cfg.svg_exemplars,
+        )
+    } else {
+        format_user_prompt(&cfg.style_prompt, &cfg.target_text)
+    };
     let user_msg = if images_b64.is_empty() {
         json!({
             "role": "user",
@@ -98,7 +177,15 @@ pub fn build_openai_chat_payload(
     cfg: &VecGlypherPromptConfig,
     images_b64: &[String],
 ) -> serde_json::Value {
-    let prompt_text = format_user_prompt(&cfg.style_prompt, &cfg.target_text);
+    let prompt_text = if images_b64.is_empty() && !cfg.svg_exemplars.is_empty() {
+        format_user_prompt_with_svg_exemplars(
+            &cfg.style_prompt,
+            &cfg.target_text,
+            &cfg.svg_exemplars,
+        )
+    } else {
+        format_user_prompt(&cfg.style_prompt, &cfg.target_text)
+    };
     let user_content = if images_b64.is_empty() {
         serde_json::Value::String(prompt_text)
     } else {
@@ -123,6 +210,8 @@ pub fn build_openai_chat_payload(
         "stream": false,
         "temperature": cfg.temperature,
         "top_p": cfg.top_p,
+        "top_k": cfg.top_k,
+        "min_p": 0.0,
         "max_tokens": cfg.max_tokens,
         "repetition_penalty": cfg.repetition_penalty,
         "chat_template_kwargs": {

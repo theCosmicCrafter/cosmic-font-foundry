@@ -183,6 +183,7 @@
   let model = $state(DEFAULT_MODEL);
   let backendStatus = $state(null);
   let checkingBackend = $state(false);
+  let updatingRuntime = $state(false);
   let copiedPull = $state(false);
   let copyTimer = null;
 
@@ -558,6 +559,61 @@
     }
   }
 
+  async function applyRuntimeConfig(patch) {
+    if (!inTauri || updatingRuntime) return;
+    updatingRuntime = true;
+    errorMsg = "";
+    try {
+      backendStatus = await invokeCmd("foundry_ai_set_runtime_config", patch);
+    } catch (e) {
+      errorMsg = String(e);
+    } finally {
+      updatingRuntime = false;
+    }
+  }
+
+  async function stopBuiltinEngine() {
+    if (!inTauri || updatingRuntime) return;
+    updatingRuntime = true;
+    errorMsg = "";
+    try {
+      backendStatus = await invokeCmd("foundry_ai_stop_builtin");
+      statusMsg = "Stopped built-in engine and released GPU/RAM memory.";
+    } catch (e) {
+      errorMsg = String(e);
+    } finally {
+      updatingRuntime = false;
+    }
+  }
+
+  async function pickModelsDir() {
+    if (!inTauri || isDisabled || updatingRuntime) return;
+    try {
+      const picked = await invokeCmd("foundry_ai_choose_models_dir");
+      if (picked) {
+        await applyRuntimeConfig({ storageDir: picked });
+      }
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function pickCustomGguf() {
+    if (!inTauri || isDisabled || updatingRuntime) return;
+    try {
+      const picked = await invokeCmd("foundry_ai_choose_gguf_file");
+      if (picked) {
+        await applyRuntimeConfig({ customGgufPath: picked });
+      }
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function clearCustomGguf() {
+    await applyRuntimeConfig({ customGgufPath: "" });
+  }
+
   async function copyPullCommand() {
     try {
       await navigator.clipboard.writeText(PULL_COMMAND);
@@ -679,6 +735,7 @@
           statusMsg = `Generated “${activeChar}” (${glyph.contours?.length ?? 0} contours).`;
         }
       } else {
+        const beforeCount = nonEmptyGlyphEntries.length;
         const nextProj = await invokeCmd("foundry_ai_generate_font_batch", {
           req: {
             project,
@@ -696,9 +753,13 @@
         });
         if (nextProj) {
           await onApplyProject?.(nextProj);
+          const afterCount = Object.values(nextProj.glyphs ?? {}).filter((g) => isNonEmptyGlyph(g)).length;
+          const added = Math.max(0, afterCount - beforeCount);
           statusMsg = cancelling
-            ? "Batch stopped — completed glyphs applied to project."
-            : `Batch complete — generated ${targetChars.length} glyph(s).`;
+            ? `Batch stopped — ${afterCount} non-empty glyph(s) in project.`
+            : added > 0
+              ? `Batch complete — added ${added} glyph(s) (${afterCount} non-empty in project).`
+              : `Batch complete — updated target glyph(s) (${afterCount} non-empty in project).`;
         }
       }
     } catch (e) {
@@ -761,7 +822,7 @@
       <span class="label">VecGlypher AI Glyph Forge</span>
       <span class="badge-chip">
         <Cpu size={10} />
-        <span>C++ / CUDA</span>
+        <span>Auto GPU / CPU</span>
       </span>
     </div>
     {#if onclose}
@@ -848,7 +909,7 @@
             {#if (pullProgress?.total || 0) > 0}
               <strong>{formatBytes(pullProgress.completed)}</strong> of {formatBytes(pullProgress.total)} ({pullProgress.percent.toFixed(1)}%)
             {:else}
-              Connecting to Ollama…
+              {provider === "builtin" ? "Preparing built-in engine…" : "Connecting to Ollama…"}
             {/if}
           </span>
           <span class="download-phase">{pullProgress?.status || "downloading…"}</span>
@@ -1008,6 +1069,114 @@
         {:else if backendStatus.ok && backendStatus.recommended_pull}
           <span class="status-tag warn" title={backendStatus.recommended_pull}>Pull Recommended</span>
         {/if}
+      </div>
+    {/if}
+
+    {#if provider === "builtin" && backendStatus}
+      {@const activeMode = backendStatus.compute_mode || "auto"}
+      <div class="hw-bar">
+        <div class="hw-summary-row">
+          <span class="hw-pill">
+            {backendStatus.gpu_summary || "Vulkan GPU / CPU Auto-Fit"}
+          </span>
+          {#if backendStatus.ram_total_bytes > 0}
+            <span class="hw-pill num">
+              RAM {formatBytes(backendStatus.ram_avail_bytes)} / {formatBytes(backendStatus.ram_total_bytes)} free
+            </span>
+          {/if}
+          {#if backendStatus.disk_free_bytes > 0}
+            <span class="hw-pill num">
+              Disk {formatBytes(backendStatus.disk_free_bytes)} free
+            </span>
+          {/if}
+          {#if backendStatus.server_running}
+            <span class="hw-pill active">Engine Active</span>
+            <button
+              type="button"
+              class="btn-inline compact danger"
+              disabled={isDisabled || updatingRuntime}
+              onclick={stopBuiltinEngine}
+            >
+              Stop / Free VRAM
+            </button>
+          {/if}
+        </div>
+
+        <div class="hw-controls-row">
+          <div class="provider-switch" role="radiogroup" aria-label="Acceleration mode">
+            <button
+              type="button"
+              class="mode-btn"
+              class:active={activeMode === "auto"}
+              role="radio"
+              aria-checked={activeMode === "auto"}
+              disabled={isDisabled || updatingRuntime}
+              onclick={() => applyRuntimeConfig({ computeMode: "auto" })}
+            >
+              Auto-Fit (GPU + RAM)
+            </button>
+            <button
+              type="button"
+              class="mode-btn"
+              class:active={activeMode === "gpu"}
+              role="radio"
+              aria-checked={activeMode === "gpu"}
+              disabled={isDisabled || updatingRuntime}
+              onclick={() => applyRuntimeConfig({ computeMode: "gpu" })}
+            >
+              GPU Only
+            </button>
+            <button
+              type="button"
+              class="mode-btn"
+              class:active={activeMode === "cpu"}
+              role="radio"
+              aria-checked={activeMode === "cpu"}
+              disabled={isDisabled || updatingRuntime}
+              onclick={() => applyRuntimeConfig({ computeMode: "cpu" })}
+            >
+              CPU Only
+            </button>
+          </div>
+
+          <div class="hw-storage-actions">
+            <button
+              type="button"
+              class="btn-inline compact"
+              disabled={isDisabled || updatingRuntime}
+              onclick={pickModelsDir}
+            >
+              Choose Storage Folder…
+            </button>
+            <button
+              type="button"
+              class="btn-inline compact"
+              disabled={isDisabled || updatingRuntime}
+              onclick={pickCustomGguf}
+            >
+              Use Existing .gguf…
+            </button>
+            {#if backendStatus.custom_gguf_path}
+              <button
+                type="button"
+                class="btn-inline compact"
+                disabled={isDisabled || updatingRuntime}
+                onclick={clearCustomGguf}
+              >
+                Clear Custom .gguf
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <div
+          class="hw-path num"
+          title={backendStatus.custom_gguf_path || backendStatus.models_dir}
+        >
+          {backendStatus.custom_gguf_path
+            ? `Custom GGUF: ${backendStatus.custom_gguf_path}`
+            : `Model Folder: ${backendStatus.models_dir}`}
+        </div>
       </div>
     {/if}
   </section>
@@ -1176,7 +1345,11 @@
           <span class="opt-lbl">Few-Shot Exemplars</span>
           <span class="count-pill num">{selectedExemplarKeys.length}/{MAX_EXEMPLARS}</span>
           <span class="cond-mode">
-            {selectedExemplarKeys.length > 0 ? "Image + Style Conditioning" : "Text-Only Conditioning"}
+            {selectedExemplarKeys.length > 0
+              ? provider === "builtin"
+                ? "Vector SVG + Style Conditioning"
+                : "Image / SVG + Style Conditioning"
+              : "Text-Only Conditioning"}
           </span>
         </div>
 
@@ -1624,6 +1797,55 @@
   .status-tag.warn {
     background: var(--chip);
     color: var(--ink2);
+  }
+
+  .hw-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--field);
+    border: 1px solid var(--line);
+  }
+  .hw-summary-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .hw-pill {
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: var(--win, var(--side));
+    border: 1px solid var(--line);
+    color: var(--ink2);
+    font: 500 10px var(--sans);
+  }
+  .hw-pill.active {
+    border-color: var(--ok);
+    color: var(--ok);
+    font-weight: 600;
+  }
+  .hw-controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .hw-storage-actions {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .hw-path {
+    font: 500 10px var(--mono);
+    color: var(--ink3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .head-actions {

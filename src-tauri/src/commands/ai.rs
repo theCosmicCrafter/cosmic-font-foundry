@@ -5,11 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
+    path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
-// ---- VecGlypher AI Font Generation (C++/CUDA Ollama & OpenAI/vLLM + Pure-Rust) ----
+// ---- VecGlypher AI Font Generation (Auto GPU / RAM / CPU + Ollama & OpenAI/vLLM) ----
 
 #[derive(Serialize)]
 pub(crate) struct AiBackendStatus {
@@ -18,6 +19,14 @@ pub(crate) struct AiBackendStatus {
     has_vecglypher: bool,
     recommended_pull: String,
     message: String,
+    server_running: bool,
+    compute_mode: String,
+    models_dir: String,
+    custom_gguf_path: Option<String>,
+    disk_free_bytes: u64,
+    ram_total_bytes: u64,
+    ram_avail_bytes: u64,
+    gpu_summary: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -201,6 +210,33 @@ pub(crate) async fn run_vecglypher_inference(
     }
 }
 
+fn builtin_status_fields(
+    data_dir: &Path,
+) -> (String, String, Option<String>, ai_runtime::HardwareProbe) {
+    let cfg = ai_runtime::load_config(data_dir);
+    let models_dir = ai_runtime::effective_models_dir(data_dir, &cfg);
+    let hw = ai_runtime::inspect_hardware(&models_dir);
+    (
+        cfg.compute_mode,
+        models_dir.to_string_lossy().into_owned(),
+        cfg.custom_gguf_path,
+        hw,
+    )
+}
+
+fn enrich_remote_status(data_dir: &Path, mut status: AiBackendStatus) -> AiBackendStatus {
+    let (compute_mode, models_dir, custom_gguf_path, hw) = builtin_status_fields(data_dir);
+    status.server_running = false;
+    status.compute_mode = compute_mode;
+    status.models_dir = models_dir;
+    status.custom_gguf_path = custom_gguf_path;
+    status.disk_free_bytes = hw.disk_free_bytes;
+    status.ram_total_bytes = hw.ram_total_bytes;
+    status.ram_avail_bytes = hw.ram_avail_bytes;
+    status.gpu_summary = hw.gpu_summary;
+    status
+}
+
 #[tauri::command]
 pub(crate) async fn foundry_ai_check_backend(
     state: State<'_, AppState>,
@@ -211,22 +247,33 @@ pub(crate) async fn foundry_ai_check_backend(
         let has_engine = ai_runtime::has_builtin_engine(&state.env.data_dir);
         let has_model = ai_runtime::has_builtin_model(&state.env.data_dir);
         let healthy = ai_runtime::builtin_server_healthy().await;
+        let (compute_mode, models_dir, custom_gguf_path, hw) =
+            builtin_status_fields(&state.env.data_dir);
         let ready = has_engine && has_model;
         let models = if ready {
             vec![cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF.to_string()]
         } else {
             Vec::new()
         };
+        let mode_label = match compute_mode.as_str() {
+            "cpu" => "CPU + System RAM",
+            "gpu" => "GPU Only",
+            _ => "Auto-Fit GPU + RAM",
+        };
         let message = if ready && healthy {
-            "Built-in llama.cpp GPU engine running on 127.0.0.1:17421 (VecGlypher ready).".into()
+            format!(
+                "Built-in llama.cpp running on 127.0.0.1:17421 ({mode_label} · VecGlypher ready)."
+            )
         } else if ready {
-            "Built-in llama.cpp GPU engine & VecGlypher-27b-it installed (auto-starts on Generate)."
+            format!("Built-in llama.cpp & VecGlypher-27b-it installed ({mode_label} · auto-starts on Generate).")
+        } else if has_engine && custom_gguf_path.is_some() {
+            "Built-in llama.cpp installed, but selected custom .gguf file is missing or invalid."
                 .into()
         } else if has_engine {
-            "Built-in llama.cpp GPU engine installed. Click Download to fetch VecGlypher-27b-it (~16.55 GB)."
+            "Built-in llama.cpp engine installed. Click Download to fetch VecGlypher-27b-it (~16.6 GB)."
                 .into()
         } else {
-            "Zero-setup Built-in Engine — 1-click downloads portable llama.cpp GPU engine (~37 MB) + VecGlypher-27b-it (~16.55 GB)."
+            "Zero-setup Built-in Engine — 1-click downloads portable llama.cpp (~37 MB) + VecGlypher-27b-it (~16.6 GB, Auto GPU+RAM / CPU)."
                 .into()
         };
         return Ok(AiBackendStatus {
@@ -235,9 +282,86 @@ pub(crate) async fn foundry_ai_check_backend(
             has_vecglypher: ready,
             recommended_pull: "Automatic 1-Click Built-in Install".into(),
             message,
+            server_running: healthy,
+            compute_mode,
+            models_dir,
+            custom_gguf_path,
+            disk_free_bytes: hw.disk_free_bytes,
+            ram_total_bytes: hw.ram_total_bytes,
+            ram_avail_bytes: hw.ram_avail_bytes,
+            gpu_summary: hw.gpu_summary,
         });
     }
-    probe_remote_ai_backend(&endpoint, &provider).await
+    let remote = probe_remote_ai_backend(&endpoint, &provider).await?;
+    Ok(enrich_remote_status(&state.env.data_dir, remote))
+}
+
+#[tauri::command]
+pub(crate) async fn foundry_ai_set_runtime_config(
+    state: State<'_, AppState>,
+    compute_mode: Option<String>,
+    storage_dir: Option<String>,
+    custom_gguf_path: Option<String>,
+) -> Result<AiBackendStatus, String> {
+    let mut cfg = ai_runtime::load_config(&state.env.data_dir);
+    if let Some(m) = compute_mode {
+        cfg.compute_mode = ai_runtime::normalize_compute_mode(&m);
+    }
+    if let Some(dir) = storage_dir {
+        let trimmed = dir.trim().to_string();
+        cfg.storage_dir = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
+    }
+    if let Some(gguf) = custom_gguf_path {
+        let trimmed = gguf.trim().to_string();
+        if trimmed.is_empty() {
+            cfg.custom_gguf_path = None;
+        } else {
+            if !Path::new(&trimmed).is_file() {
+                return Err(format!("GGUF file not found: {trimmed}"));
+            }
+            cfg.custom_gguf_path = Some(trimmed);
+        }
+    }
+    ai_runtime::save_config(&state.env.data_dir, &cfg)?;
+    ai_runtime::kill_managed_server(&state.llama_child);
+    foundry_ai_check_backend(state, ai_runtime::BUILTIN_ENDPOINT.into(), "builtin".into()).await
+}
+
+#[tauri::command]
+pub(crate) async fn foundry_ai_stop_builtin(
+    state: State<'_, AppState>,
+) -> Result<AiBackendStatus, String> {
+    ai_runtime::kill_managed_server(&state.llama_child);
+    foundry_ai_check_backend(state, ai_runtime::BUILTIN_ENDPOINT.into(), "builtin".into()).await
+}
+
+#[tauri::command]
+pub(crate) async fn foundry_ai_choose_models_dir(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(err)?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+pub(crate) async fn foundry_ai_choose_gguf_file(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .add_filter("GGUF Model", &["gguf"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(err)?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 pub(crate) async fn probe_remote_ai_backend(
@@ -248,28 +372,31 @@ pub(crate) async fn probe_remote_ai_backend(
         "ollama run {}",
         cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF
     );
+    let make_err_status = |msg: String| AiBackendStatus {
+        ok: false,
+        models: Vec::new(),
+        has_vecglypher: false,
+        recommended_pull: recommended_pull.clone(),
+        message: msg,
+        server_running: false,
+        compute_mode: "auto".into(),
+        models_dir: String::new(),
+        custom_gguf_path: None,
+        disk_free_bytes: 0,
+        ram_total_bytes: 0,
+        ram_avail_bytes: 0,
+        gpu_summary: None,
+    };
     let base = endpoint.trim().trim_end_matches('/');
     if base.is_empty() {
-        return Ok(AiBackendStatus {
-            ok: false,
-            models: Vec::new(),
-            has_vecglypher: false,
-            recommended_pull,
-            message: "Endpoint URL is empty.".into(),
-        });
+        return Ok(make_err_status("Endpoint URL is empty.".into()));
     }
 
     let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(4))
         .build()
     else {
-        return Ok(AiBackendStatus {
-            ok: false,
-            models: Vec::new(),
-            has_vecglypher: false,
-            recommended_pull,
-            message: "Failed to initialize HTTP client.".into(),
-        });
+        return Ok(make_err_status("Failed to initialize HTTP client.".into()));
     };
 
     let url = if provider.eq_ignore_ascii_case("ollama") {
@@ -283,36 +410,23 @@ pub(crate) async fn probe_remote_ai_backend(
     let resp = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
-            return Ok(AiBackendStatus {
-                ok: false,
-                models: Vec::new(),
-                has_vecglypher: false,
-                recommended_pull,
-                message: format!("Backend unreachable at {url}: {e}"),
-            });
+            return Ok(make_err_status(format!(
+                "Backend unreachable at {url}: {e}"
+            )));
         }
     };
 
     if !resp.status().is_success() {
-        return Ok(AiBackendStatus {
-            ok: false,
-            models: Vec::new(),
-            has_vecglypher: false,
-            recommended_pull,
-            message: format!("Backend returned HTTP {} at {url}", resp.status()),
-        });
+        return Ok(make_err_status(format!(
+            "Backend returned HTTP {} at {url}",
+            resp.status()
+        )));
     }
 
     let val: Value = match resp.json().await {
         Ok(v) => v,
         Err(e) => {
-            return Ok(AiBackendStatus {
-                ok: false,
-                models: Vec::new(),
-                has_vecglypher: false,
-                recommended_pull,
-                message: format!("Invalid JSON from {url}: {e}"),
-            });
+            return Ok(make_err_status(format!("Invalid JSON from {url}: {e}")));
         }
     };
 
@@ -354,6 +468,14 @@ pub(crate) async fn probe_remote_ai_backend(
         has_vecglypher,
         recommended_pull,
         message,
+        server_running: false,
+        compute_mode: "auto".into(),
+        models_dir: String::new(),
+        custom_gguf_path: None,
+        disk_free_bytes: 0,
+        ram_total_bytes: 0,
+        ram_avail_bytes: 0,
+        gpu_summary: None,
     })
 }
 
@@ -377,6 +499,82 @@ pub(crate) fn build_glyph_from_contours(
     }
 }
 
+fn collect_exemplar_representations(
+    glyphs: impl Iterator<Item = (char, cosmic_foundry::model::GlyphOutline)>,
+    upm: u16,
+) -> (Vec<String>, Vec<(char, String)>) {
+    let mut images_b64 = Vec::new();
+    let mut svg_exemplars = Vec::new();
+    for (ch, g) in glyphs {
+        if g.contours.is_empty() {
+            continue;
+        }
+        if images_b64.len() < 8 {
+            if let Ok(b64) = cosmic_foundry::vecglypher::render_glyph_exemplar_base64(&g, upm, 192)
+            {
+                images_b64.push(b64);
+            }
+        }
+        if svg_exemplars.len() < 4 {
+            if let Some(path_svg) = cosmic_foundry::vecglypher::glyph_to_compact_svg_path(&g, upm) {
+                svg_exemplars.push((ch, path_svg));
+            }
+        }
+    }
+    (images_b64, svg_exemplars)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn infer_glyph_resilient(
+    client: &reqwest::Client,
+    endpoint: &str,
+    provider: &str,
+    model: &str,
+    style_prompt: &str,
+    ch: char,
+    upm: u16,
+    temp: f32,
+    images_b64: &[String],
+    svg_exemplars: &[(char, String)],
+) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
+    let is_builtin = provider.eq_ignore_ascii_case("builtin");
+    let use_mm_images = !is_builtin && !images_b64.is_empty();
+
+    let attempt = |t: f32, use_images: bool| async move {
+        let cfg = cosmic_foundry::vecglypher::VecGlypherPromptConfig {
+            style_prompt: style_prompt.to_string(),
+            target_text: ch.to_string(),
+            temperature: t,
+            svg_exemplars: if use_images {
+                Vec::new()
+            } else {
+                svg_exemplars.to_vec()
+            },
+            ..Default::default()
+        };
+        let imgs = if use_images { images_b64 } else { &[] };
+        let raw = run_vecglypher_inference(client, endpoint, provider, model, &cfg, imgs).await?;
+        cosmic_foundry::vecglypher::decode_vecglypher_svg(&raw, upm)
+    };
+
+    let first = if use_mm_images {
+        match attempt(temp, true).await {
+            Ok(c) => Ok(c),
+            Err(_) => attempt(temp, false).await,
+        }
+    } else {
+        attempt(temp, false).await
+    };
+
+    match first {
+        Ok(contours) => Ok(contours),
+        Err(first_err) => {
+            let retry_temp = (temp + 0.35).clamp(0.2, 0.85);
+            attempt(retry_temp, false).await.map_err(|_| first_err)
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn foundry_ai_generate_glyph(
     app: AppHandle,
@@ -389,11 +587,7 @@ pub(crate) async fn foundry_ai_generate_glyph(
         .next()
         .ok_or_else(|| "Target character cannot be empty".to_string())?;
     let upm = if req.upm == 0 { 1000 } else { req.upm };
-    let temp = if req.temperature <= 0.0 {
-        0.7
-    } else {
-        req.temperature
-    };
+    let temp = req.temperature.clamp(0.0, 2.0);
 
     let (effective_endpoint, verified_model) = ensure_prime_model_downloaded(
         Some(&app),
@@ -404,37 +598,32 @@ pub(crate) async fn foundry_ai_generate_glyph(
     )
     .await?;
 
-    let mut images_b64 = Vec::new();
-    for g in req.exemplar_glyphs.iter().take(8) {
-        if !g.contours.is_empty() {
-            if let Ok(b64) = cosmic_foundry::vecglypher::render_glyph_exemplar_base64(g, upm, 192) {
-                images_b64.push(b64);
-            }
-        }
-    }
-
-    let cfg = cosmic_foundry::vecglypher::VecGlypherPromptConfig {
-        style_prompt: req.style_prompt,
-        target_text: ch.to_string(),
-        temperature: temp,
-        ..Default::default()
-    };
+    let (images_b64, svg_exemplars) = collect_exemplar_representations(
+        req.exemplar_glyphs.iter().take(8).cloned().map(|g| {
+            let ec = char::from_u32(g.codepoint).unwrap_or('?');
+            (ec, g)
+        }),
+        upm,
+    );
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(err)?;
 
-    let raw = run_vecglypher_inference(
+    let contours = infer_glyph_resilient(
         &client,
         &effective_endpoint,
         &req.provider,
         &verified_model,
-        &cfg,
+        &req.style_prompt,
+        ch,
+        upm,
+        temp,
         &images_b64,
+        &svg_exemplars,
     )
     .await?;
-    let contours = cosmic_foundry::vecglypher::decode_vecglypher_svg(&raw, upm)?;
     Ok(build_glyph_from_contours(ch, contours, upm))
 }
 
@@ -461,24 +650,16 @@ pub(crate) async fn foundry_ai_generate_font_batch(
     } else {
         project.metrics.upm
     };
-    let temp = if req.temperature <= 0.0 {
-        0.7
-    } else {
-        req.temperature
-    };
+    let temp = req.temperature.clamp(0.0, 2.0);
 
-    let mut images_b64 = Vec::new();
-    for key in req.exemplar_keys.iter().take(8) {
-        if let Some(g) = project.glyphs.get(key) {
-            if !g.contours.is_empty() {
-                if let Ok(b64) =
-                    cosmic_foundry::vecglypher::render_glyph_exemplar_base64(g, upm, 192)
-                {
-                    images_b64.push(b64);
-                }
-            }
-        }
-    }
+    let (mut images_b64, mut svg_exemplars) = collect_exemplar_representations(
+        req.exemplar_keys.iter().take(8).filter_map(|key| {
+            let g = project.glyphs.get(key)?.clone();
+            let ec = char::from_u32(g.codepoint).unwrap_or('?');
+            Some((ec, g))
+        }),
+        upm,
+    );
 
     let mut target_chars = Vec::new();
     let mut seen_cp = HashSet::new();
@@ -491,12 +672,30 @@ pub(crate) async fn foundry_ai_generate_font_batch(
         return Err("Character batch cannot be empty".into());
     }
 
+    // When no exemplars were pre-selected, run key structural characters first and auto-seed
+    // subsequent glyphs from them for consistent weight and proportions across the alphabet.
+    let auto_seed = req.exemplar_keys.is_empty() && target_chars.len() > 1;
+    let priority_seeds = ['H', 'O', 'A', 'n', 'o'];
+    if auto_seed {
+        let mut prioritized = Vec::with_capacity(target_chars.len());
+        for seed in priority_seeds {
+            if let Some(pos) = target_chars.iter().position(|&c| c == seed) {
+                prioritized.push(target_chars.remove(pos));
+            }
+        }
+        prioritized.extend(target_chars);
+        target_chars = prioritized;
+    }
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(err)?;
 
     let total = target_chars.len();
+    let mut succeeded = 0usize;
+    let mut last_error: Option<String> = None;
+
     for (idx, ch) in target_chars.into_iter().enumerate() {
         if state.ai_cancel.load(Ordering::SeqCst) {
             let _ = app.emit(
@@ -521,28 +720,52 @@ pub(crate) async fn foundry_ai_generate_font_batch(
             },
         );
 
-        let cfg = cosmic_foundry::vecglypher::VecGlypherPromptConfig {
-            style_prompt: req.style_prompt.clone(),
-            target_text: ch.to_string(),
-            temperature: temp,
-            ..Default::default()
-        };
-
-        if let Ok(raw) = run_vecglypher_inference(
+        match infer_glyph_resilient(
             &client,
             &effective_endpoint,
             &req.provider,
             &verified_model,
-            &cfg,
+            &req.style_prompt,
+            ch,
+            upm,
+            temp,
             &images_b64,
+            &svg_exemplars,
         )
         .await
         {
-            if let Ok(contours) = cosmic_foundry::vecglypher::decode_vecglypher_svg(&raw, upm) {
+            Ok(contours) => {
                 let glyph = build_glyph_from_contours(ch, contours, upm);
+                if auto_seed && priority_seeds.contains(&ch) {
+                    if svg_exemplars.len() < 4 {
+                        if let Some(path_svg) =
+                            cosmic_foundry::vecglypher::glyph_to_compact_svg_path(&glyph, upm)
+                        {
+                            svg_exemplars.push((ch, path_svg));
+                        }
+                    }
+                    if !req.provider.eq_ignore_ascii_case("builtin") && images_b64.len() < 4 {
+                        if let Ok(b64) = cosmic_foundry::vecglypher::render_glyph_exemplar_base64(
+                            &glyph, upm, 192,
+                        ) {
+                            images_b64.push(b64);
+                        }
+                    }
+                }
                 project.glyphs.insert((ch as u32).to_string(), glyph);
+                succeeded += 1;
+            }
+            Err(e) => {
+                last_error = Some(e);
             }
         }
+    }
+
+    if succeeded == 0 && !state.ai_cancel.load(Ordering::SeqCst) {
+        return Err(format!(
+            "Batch generation failed to produce any valid glyphs: {}",
+            last_error.unwrap_or_else(|| "unknown inference error".into())
+        ));
     }
 
     if req.auto_composites {
