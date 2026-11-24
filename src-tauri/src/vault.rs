@@ -80,6 +80,125 @@ pub fn load_vault_path(data_dir: &Path) -> PathBuf {
     default_vault_dir(data_dir)
 }
 
+/// Root folder for Cosmic Font Foundry user folders (`Vault`, `Exports`, `UFO Projects`).
+pub fn workspace_root_dir(data_dir: &Path) -> PathBuf {
+    let vault = load_vault_path(data_dir);
+    if let Some(parent) = vault.parent().filter(|p| !p.as_os_str().is_empty()) {
+        return parent.to_path_buf();
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").filter(|s| !s.is_empty()) {
+        return PathBuf::from(home).join("Cosmic Font Foundry");
+    }
+    data_dir.to_path_buf()
+}
+
+/// Ready-to-share exported font binaries (`.ttf`, `.woff`, variable fonts, subsets).
+pub fn exports_dir(data_dir: &Path) -> PathBuf {
+    workspace_root_dir(data_dir).join("Exports")
+}
+
+/// Editable Forge `.ufo` source directories (kept outside `Vault` to avoid cluttering the library).
+pub fn ufo_projects_dir(data_dir: &Path) -> PathBuf {
+    workspace_root_dir(data_dir).join("UFO Projects")
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct ForgedUfoEntry {
+    pub name: String,
+    pub family_name: String,
+    pub style_name: String,
+    pub glyph_count: usize,
+    pub path: String,
+    pub modified_unix: u64,
+}
+
+pub fn sanitize_workspace_segment(name: &str, fallback: &str) -> String {
+    let cleaned = sanitize_folder_name(name);
+    if cleaned == "Uncategorized" {
+        fallback.to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn read_plist_string_key(xml: &str, key: &str) -> Option<String> {
+    let needle = format!("<key>{key}</key>");
+    let pos = xml.find(&needle)?;
+    let after = &xml[pos + needle.len()..];
+    let open = after.find("<string>")?;
+    let val_start = open + "<string>".len();
+    let close = after[val_start..].find("</string>")?;
+    let val = after[val_start..val_start + close].trim();
+    if val.is_empty() {
+        None
+    } else {
+        Some(val.to_string())
+    }
+}
+
+pub fn list_ufo_projects(data_dir: &Path) -> Vec<ForgedUfoEntry> {
+    let dir = ufo_projects_dir(data_dir);
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_ufo = path.is_dir()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("ufo"));
+        if !is_ufo {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".into());
+        let fontinfo = fs::read_to_string(path.join("fontinfo.plist")).unwrap_or_default();
+        let family_name =
+            read_plist_string_key(&fontinfo, "familyName").unwrap_or_else(|| stem.clone());
+        let style_name =
+            read_plist_string_key(&fontinfo, "styleName").unwrap_or_else(|| "Regular".into());
+        let glyph_count = fs::read_dir(path.join("glyphs"))
+            .ok()
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|g| {
+                        g.path()
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| e.eq_ignore_ascii_case("glif"))
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let modified_unix = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        out.push(ForgedUfoEntry {
+            name: stem,
+            family_name,
+            style_name,
+            glyph_count,
+            path: path.to_string_lossy().into_owned(),
+            modified_unix,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.modified_unix.cmp(&a.modified_unix).then_with(|| {
+            a.family_name
+                .to_lowercase()
+                .cmp(&b.family_name.to_lowercase())
+        })
+    });
+    out
+}
+
 pub fn save_vault_path(data_dir: &Path, path: &Path) -> Result<(), String> {
     let cfg = VaultConfig {
         path: path.to_path_buf(),

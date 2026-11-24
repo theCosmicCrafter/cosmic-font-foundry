@@ -33,7 +33,12 @@ pub(crate) async fn sync_manifest_now(
 ) -> Result<sync::SyncResult, String> {
     bg(move || {
         let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
+        let families = state
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .families
+            .clone();
         sync::sync_manifest_folder(
             Path::new(&sync_dir),
             &library,
@@ -63,7 +68,12 @@ pub(crate) async fn export_profile_bundle(
     let dest = picked.into_path().map_err(err)?;
     bg(move || {
         let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
+        let families = state
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .families
+            .clone();
         sync::export_profile_json(&dest, &library, &families, &device_name())?;
         Ok(Some(dest.to_string_lossy().into_owned()))
     })
@@ -87,7 +97,12 @@ pub(crate) async fn import_profile_bundle(
     let src = picked.into_path().map_err(err)?;
     bg(move || {
         let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
+        let families = state
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .families
+            .clone();
         let res = sync::import_profile_json(&src, &library, &families)?;
         Ok(Some(res))
     })
@@ -123,7 +138,12 @@ pub(crate) async fn export_collection_zip(
     let dest = picked.into_path().map_err(err)?;
     bg(move || {
         let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
+        let families = state
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .families
+            .clone();
         let res = sync::package_collection_zip(&dest, &collection_name, &fonts, &families)?;
         Ok(Some(res))
     })
@@ -136,7 +156,12 @@ pub(crate) fn find_similar_fonts(
     family: String,
     limit: Option<usize>,
 ) -> Vec<similarity::SimilarMatch> {
-    let families = state.cache.lock().unwrap().families.clone();
+    let families = state
+        .cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .families
+        .clone();
     similarity::find_similar_families(&family, &families, limit.unwrap_or(8))
 }
 
@@ -146,7 +171,12 @@ pub(crate) fn suggest_font_pairings(
     family: String,
     limit: Option<usize>,
 ) -> Vec<similarity::SimilarMatch> {
-    let families = state.cache.lock().unwrap().families.clone();
+    let families = state
+        .cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .families
+        .clone();
     similarity::suggest_pairings(&family, &families, limit.unwrap_or(6))
 }
 
@@ -171,7 +201,12 @@ pub(crate) async fn export_design_kit_zip(
     let dest = picked.into_path().map_err(err)?;
     bg(move || {
         let state = app.state::<AppState>();
-        let families = state.cache.lock().unwrap().families.clone();
+        let families = state
+            .cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .families
+            .clone();
         let res = sync::export_design_kit_zip(
             &dest,
             &heading_family,
@@ -202,7 +237,7 @@ pub(crate) async fn run_tuna_migration(app: AppHandle) -> Result<Value, String> 
         let (report, library, folders) =
             migrate::import_from_tuna_fonts(&tuna_dir, &state.env.data_dir)?;
         {
-            let mut lock = state.folders.lock().unwrap();
+            let mut lock = state.folders.lock().unwrap_or_else(|e| e.into_inner());
             for f in &folders {
                 if !lock
                     .iter()

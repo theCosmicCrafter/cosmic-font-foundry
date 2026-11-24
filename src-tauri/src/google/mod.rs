@@ -19,7 +19,8 @@ pub use feeds::*;
 const METADATA_URL: &str = "https://fonts.google.com/metadata/fonts";
 const DOWNLOAD_LIST_URL: &str = "https://fonts.google.com/download/list?family=";
 const FONTSHARE_URL: &str = "https://api.fontshare.com/v2/fonts?offset=0&limit=100";
-const FONTSOURCE_OTHER_URL: &str = "https://api.fontsource.org/v1/fonts?type=other";
+const FONTSHARE_PAGE2_URL: &str = "https://api.fontshare.com/v2/fonts?offset=100&limit=100";
+const FONTSOURCE_ALL_URL: &str = "https://api.fontsource.org/v1/fonts";
 const FONTSOURCE_DETAIL_URL: &str = "https://api.fontsource.org/v1/fonts/";
 const FONTSQUIRREL_URL: &str = "https://www.fontsquirrel.com/api/fontlist/all";
 const NERDFONTS_URL: &str = "https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest";
@@ -57,6 +58,27 @@ const ADOBE_DEV_FAMILIES: &[&str] = &[
     "victor mono",
     "hack",
     "league mono",
+    "ibm plex sans",
+    "ibm plex serif",
+    "ibm plex mono",
+    "intel one mono",
+    "maple mono",
+    "0xproto",
+    "fantasque sans mono",
+    "adwaita sans",
+    "adwaita mono",
+    "atkinson hyperlegible",
+    "atkinson hyperlegible next",
+    "atkinson hyperlegible mono",
+    "inter",
+    "recursive",
+    "red hat display",
+    "red hat text",
+    "red hat mono",
+    "ubuntu sans",
+    "ubuntu sans mono",
+    "space grotesk",
+    "public sans",
 ];
 
 fn is_adobe_or_dev_family(name: &str) -> bool {
@@ -68,6 +90,7 @@ fn is_allowed_host(host: &str) -> bool {
     matches!(
         host,
         "fonts.google.com"
+            | "fonts.googleapis.com"
             | "fonts.gstatic.com"
             | "api.fontshare.com"
             | "cdn.fontshare.com"
@@ -78,14 +101,16 @@ fn is_allowed_host(host: &str) -> bool {
             | "api.github.com"
             | "github.com"
             | "fonts.bunny.net"
+            | "cdn.bunny.net"
     ) || host.ends_with(".githubusercontent.com")
 }
 
-pub(super) fn http_client() -> Result<reqwest::Client, String> {
+fn build_http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::Client::builder()
         .user_agent("cosmic-font-foundry")
         .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(timeout_secs))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             let ok = attempt.url().host_str().is_some_and(is_allowed_host);
             if ok && attempt.previous().len() < 5 {
@@ -96,6 +121,14 @@ pub(super) fn http_client() -> Result<reqwest::Client, String> {
         }))
         .build()
         .map_err(|e| e.to_string())
+}
+
+pub(super) fn http_client() -> Result<reqwest::Client, String> {
+    build_http_client(22)
+}
+
+fn download_http_client() -> Result<reqwest::Client, String> {
+    build_http_client(120)
 }
 
 /// Google prefixes JSON responses with `)]}'`.
@@ -423,12 +456,19 @@ fn parse_fontshare_catalog(v: &Value) -> Vec<GoogleFontEntry> {
         .collect()
 }
 
-fn parse_fontsource_other_catalog(v: &Value) -> Vec<GoogleFontEntry> {
+fn parse_fontsource_catalog_filtered(v: &Value, include_google: bool) -> Vec<GoogleFontEntry> {
     let Some(list) = v.as_array() else {
         return Vec::new();
     };
     list.iter()
-        .filter(|f| f["type"].as_str() == Some("other"))
+        .filter(|f| {
+            let ty = f["type"].as_str().unwrap_or("");
+            if include_google {
+                ty == "other" || ty == "google"
+            } else {
+                ty == "other"
+            }
+        })
         .enumerate()
         .filter_map(|(idx, f)| {
             let id = f["id"].as_str()?.to_string();
@@ -471,16 +511,23 @@ fn parse_fontsource_other_catalog(v: &Value) -> Vec<GoogleFontEntry> {
                     ));
                 }
             }
+            let is_other = f["type"].as_str() == Some("other");
             let source = if is_adobe_or_dev_family(&name) {
                 "adobe_dev"
-            } else {
+            } else if is_other {
                 "fontsource"
+            } else {
+                "google"
             };
             Some(GoogleFontEntry {
                 name,
                 category: map_generic_category(f["category"].as_str().unwrap_or("")),
                 styles: variants.len().max(1),
-                popularity: 50 + (idx as i64),
+                popularity: if is_other {
+                    50 + (idx as i64)
+                } else {
+                    5_000 + (idx as i64)
+                },
                 date: f["lastModified"].as_str().unwrap_or("").to_string(),
                 scripts: map_scripts(f),
                 designers: Vec::new(),
@@ -496,6 +543,14 @@ fn parse_fontsource_other_catalog(v: &Value) -> Vec<GoogleFontEntry> {
             })
         })
         .collect()
+}
+
+fn parse_fontsource_other_catalog(v: &Value) -> Vec<GoogleFontEntry> {
+    parse_fontsource_catalog_filtered(v, false)
+}
+
+fn parse_fontsource_all_catalog(v: &Value) -> Vec<GoogleFontEntry> {
+    parse_fontsource_catalog_filtered(v, true)
 }
 
 fn parse_fontsquirrel_catalog(v: &Value) -> Vec<GoogleFontEntry> {
@@ -757,16 +812,14 @@ async fn fetch_cached_json(
         }
     }
     let fetched = async {
-        let text = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .text()
-            .await
-            .map_err(|e| e.to_string())?;
+        let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+        if resp.status() != reqwest::StatusCode::OK {
+            return Err(format!("HTTP {} from {url}", resp.status()));
+        }
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        if text.trim().is_empty() {
+            return Err(format!("Empty response from {url}"));
+        }
         let val = parse_json(&text)?;
         if let Some(parent) = cache_file.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -789,33 +842,40 @@ pub async fn fetch_catalog(data_dir: &Path, force: bool) -> Result<Vec<GoogleFon
     let client = http_client()?;
     let google_file = data_dir.join("google-metadata.json");
     let fontshare_file = data_dir.join("fontshare-metadata.json");
-    let fontsource_file = data_dir.join("fontsource-other.json");
+    let fontshare_p2_file = data_dir.join("fontshare-metadata-p2.json");
+    let fontsource_file = data_dir.join("fontsource-all.json");
     let fontsquirrel_file = data_dir.join("fontsquirrel-metadata.json");
     let nerdfonts_file = data_dir.join("nerdfonts-metadata.json");
     let bunny_file = data_dir.join("bunny-metadata.json");
 
-    let ((g_res, fs_res, src_res, sq_res), (nf_res, bunny_res)) = futures_util::future::join(
-        futures_util::future::join4(
-            fetch_cached_json(&client, METADATA_URL, &google_file, force),
-            fetch_cached_json(&client, FONTSHARE_URL, &fontshare_file, force),
-            fetch_cached_json(&client, FONTSOURCE_OTHER_URL, &fontsource_file, force),
-            fetch_cached_json(&client, FONTSQUIRREL_URL, &fontsquirrel_file, force),
-        ),
+    let ((g_res, fs_res, fs2_res, src_res), (sq_res, nf_res, bunny_res)) =
         futures_util::future::join(
-            fetch_cached_json(&client, NERDFONTS_URL, &nerdfonts_file, force),
-            fetch_cached_json(&client, BUNNY_URL, &bunny_file, force),
-        ),
-    )
-    .await;
+            futures_util::future::join4(
+                fetch_cached_json(&client, METADATA_URL, &google_file, force),
+                fetch_cached_json(&client, FONTSHARE_URL, &fontshare_file, force),
+                fetch_cached_json(&client, FONTSHARE_PAGE2_URL, &fontshare_p2_file, force),
+                fetch_cached_json(&client, FONTSOURCE_ALL_URL, &fontsource_file, force),
+            ),
+            futures_util::future::join3(
+                fetch_cached_json(&client, FONTSQUIRREL_URL, &fontsquirrel_file, force),
+                fetch_cached_json(&client, NERDFONTS_URL, &nerdfonts_file, force),
+                fetch_cached_json(&client, BUNNY_URL, &bunny_file, force),
+            ),
+        )
+        .await;
 
     let mut combined = Vec::new();
     let mut seen = HashSet::new();
     let mut first_err = None;
 
+    let google_ok = g_res.is_ok();
     for entries in [
         g_res.as_ref().map(compact_google_catalog),
         fs_res.as_ref().map(parse_fontshare_catalog),
-        src_res.as_ref().map(parse_fontsource_other_catalog),
+        fs2_res.as_ref().map(parse_fontshare_catalog),
+        src_res
+            .as_ref()
+            .map(|v| parse_fontsource_catalog_filtered(v, !google_ok)),
         sq_res.as_ref().map(parse_fontsquirrel_catalog),
     ] {
         match entries {
@@ -894,8 +954,10 @@ fn select_google_font_files(refs: &[Value]) -> Vec<(String, String)> {
 
 fn find_cached_non_google_entry(data_dir: &Path, family: &str) -> Option<GoogleFontEntry> {
     type CatalogParser = fn(&Value) -> Vec<GoogleFontEntry>;
-    let sources: [(&str, CatalogParser); 5] = [
+    let sources: [(&str, CatalogParser); 7] = [
         ("fontshare-metadata.json", parse_fontshare_catalog),
+        ("fontshare-metadata-p2.json", parse_fontshare_catalog),
+        ("fontsource-all.json", parse_fontsource_all_catalog),
         ("fontsource-other.json", parse_fontsource_other_catalog),
         ("fontsquirrel-metadata.json", parse_fontsquirrel_catalog),
         ("nerdfonts-metadata.json", parse_nerdfonts_catalog),
@@ -1053,7 +1115,7 @@ pub async fn download_family(
     dest: &Path,
     mut on_progress: impl FnMut(f64),
 ) -> Result<Vec<PathBuf>, String> {
-    let client = http_client()?;
+    let client = download_http_client()?;
     if let Some(entry) = find_cached_custom_entry(data_dir, family) {
         let custom_client = custom_http_client()?;
         if let Some(zip_url) = entry.download_urls.iter().find(|u| url_has_ext(u, ".zip")) {
@@ -1078,12 +1140,24 @@ pub async fn download_family(
                     (format!("{}-{}.{}", entry.source_id, i, ext), u)
                 })
                 .collect();
-            return download_files(&custom_client, &files, dest, on_progress).await;
+            match download_files(&custom_client, &files, dest, &mut on_progress).await {
+                Ok(paths) => return Ok(paths),
+                Err(_)
+                    if entry
+                        .download_urls
+                        .first()
+                        .is_some_and(|u| u.contains("cdn.jsdelivr.net/fontsource")) =>
+                {
+                    // Fall through to Google Fonts / Fontsource detail resolution if a CDN weight URL fails.
+                }
+                Err(e) => return Err(e),
+            }
+        } else {
+            return Err(
+                "Custom feed entry contains preview/web links only (no direct .ttf, .otf, or .zip archive)."
+                    .into(),
+            );
         }
-        return Err(
-            "Custom feed entry contains preview/web links only (no direct .ttf, .otf, or .zip archive)."
-                .into(),
-        );
     }
 
     if let Some(entry) = find_cached_non_google_entry(data_dir, family) {
@@ -1109,7 +1183,9 @@ pub async fn download_family(
                 .collect();
             match download_files(&client, &files, dest, &mut on_progress).await {
                 Ok(res) => return Ok(res),
-                Err(_) if entry.source == "bunny" => {}
+                Err(_)
+                    if entry.source == "bunny" || entry.source == "google" || is_fontsource_cdn => {
+                }
                 Err(err) => return Err(err),
             }
         }

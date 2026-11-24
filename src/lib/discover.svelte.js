@@ -102,6 +102,48 @@ export const COMMUNITY_PRESETS = [
     kind: "preset",
     descKey: "cs.presetOpenFoundry",
   },
+  {
+    key: "horror_display",
+    url: "preset:horror_display",
+    name: "Horror, Gothic & Halloween",
+    kind: "preset",
+    descKey: "cs.presetHorror",
+  },
+  {
+    key: "handwriting_brush",
+    url: "preset:handwriting_brush",
+    name: "Handwriting, Brush & Script",
+    kind: "preset",
+    descKey: "cs.presetHandwriting",
+  },
+  {
+    key: "geometric_ui",
+    url: "preset:geometric_ui",
+    name: "Geometric & Modern UI Sans",
+    kind: "preset",
+    descKey: "cs.presetGeometric",
+  },
+  {
+    key: "slab_editorial",
+    url: "preset:slab_editorial",
+    name: "Slab Serif & Magazine",
+    kind: "preset",
+    descKey: "cs.presetSlab",
+  },
+  {
+    key: "accessible_reading",
+    url: "preset:accessible_reading",
+    name: "Accessible & Hyperlegible",
+    kind: "preset",
+    descKey: "cs.presetAccessible",
+  },
+  {
+    key: "display_poster",
+    url: "preset:display_poster",
+    name: "Bold Poster & Art Deco",
+    kind: "preset",
+    descKey: "cs.presetPoster",
+  },
 ];
 
 

@@ -64,8 +64,15 @@ impl AppState {
     }
 
     fn collect_entries(&self) -> Vec<fonts::FontEntry> {
-        let folders = self.folders.lock().unwrap().clone();
-        let disabled = self.disabled_folder_fonts.lock().unwrap();
+        let folders = self
+            .folders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let disabled = self
+            .disabled_folder_fonts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut list = fonts::collect_entries(&self.env, &folders);
         for entry in list.iter_mut().filter(|e| e.origin == Origin::Folder) {
             entry.active = !disabled.contains(&fonts::path_key(&entry.path));
@@ -82,20 +89,27 @@ impl AppState {
         Vec<sync::DetectedProject>,
     ) {
         let entries = self.collect_entries();
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         let parsed = cache.update(&entries);
         cache.save(&self.cache_path());
         let families = cache.families.clone();
         drop(cache);
         self.sync_watched_folders(&entries);
         let diagnostics = summarize_diagnostics(&families);
-        let folders = self.folders.lock().unwrap().clone();
+        let folders = self
+            .folders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let projects = sync::scan_project_manifests(&folders);
         (families, parsed, diagnostics, projects)
     }
 
     fn sync_watched_folders(&self, entries: &[fonts::FontEntry]) {
-        let mut loaded = self.loaded_folder_fonts.lock().unwrap();
+        let mut loaded = self
+            .loaded_folder_fonts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let wanted: HashSet<String> = entries
             .iter()
             .filter(|e| e.origin == Origin::Folder && e.active)
@@ -126,7 +140,10 @@ impl AppState {
     }
 
     fn unload_all_folder_fonts(&self) {
-        let mut loaded = self.loaded_folder_fonts.lock().unwrap();
+        let mut loaded = self
+            .loaded_folder_fonts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         for key in loaded.drain() {
             win::unload_font(Path::new(&key), false);
         }
@@ -273,10 +290,10 @@ pub(crate) struct VaultImportResponse {
     diagnostics: InventoryDiagnostics,
 }
 
-fn ensure_vault_watched(app: &AppHandle, state: &AppState, vault_path: &Path) {
+pub(crate) fn ensure_vault_watched(app: &AppHandle, state: &AppState, vault_path: &Path) {
     let mut changed = false;
     {
-        let mut folders = state.folders.lock().unwrap();
+        let mut folders = state.folders.lock().unwrap_or_else(|e| e.into_inner());
         if !folders
             .iter()
             .any(|x| fonts::path_key(x) == fonts::path_key(vault_path))
@@ -1250,7 +1267,11 @@ async fn install_forged_font(
     } else {
         stem
     };
-    let dest_dir = data_dir.join("forged");
+    let family_folder = vault::sanitize_workspace_segment(
+        safe_stem.split('-').next().unwrap_or(&safe_stem),
+        "Cosmic Font",
+    );
+    let dest_dir = vault::exports_dir(&data_dir).join(&family_folder);
     let dest_file = dest_dir.join(format!("{safe_stem}.ttf"));
     let app_bg = app.clone();
     let resp = bg(move || {
@@ -1258,7 +1279,10 @@ async fn install_forged_font(
         fs::write(&dest_file, &bytes).map_err(err)?;
         let state = app_bg.state::<AppState>();
         let outcome = install_files(&state, std::slice::from_ref(&dest_file), install_for_all);
-        let _ = fs::remove_file(&dest_file);
+        let vault_dir = vault::load_vault_path(&state.env.data_dir);
+        if vault::import_to_vault(&vault_dir, std::slice::from_ref(&dest_file), false).is_ok() {
+            ensure_vault_watched(&app_bg, &state, &vault_dir);
+        }
         let (families, _, diagnostics, _) = state.refresh();
         Ok(ToggleResponse {
             families,
@@ -1453,6 +1477,11 @@ pub fn run() {
             commands::ai::foundry_ai_cancel_batch,
             commands::ai::foundry_ai_pull_model,
             commands::ai::foundry_ai_cancel_pull,
+            commands::foundry::foundry_workspace_info,
+            commands::foundry::foundry_open_workspace_folder,
+            commands::foundry::foundry_save_ufo_to_workspace,
+            commands::foundry::foundry_import_ufo_path,
+            commands::foundry::foundry_export_font_to_workspace,
             commands::foundry::foundry_export_ufo,
             commands::foundry::foundry_import_ufo,
             commands::foundry::foundry_subset_font,

@@ -819,22 +819,31 @@ pub async fn search_github_fonts(query: &str) -> Result<Vec<GithubFontRepo>, Str
     let q = if trimmed.is_empty() {
         "topic:font license:ofl-1.1".to_string()
     } else {
-        format!("{trimmed} topic:font")
+        format!("{trimmed} font in:name,description,topics")
     };
     let url = reqwest::Url::parse_with_params(
         "https://api.github.com/search/repositories",
-        &[("q", q.as_str()), ("sort", "stars"), ("per_page", "18")],
+        &[("q", q.as_str()), ("sort", "stars"), ("per_page", "20")],
     )
     .map_err(|e| e.to_string())?;
     let client = http_client()?;
-    let text = client
+    let resp = client
         .get(url)
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("GitHub search request failed: {e}"))?;
+    if resp.status() == reqwest::StatusCode::FORBIDDEN
+        || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return Err(
+            "GitHub API rate limit reached (unauthenticated limit: 10 searches/min). Wait a moment and try again."
+                .into(),
+        );
+    }
+    let text = resp
         .error_for_status()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("GitHub search error: {e}"))?
         .text()
         .await
         .map_err(|e| e.to_string())?;
@@ -1344,6 +1353,199 @@ fn resolve_preset_entries(
             PresetSpec::fontsource("DM Sans", "sans", "Colophon Foundry", 12, true, "dm-sans"),
             PresetSpec::fontsource("Manrope", "sans", "Mikhail Sharanda", 7, true, "manrope"),
         ],
+        "horror_display" => vec![
+            PresetSpec::fontsource("Creepster", "display", "Sideshow", 1, false, "creepster"),
+            PresetSpec::fontsource("Nosifer", "display", "Typomondo", 1, false, "nosifer"),
+            PresetSpec::fontsource("Eater", "display", "Typomondo", 1, false, "eater"),
+            PresetSpec::fontsource("Butcherman", "display", "Typomondo", 1, false, "butcherman"),
+            PresetSpec::fontsource(
+                "Metal Mania",
+                "display",
+                "Open Window",
+                1,
+                false,
+                "metal-mania",
+            ),
+            PresetSpec::fontsource(
+                "UnifrakturMaguntia",
+                "display",
+                "j. 'mach' wust",
+                1,
+                false,
+                "unifrakturmaguntia",
+            ),
+            PresetSpec::fontsource(
+                "Pirata One",
+                "display",
+                "Rodrigo Fuenzalida",
+                1,
+                false,
+                "pirata-one",
+            ),
+            PresetSpec::fontsource(
+                "Cinzel Decorative",
+                "display",
+                "Natanael Gama",
+                3,
+                false,
+                "cinzel-decorative",
+            ),
+            PresetSpec::fontsource("Rye", "display", "Nicole Fally", 1, false, "rye"),
+            PresetSpec::fontsource(
+                "Special Elite",
+                "display",
+                "Astigmatic",
+                1,
+                false,
+                "special-elite",
+            ),
+        ],
+        "handwriting_brush" => vec![
+            PresetSpec::fontsource("Caveat", "script", "Pablo Impallari", 4, true, "caveat"),
+            PresetSpec::fontsource("Pacifico", "script", "Vernon Adams", 1, false, "pacifico"),
+            PresetSpec::fontsource(
+                "Permanent Marker",
+                "script",
+                "Font Diner",
+                1,
+                false,
+                "permanent-marker",
+            ),
+            PresetSpec::fontsource("Rock Salt", "script", "Sideshow", 1, false, "rock-salt"),
+            PresetSpec::fontsource("Satisfy", "script", "Sideshow", 1, false, "satisfy"),
+            PresetSpec::fontsource(
+                "Dancing Script",
+                "script",
+                "Impallari Type",
+                4,
+                true,
+                "dancing-script",
+            ),
+            PresetSpec::fontsource(
+                "Kaushan Script",
+                "script",
+                "Impallari Type",
+                1,
+                false,
+                "kaushan-script",
+            ),
+            PresetSpec::fontsource("Sacramento", "script", "Astigmatic", 1, false, "sacramento"),
+        ],
+        "geometric_ui" => vec![
+            PresetSpec::fontsource(
+                "Plus Jakarta Sans",
+                "sans",
+                "Tokotype",
+                14,
+                true,
+                "plus-jakarta-sans",
+            ),
+            PresetSpec::fontsource("Outfit", "sans", "Rodrigo Fuenzalida", 9, true, "outfit"),
+            PresetSpec::fontsource("Sora", "sans", "Jonathan Barnbrook", 8, true, "sora"),
+            PresetSpec::fontsource("Urbanist", "sans", "Corey Hu", 18, true, "urbanist"),
+            PresetSpec::fontsource("Figtree", "sans", "Erik Kennedy", 14, true, "figtree"),
+            PresetSpec::fontsource("Onest", "sans", "Dmitry Voloshin", 9, true, "onest"),
+            PresetSpec::fontsource(
+                "Albert Sans",
+                "sans",
+                "Andreas Rasmussen",
+                18,
+                true,
+                "albert-sans",
+            ),
+            PresetSpec::fontsource("Geist", "sans", "Vercel", 9, true, "geist"),
+        ],
+        "slab_editorial" => vec![
+            PresetSpec::fontsource("Bitter", "serif", "Sol Matas", 18, true, "bitter"),
+            PresetSpec::fontsource("Arvo", "serif", "Anton Koovit", 4, false, "arvo"),
+            PresetSpec::fontsource("Zilla Slab", "serif", "Typotheque", 10, false, "zilla-slab"),
+            PresetSpec::fontsource(
+                "Josefin Slab",
+                "serif",
+                "Santiago Orozco",
+                14,
+                true,
+                "josefin-slab",
+            ),
+            PresetSpec::fontsource(
+                "Playfair Display",
+                "serif",
+                "Claus Eggers Sørensen",
+                12,
+                true,
+                "playfair-display",
+            ),
+            PresetSpec::fontsource(
+                "Abril Fatface",
+                "display",
+                "TypeTogether",
+                1,
+                false,
+                "abril-fatface",
+            ),
+            PresetSpec::fontsource(
+                "Young Serif",
+                "serif",
+                "Bastien Sozeau",
+                1,
+                false,
+                "young-serif",
+            ),
+            PresetSpec::fontsource("Prata", "serif", "Cyreal", 1, false, "prata"),
+        ],
+        "accessible_reading" => vec![
+            PresetSpec::fontsource(
+                "Atkinson Hyperlegible",
+                "sans",
+                "Braille Institute",
+                4,
+                false,
+                "atkinson-hyperlegible",
+            ),
+            PresetSpec::fontsource("Lexend", "sans", "Bonnie Shaver-Troup", 9, true, "lexend"),
+            PresetSpec::fontsource(
+                "Inclusive Sans",
+                "sans",
+                "Olivia King",
+                2,
+                false,
+                "inclusive-sans",
+            ),
+            PresetSpec::fontsource("Andika", "sans", "SIL International", 4, false, "andika"),
+            PresetSpec::fontsource("Readex Pro", "sans", "Thomas Jockin", 6, true, "readex-pro"),
+            PresetSpec::fontsource("Public Sans", "sans", "USWDS", 18, true, "public-sans"),
+        ],
+        "display_poster" => vec![
+            PresetSpec::fontsource(
+                "Bebas Neue",
+                "display",
+                "Ryoichi Tsunekawa",
+                1,
+                false,
+                "bebas-neue",
+            ),
+            PresetSpec::fontsource("Oswald", "display", "Vernon Adams", 6, true, "oswald"),
+            PresetSpec::fontsource("Anton", "display", "Vernon Adams", 1, false, "anton"),
+            PresetSpec::fontsource("Righteous", "display", "Astigmatic", 1, false, "righteous"),
+            PresetSpec::fontsource("Monoton", "display", "Vernon Adams", 1, false, "monoton"),
+            PresetSpec::fontsource(
+                "Bungee",
+                "display",
+                "David Jonathan Ross",
+                1,
+                false,
+                "bungee",
+            ),
+            PresetSpec::fontsource(
+                "Rubik Mono One",
+                "display",
+                "Philipp Hubert",
+                1,
+                false,
+                "rubik-mono-one",
+            ),
+            PresetSpec::fontsource("Cinzel", "serif", "Natanael Gama", 6, true, "cinzel"),
+        ],
         _ => Vec::new(),
     };
 
@@ -1446,7 +1648,7 @@ mod tests {
     }
 
     #[test]
-    fn all_thirteen_presets_resolve_non_empty() {
+    fn all_nineteen_presets_resolve_non_empty() {
         for key in [
             "velvetyne",
             "leagueof",
@@ -1461,10 +1663,40 @@ mod tests {
             "oldschool_pc",
             "indestructible",
             "open_foundry",
+            "horror_display",
+            "handwriting_brush",
+            "geometric_ui",
+            "slab_editorial",
+            "accessible_reading",
+            "display_poster",
         ] {
             let entries = resolve_preset_entries(key, "test", "Test Preset");
             assert!(!entries.is_empty(), "preset {key} should not be empty");
         }
+        assert_eq!(
+            resolve_preset_entries("horror_display", "id", "Horror").len(),
+            10
+        );
+        assert_eq!(
+            resolve_preset_entries("handwriting_brush", "id", "Script").len(),
+            8
+        );
+        assert_eq!(
+            resolve_preset_entries("geometric_ui", "id", "Geom").len(),
+            8
+        );
+        assert_eq!(
+            resolve_preset_entries("slab_editorial", "id", "Slab").len(),
+            8
+        );
+        assert_eq!(
+            resolve_preset_entries("accessible_reading", "id", "Access").len(),
+            6
+        );
+        assert_eq!(
+            resolve_preset_entries("display_poster", "id", "Poster").len(),
+            8
+        );
         assert_eq!(resolve_preset_entries("indie_mono", "id", "Indie").len(), 8);
         assert_eq!(resolve_preset_entries("nerd_fonts", "id", "Nerd").len(), 6);
         assert_eq!(resolve_preset_entries("historical", "id", "Hist").len(), 7);

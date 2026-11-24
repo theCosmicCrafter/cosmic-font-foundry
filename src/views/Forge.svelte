@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import {
     Download, Sparkles, RotateCcw, FlipHorizontal2, Eraser, Check, Contrast,
-    Undo2, Redo2, Save, FolderUp, Spline, Layers, FileCode, Upload, Search, Scan,
+    Undo2, Redo2, Save, FolderUp, FolderOpen, Spline, Layers, FileCode, Upload, Search, Scan,
     PenTool, ArrowLeftRight, Combine, WandSparkles, ShieldCheck, PanelLeft,
     ChevronDown, ChevronUp, MoreHorizontal,
   } from "@lucide/svelte";
@@ -80,6 +80,9 @@
   let svgDrawerOpen = $state(false);
   let traceDrawerOpen = $state(false);
   let fileMenuOpen = $state(false);
+  let forgedMenuOpen = $state(false);
+  let forgedWorkspace = $state(null);
+  let forgedLoading = $state(false);
   let glyphRailOpen = $state(true);
   let specimenExpanded = $state(false);
   let svgImportText = $state("");
@@ -1130,8 +1133,93 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function exportTtf() {
+  async function refreshForgedWorkspace() {
+    if (!inTauri) return;
+    forgedLoading = true;
+    try {
+      forgedWorkspace = await invokeCmd("foundry_workspace_info");
+    } catch (err) {
+      notify("err", t("err.one"), String(err));
+    } finally {
+      forgedLoading = false;
+    }
+  }
+
+  function toggleForgedMenu() {
+    fileMenuOpen = false;
+    forgedMenuOpen = !forgedMenuOpen;
+    if (forgedMenuOpen) refreshForgedWorkspace();
+  }
+
+  async function openForgedFolder(kind) {
+    if (!inTauri) return;
+    forgedMenuOpen = false;
+    try {
+      await invokeCmd("foundry_open_workspace_folder", { kind });
+    } catch (err) {
+      notify("err", t("err.one"), String(err));
+    }
+  }
+
+  async function saveUfoToWorkspace() {
+    if (!inTauri || vectorBusy) return;
+    vectorBusy = true;
+    forgedMenuOpen = false;
+    try {
+      const proj =
+        mode === "vector" && vectorProject
+          ? syncedVectorProject(vectorProject)
+          : await invokeCmd("foundry_modular_to_project", { req: buildModularReq() });
+      const savedPath = await invokeCmd("foundry_save_ufo_to_workspace", { project: proj });
+      notify("ok", "Saved to UFO Projects", savedPath);
+      refreshForgedWorkspace();
+    } catch (err) {
+      notify("err", t("err.one"), String(err));
+    } finally {
+      vectorBusy = false;
+    }
+  }
+
+  async function openUfoFromWorkspace(ufoEntry) {
+    if (!inTauri || vectorBusy) return;
+    vectorBusy = true;
+    forgedMenuOpen = false;
+    try {
+      const proj = await invokeCmd("foundry_import_ufo_path", { path: ufoEntry.path });
+      if (proj) {
+        loadVectorProject(proj);
+        notify("ok", t("forge.ufoImported"), proj.family_name || ufoEntry.family_name);
+      }
+    } catch (err) {
+      notify("err", t("err.one"), String(err));
+    } finally {
+      vectorBusy = false;
+    }
+  }
+
+  async function exportTtf() {
     if (!compiledBytes.length) return;
+    if (inTauri) {
+      try {
+        const res = await invokeCmd("foundry_export_font_to_workspace", {
+          familyName: familyName.trim() || "Cosmic Font",
+          styleName,
+          ext: "ttf",
+          bytes: Array.from(compiledBytes),
+          archiveToVault: true,
+        });
+        notify(
+          "ok",
+          res.vault_archived ? "Exported .TTF & archived to Vault" : t("forge.exported"),
+          res.export_path,
+        );
+        if (res.vault_archived) onInstalled?.();
+        return;
+      } catch (e) {
+        notify("err", t("err.one"), String(e));
+        return;
+      }
+    }
     const file = `${fontSlug()}.ttf`;
     downloadBlob(new Blob([compiledBytes], { type: "font/ttf" }), file);
     notify("ok", t("forge.exported"), file);
@@ -1143,6 +1231,15 @@
       let woff;
       if (inTauri) {
         woff = new Uint8Array(await invokeCmd("foundry_compile_woff", { ttfBytes: Array.from(compiledBytes) }));
+        const res = await invokeCmd("foundry_export_font_to_workspace", {
+          familyName: familyName.trim() || "Cosmic Font",
+          styleName,
+          ext: "woff",
+          bytes: Array.from(woff),
+          archiveToVault: false,
+        });
+        notify("ok", t("forge.woffExported"), res.export_path);
+        return;
       } else if (import.meta.env.DEV) {
         const { compileWoffFont } = await import("../lib/dev-forge-compiler.js");
         woff = await compileWoffFont(compiledBytes);
@@ -1293,12 +1390,79 @@
       <span class="size-badge num" title={`${Math.max(1, Math.round(compiledBytes.length / 1024))} KB · ${compileStats.glyphCount || Object.keys(glyphs).length + 2} glyphs`}>
         {Math.max(1, Math.round(compiledBytes.length / 1024))}K · {compileStats.glyphCount || Object.keys(glyphs).length + 2}g
       </span>
+      {#if inTauri}
+        <div class="file-menu-wrap">
+          <button
+            type="button"
+            class="btn forged-btn"
+            aria-expanded={forgedMenuOpen}
+            title="Access your UFO Projects, Exports, and Vault folders"
+            onclick={toggleForgedMenu}
+          >
+            <FolderOpen size={13} />Forged
+            <ChevronDown size={11} />
+          </button>
+          {#if forgedMenuOpen}
+            <button
+              type="button"
+              class="file-menu-backdrop"
+              aria-label="Close forged projects menu"
+              onclick={() => (forgedMenuOpen = false)}
+            ></button>
+            <div class="file-menu-pop forged-pop" role="menu">
+              <div class="forged-pop-head">
+                <span class="forged-pop-kicker">UFO PROJECTS</span>
+                <button
+                  type="button"
+                  class="forged-save-mini"
+                  disabled={vectorBusy}
+                  onclick={saveUfoToWorkspace}
+                >
+                  <Save size={11} />Save Current
+                </button>
+              </div>
+              {#if forgedLoading}
+                <div class="forged-empty">Scanning UFO Projects…</div>
+              {:else if forgedWorkspace?.ufo_projects?.length}
+                <div class="forged-list">
+                  {#each forgedWorkspace.ufo_projects as proj (proj.path)}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="forged-proj-item"
+                      disabled={vectorBusy}
+                      title={proj.path}
+                      onclick={() => openUfoFromWorkspace(proj)}
+                    >
+                      <span class="fp-name">{proj.family_name}</span>
+                      <span class="fp-meta num">{proj.style_name} · {proj.glyph_count}g</span>
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <div class="forged-empty">No saved .ufo projects yet. Click Save Current to store one here.</div>
+              {/if}
+              <div class="menu-sep"></div>
+              <span class="forged-pop-kicker pad">OPEN WORKSPACE FOLDERS</span>
+              <button type="button" role="menuitem" onclick={() => openForgedFolder("ufo_projects")}>
+                <FolderOpen size={12} />UFO Projects
+              </button>
+              <button type="button" role="menuitem" onclick={() => openForgedFolder("exports")}>
+                <Download size={12} />Exports (.TTF / .WOFF)
+              </button>
+              <button type="button" role="menuitem" onclick={() => openForgedFolder("vault")}>
+                <Layers size={12} />Font Vault
+              </button>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <div class="file-menu-wrap">
         <button
           type="button"
           class="btn"
           aria-expanded={fileMenuOpen}
-          onclick={() => (fileMenuOpen = !fileMenuOpen)}
+          onclick={() => { forgedMenuOpen = false; fileMenuOpen = !fileMenuOpen; }}
         >
           <MoreHorizontal size={13} />File
           <ChevronDown size={11} />
@@ -1965,7 +2129,6 @@
     flex: 0 1 180px;
     min-width: 110px;
   }
-  .name-box .lbl { font: 700 9.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2); flex: none; }
   .name-box input { border: 0; outline: 0; background: transparent; font: 600 12.5px var(--sans); color: var(--ink); width: 100%; min-width: 60px; }
 
   .style-select {
@@ -2013,6 +2176,34 @@
   }
   .file-menu-pop button:hover:not(:disabled) { background: var(--hov); }
   .file-menu-pop button:disabled { opacity: 0.45; cursor: default; }
+  .forged-btn { border-color: color-mix(in srgb, var(--accent) 42%, var(--line2)); }
+  .forged-pop { min-width: 256px; max-width: 310px; padding: 6px; }
+  .forged-pop-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 3px 6px 5px;
+  }
+  .forged-pop-kicker {
+    font: 700 9.5px var(--mono); letter-spacing: 0.08em; color: var(--ink3);
+  }
+  .forged-pop-kicker.pad { padding: 3px 8px 2px; }
+  .forged-save-mini {
+    height: 22px !important; padding: 0 7px !important;
+    background: var(--accent-soft) !important; color: var(--accent) !important;
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent) !important;
+    border-radius: 6px !important; font: 600 10.5px var(--sans) !important;
+    gap: 4px !important;
+  }
+  .forged-save-mini:hover:not(:disabled) { filter: brightness(1.08); }
+  .forged-list {
+    max-height: 210px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+  }
+  .forged-proj-item {
+    height: auto !important; padding: 6px 8px !important;
+    justify-content: space-between !important;
+  }
+  .fp-name { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fp-meta { font: 500 10.5px var(--mono); color: var(--ink3); flex: none; }
+  .forged-empty { font: 500 11px var(--sans); color: var(--ink3); padding: 8px 8px 10px; line-height: 1.4; }
   .menu-sep { height: 1px; background: var(--line); margin: 3px 4px; }
   .size-badge { font: 500 11px var(--mono); color: var(--ink3); padding-right: 4px; }
   .btn {
