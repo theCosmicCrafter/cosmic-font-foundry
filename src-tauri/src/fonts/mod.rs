@@ -254,7 +254,7 @@ pub fn collect_entries(env: &Environment, watched_folders: &[PathBuf]) -> Vec<Fo
             );
         }
     }
-    for path in list_fonts(&env.user_fonts, false) {
+    for path in list_fonts(&env.user_fonts, true) {
         let origin = if app_installed.contains(&path_key(&path)) {
             Origin::Library
         } else {

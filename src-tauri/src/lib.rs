@@ -1516,13 +1516,28 @@ pub fn run() {
             let hidden = startup::should_start_hidden(&data_dir);
             let env = Environment::real(data_dir.clone());
             let cache = Cache::load(&data_dir.join("fonts-cache.json"));
-            let folders: Vec<PathBuf> = fs::read(data_dir.join("folders.json"))
+            let mut folders: Vec<PathBuf> = fs::read(data_dir.join("folders.json"))
                 .ok()
                 .and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok())
                 .unwrap_or_default()
                 .into_iter()
                 .map(PathBuf::from)
                 .collect();
+
+            // Auto-index Vault and Exports workspace folders if they exist on disk so forged &
+            // vaulted fonts are always discoverable and searchable across all locations on boot.
+            for workspace_dir in [
+                vault::load_vault_path(&data_dir),
+                vault::exports_dir(&data_dir),
+            ] {
+                if workspace_dir.is_dir()
+                    && !folders
+                        .iter()
+                        .any(|x| fonts::path_key(x) == fonts::path_key(&workspace_dir))
+                {
+                    folders.push(workspace_dir);
+                }
+            }
 
             let scope = app.asset_protocol_scope();
             for dir in [

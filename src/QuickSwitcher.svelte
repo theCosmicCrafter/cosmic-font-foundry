@@ -4,6 +4,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { Search, Layers, Check, Circle } from "@lucide/svelte";
   import en from "./i18n/en.js";
+  import { parseSearchQuery, scoreFontMatch } from "./lib/smart-search.js";
 
   let lang = $state(window.__COSMIC__?.settings?.language ?? "en");
   let esDict = $state(null);
@@ -34,10 +35,13 @@
   }
 
   const results = $derived.by(() => {
-    const query = q.trim().toLowerCase();
+    const parsed = parseSearchQuery(q);
     const out = [];
     for (const c of collections) {
-      if (!query || c.name.toLowerCase().includes(query)) {
+      const colScore = !parsed.norm
+        ? 10
+        : scoreFontMatch({ name: c.name, category: "collection" }, parsed);
+      if (colScore > 0) {
         const allActive =
           c.fonts.length > 0 &&
           c.fonts.every((name) => families.find((f) => f.name === name)?.active ?? false);
@@ -48,12 +52,15 @@
           subtitle: `${c.fonts.length} · ${tr("quick.collections")}`,
           active: allActive,
           fonts: c.fonts,
+          score: colScore + 5,
         });
       }
     }
+    const famHits = [];
     for (const f of families) {
-      if (!query || f.name.toLowerCase().includes(query)) {
-        out.push({
+      const s = !parsed.norm ? 1 : scoreFontMatch(f, parsed);
+      if (s > 0) {
+        famHits.push({
           kind: "family",
           id: "fam:" + f.name,
           title: f.name,
@@ -61,11 +68,14 @@
           active: f.active,
           essential: f.essential,
           fonts: [f.name],
+          score: s,
         });
       }
-      if (out.length >= 24) break;
     }
-    return out;
+    if (parsed.norm) {
+      famHits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+    }
+    return [...out, ...famHits].slice(0, 28);
   });
 
   $effect(() => {

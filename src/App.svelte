@@ -44,6 +44,7 @@
   import { discover, loadCatalog, requestGooglePreviews, preloadDiscover, installGoogleFont } from "./lib/discover.svelte.js";
   import { drag, startDrag } from "./lib/drag.svelte.js";
   import { shortcutCombo } from "./lib/shortcuts.js";
+  import { parseSearchQuery, scoreFontMatch, QUICK_SEARCH_THEMES } from "./lib/smart-search.js";
 
   // section: installed | discover | favorites | diagnostics | col:<id> | dir:<path>
   let section = $state(settings.onOpen === "favorites" ? "favorites" : "installed");
@@ -139,10 +140,46 @@
   const activeColSet = $derived(activeCollection ? new Set(activeCollection.fonts.map((n) => n.toLowerCase())) : null);
   const activeStateMap = $derived(new Map(fonts.list.map((f) => [f.name.toLowerCase(), f.active])));
 
+  // ---- Smart Search (Fuzzy + Style + Theme + Geometric Vibe DNA + All Locations) ----
+  const ql = $derived(q.trim().toLowerCase());
+  const parsedQuery = $derived(parseSearchQuery(q));
+  let vibeScoreMap = $state(new Map());
+  let vibeReqSeq = 0;
+
+  $effect(() => {
+    const queryStr = parsedQuery.norm;
+    const shouldRun = Boolean(queryStr && queryStr.length >= 3 && !inDiscover && !inForge && inTauri);
+    if (!shouldRun) {
+      if (vibeScoreMap.size) vibeScoreMap = new Map();
+      return;
+    }
+    const seq = ++vibeReqSeq;
+    const timer = setTimeout(async () => {
+      try {
+        const hits = await invokeCmd("foundry_vibe_search", { query: queryStr, topK: 24 });
+        if (seq !== vibeReqSeq || !Array.isArray(hits)) return;
+        const next = new Map();
+        for (const hit of hits) {
+          if (hit?.family && Number(hit.score) >= 0.48) {
+            next.set(String(hit.family).toLowerCase(), Number(hit.score));
+          }
+        }
+        vibeScoreMap = next;
+      } catch {
+        if (seq === vibeReqSeq && vibeScoreMap.size) vibeScoreMap = new Map();
+      }
+    }, 220);
+    return () => clearTimeout(timer);
+  });
+
+  // When searching from the default Installed view (without Installed Only locked),
+  // automatically search across ALL local font locations (Windows, User, Vault, Exports, Watched Folders).
+  const searchingAllLocations = $derived(Boolean(ql && section === "installed" && !installedOnly));
+
   // ---- Filtered lists ----
   const baseList = $derived.by(() => {
     const l = fonts.list;
-    if (section === "all") return l;
+    if (section === "all" || searchingAllLocations) return l;
     if (section === "favorites") return l.filter((f) => favSet.has(f.name));
     if (section === "diagnostics") return l.filter((f) => f.error || f.has_conflicts || (f.duplicates?.length ?? 0) > 0);
     if (activeSmartCollection) return l.filter((f) => matchesSmartCollection(f, activeSmartCollection.rules, tagsForFamily));
@@ -152,66 +189,70 @@
     return l.filter((f) => f.origin !== "dir" && isVisible(f));
   });
 
-  const ql = $derived(q.trim().toLowerCase());
-  const matchesQuery = (f) =>
-    !ql ||
-    f.name.toLowerCase().includes(ql) ||
-    tagsForFamily(f.name).some((tag) => tag.includes(ql));
+  const localScored = $derived.by(() => {
+    const out = [];
+    for (const f of baseList) {
+      if (installedOnly && f.origin === "dir") continue;
+      if (commercialOnly && f.license_tier !== "free_commercial") continue;
+      if (cat && f.category !== cat) continue;
+      if (script && !(f.scripts ?? []).includes(script)) continue;
+      if (filter === "variable" && !f.is_variable) continue;
+      if (filter === "active" && !(f.active || isLocked(f))) continue;
+      if (filter === "inactive" && (f.active || isLocked(f))) continue;
+      const score = ql
+        ? scoreFontMatch(f, parsedQuery, { tags: tagsForFamily(f.name), vibeScoreMap })
+        : 1;
+      if (score <= 0) continue;
+      out.push({ item: f, score });
+    }
+    return out;
+  });
 
-  const filteredLocal = $derived(
-    baseList.filter((f) => {
-      if (installedOnly && f.origin === "dir") return false;
-      if (commercialOnly && f.license_tier !== "free_commercial") return false;
-      if (cat && f.category !== cat) return false;
-      if (script && !(f.scripts ?? []).includes(script)) return false;
-      if (!matchesQuery(f)) return false;
-      if (filter === "variable") return f.is_variable;
-      if (filter === "active") return f.active || isLocked(f);
-      if (filter === "inactive") return !(f.active || isLocked(f));
-      return true;
-    }),
-  );
+  const filteredLocal = $derived(localScored.map((e) => e.item));
 
   const installedNamesLower = $derived(
     new Set(fonts.list.filter((f) => f.origin !== "dir").map((f) => f.name.toLowerCase())),
   );
   const discoverMetaMap = $derived(new Map(discover.list.map((g) => [g.name.toLowerCase(), g])));
 
-  const favGoogle = $derived(
-    section === "favorites" && !installedOnly
-      ? discover.list.filter(
-          (g) =>
-            favSet.has(g.name) &&
-            !installedNamesLower.has(g.name.toLowerCase()) &&
-            (!cat || g.category === cat) &&
-            (!script || (g.scripts ?? []).includes(script)) &&
-            (!ql || g.name.toLowerCase().includes(ql)) &&
-            filter !== "active" &&
-            (filter !== "variable" || g.is_variable),
-        )
-      : [],
-  );
+  const favGoogle = $derived.by(() => {
+    if (section !== "favorites" || installedOnly || filter === "active") return [];
+    const out = [];
+    for (const g of discover.list) {
+      if (!favSet.has(g.name) || installedNamesLower.has(g.name.toLowerCase())) continue;
+      if (cat && g.category !== cat) continue;
+      if (script && !(g.scripts ?? []).includes(script)) continue;
+      if (filter === "variable" && !g.is_variable) continue;
+      const score = ql ? scoreFontMatch(g, parsedQuery) : 1;
+      if (score <= 0) continue;
+      out.push({ item: g, score });
+    }
+    return out;
+  });
 
   const viewList = $derived.by(() => {
-    const items = favGoogle.length
-      ? [...filteredLocal, ...favGoogle.map((g) => ({ google: g, name: g.name }))]
-      : [...filteredLocal];
-    if (localSort === "popularity") {
-      return items.sort((a, b) => {
+    const entries = favGoogle.length
+      ? [...localScored, ...favGoogle.map(({ item: g, score }) => ({ item: { google: g, name: g.name }, score }))]
+      : [...localScored];
+
+    const tieBreak = (a, b) => {
+      if (localSort === "popularity") {
         const pa = a.google?.popularity ?? discoverMetaMap.get(a.name.toLowerCase())?.popularity ?? 999999;
         const pb = b.google?.popularity ?? discoverMetaMap.get(b.name.toLowerCase())?.popularity ?? 999999;
-        return pa !== pb ? pa - pb : a.name.localeCompare(b.name);
-      });
-    }
-    if (localSort === "recent") {
-      return items.sort((a, b) => {
+        if (pa !== pb) return pa - pb;
+      } else if (localSort === "recent") {
         const da = a.google?.date ?? discoverMetaMap.get(a.name.toLowerCase())?.date ?? "";
         const db = b.google?.date ?? discoverMetaMap.get(b.name.toLowerCase())?.date ?? "";
         if (da !== db) return db > da ? 1 : -1;
-        return a.name.localeCompare(b.name);
-      });
-    }
-    return items.sort((a, b) => a.name.localeCompare(b.name));
+      }
+      return a.name.localeCompare(b.name);
+    };
+
+    entries.sort((a, b) => {
+      if (ql && b.score !== a.score) return b.score - a.score;
+      return tieBreak(a.item, b.item);
+    });
+    return entries.map((e) => e.item);
   });
 
   $effect(() => {
@@ -235,24 +276,31 @@
   });
 
   const googleList = $derived.by(() => {
-    const l = discover.list.filter((g) => {
+    const scored = [];
+    for (const g of discover.list) {
       const isInst = installedNamesLower.has(g.name.toLowerCase());
-      if (installedOnly && !isInst) return false;
-      if (discoverInstallFilter === "installed" && !isInst) return false;
-      if (discoverInstallFilter === "uninstalled" && isInst) return false;
-      return (
-        (discoverSource === "all" ||
-          (discoverSource === "custom"
-            ? (g.source ?? "").startsWith("custom:")
-            : (g.source ?? "google") === discoverSource)) &&
-        (!cat || g.category === cat) &&
-        (!script || (g.scripts ?? []).includes(script)) &&
-        (!ql || g.name.toLowerCase().includes(ql))
-      );
+      if (installedOnly && !isInst) continue;
+      if (discoverInstallFilter === "installed" && !isInst) continue;
+      if (discoverInstallFilter === "uninstalled" && isInst) continue;
+      const srcOk =
+        discoverSource === "all" ||
+        (discoverSource === "custom"
+          ? (g.source ?? "").startsWith("custom:")
+          : (g.source ?? "google") === discoverSource);
+      if (!srcOk) continue;
+      if (cat && g.category !== cat) continue;
+      if (script && !(g.scripts ?? []).includes(script)) continue;
+      const score = ql ? scoreFontMatch(g, parsedQuery) : 1;
+      if (score <= 0) continue;
+      scored.push({ item: g, score });
+    }
+    scored.sort((a, b) => {
+      if (ql && b.score !== a.score) return b.score - a.score;
+      if (discoverSort === "popularity") return a.item.popularity - b.item.popularity;
+      if (discoverSort === "recent") return b.item.date > a.item.date ? 1 : b.item.date < a.item.date ? -1 : 0;
+      return a.item.name.localeCompare(b.item.name);
     });
-    if (discoverSort === "popularity") return [...l].sort((a, b) => a.popularity - b.popularity);
-    if (discoverSort === "recent") return [...l].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : 0));
-    return [...l].sort((a, b) => a.name.localeCompare(b.name));
+    return scored.map((e) => e.item);
   });
 
   const catCounts = $derived.by(() => {
@@ -853,9 +901,12 @@
   <main>
     <header data-tauri-drag-region>
       {#if isNormalView}
-        <label class="field search">
+        <label class="field search" title="Fuzzy name, style (bold, serif, mono, variable), or theme (halloween, retro, modern, coding)">
           <Search size={13} strokeWidth={2} />
           <input bind:this={searchInput} bind:value={q} placeholder={inDiscover ? t("searchGoogle") : t("search")} spellcheck="false" />
+          {#if q}
+            <button type="button" class="reset" title="Clear search" aria-label="Clear search" onclick={() => (q = "")}><X size={9} strokeWidth={3} /></button>
+          {/if}
         </label>
         <label class="field sample-box">
           <span class="a">A</span>
@@ -899,7 +950,12 @@
 
     <div class="title-bar">
       <span class="label">{heading}</span>
-      {#if isNormalView}<span class="count num">{inDiscover ? googleList.length : viewList.length}</span>{/if}
+      {#if isNormalView}
+        <span class="count num">{inDiscover ? googleList.length : viewList.length}</span>
+        {#if searchingAllLocations}
+          <span class="scope-badge" title="Searching Windows Fonts, User Fonts, Vault, Exports, and all Watched Folders">All locations</span>
+        {/if}
+      {/if}
       <div class="right">
         {#if isNormalView && !inDiagnostics}
           <button
@@ -1086,6 +1142,28 @@
         {/if}
       </div>
     </div>
+
+    {#if isNormalView && !inDiagnostics}
+      <div class="theme-strip" aria-label="Quick style and theme search">
+        <span class="theme-strip-lbl">Themes:</span>
+        {#each QUICK_SEARCH_THEMES as th (th.query)}
+          {@const active = ql === th.query}
+          <button
+            type="button"
+            class="theme-chip"
+            class:active
+            onclick={() => (q = active ? "" : th.query)}
+          >
+            {th.label}
+          </button>
+        {/each}
+        {#if ql && parsedQuery.themes.length}
+          <span class="theme-match-hint">
+            Smart match: {parsedQuery.themes.map((th) => th.label).join(" + ")}
+          </span>
+        {/if}
+      </div>
+    {/if}
 
     {#if activeFolder && isNormalView}
       <div class="folder-banner">
@@ -1393,7 +1471,7 @@
     box-shadow: 0 0 0 1.5px var(--accent), var(--glow);
     color: var(--accent);
   }
-  .search { flex: 0 1 175px; min-width: 120px; }
+  .search { flex: 0 1 255px; min-width: 155px; }
   .sample-box { flex: 1 1 180px; min-width: 110px; max-width: 280px; }
   .field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 500 12.5px var(--sans); color: var(--ink); }
   .a { font: 700 12px var(--sans); color: var(--ink3); }
@@ -1416,8 +1494,58 @@
   .scan-btn:hover { background: var(--accent-2); color: #090b12; }
   .view-mode { margin-right: 12px; display: flex; }
 
-  .title-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 24px 8px; min-height: 46px; }
+  .title-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 24px 6px; min-height: 44px; }
   .count { font-size: 10.5px; color: var(--ink3); }
+  .scope-badge {
+    font: 600 10px var(--mono);
+    letter-spacing: 0.04em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--cyan-soft);
+    color: var(--accent-2);
+  }
+  .theme-strip {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 24px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .theme-strip::-webkit-scrollbar { display: none; }
+  .theme-strip-lbl {
+    font: 700 9.5px var(--mono);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink3);
+    margin-right: 2px;
+    flex: none;
+  }
+  .theme-chip {
+    flex: none;
+    height: 22px;
+    padding: 0 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--field);
+    color: var(--ink2);
+    font: 500 11px var(--sans);
+    transition: all 0.14s;
+  }
+  .theme-chip:hover { color: var(--ink); border-color: var(--line2); background: var(--chip); }
+  .theme-chip.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .theme-match-hint {
+    margin-left: auto;
+    flex: none;
+    font: 500 10.5px var(--mono);
+    color: var(--accent-2);
+  }
   .right { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
   .sep { width: 1px; height: 16px; background: var(--line2); margin: 0 4px; }
   .pill {
