@@ -15,8 +15,7 @@
     Download,
     CheckCircle2,
     AlertCircle,
-    Braces,
-    Dices,
+    SlidersHorizontal,
   } from "@lucide/svelte";
   import { invokeCmd } from "../../lib/fonts.svelte.js";
   import { inTauri } from "../../lib/settings.svelte.js";
@@ -30,127 +29,149 @@
   const MAX_EXEMPLAR_CHIPS = 24;
   const SEED_PRIORITY_CHARS = ["H", "O", "A", "n", "o"];
 
+  const DEFAULT_STYLE_PROMPT =
+    "humanist sans-serif, semibold 600 weight, low stroke contrast, normal proportions, smooth clean vector curves, calm and businesslike";
+
   const STYLE_PRESETS = [
     {
       label: "Humanist Sans 600",
-      prompt: "humanist sans-serif, 600 weight, calm, business, normal style",
+      prompt: DEFAULT_STYLE_PROMPT,
     },
     {
-      label: "Art-Deco Serif",
-      prompt: "high-contrast, narrow, art-deco, luxury editorial serif",
+      label: "Art-Deco Luxury Serif",
+      prompt:
+        "didone serif, regular 400 weight, high stroke contrast, condensed narrow proportions, crisp sharp corners, elegant luxury editorial",
     },
     {
       label: "Brutalist Stencil",
-      prompt: "chunky, brutalist, industrial stencil, heavy display",
+      prompt:
+        "industrial stencil display, black 900 weight, uniform monolinear strokes, chunky brutalist geometric forms, bold expressive headline",
     },
     {
       label: "Vintage Rounded",
-      prompt: "active, cute, vintage, rounded warm display",
+      prompt:
+        "grotesque sans-serif, bold 700 weight, low stroke contrast, soft rounded terminals, playful warm and friendly, vintage retro signage",
     },
     {
-      label: "Geometric Mono",
-      prompt: "geometric monospace, technical, sharp, coding",
+      label: "Coding Mono",
+      prompt:
+        "geometric monospace, medium 500 weight, uniform monolinear strokes, tall x-height proportions, crisp sharp corners, technical futuristic precision",
     },
     {
-      label: "Wildcard Sampler",
-      prompt: "__sans__, __weight__, __mood__, __contrast__, __era__ style",
+      label: "Contemporary Ink-Trap",
+      prompt:
+        "grotesque sans-serif, bold 700 weight, moderate stroke contrast, wide extended proportions, ink-trap notched corners, bold expressive headline",
     },
     {
-      label: "Serif Study",
-      prompt: "__serif__, __weight__, __texture__, __proportions__, __terminals__",
+      label: "Classic Book Serif",
+      prompt:
+        "old-style serif, regular 400 weight, moderate stroke contrast, normal proportions, teardrop ball terminals, calligraphic broad-nib modulation",
     },
   ];
 
-  // Prompt wildcard collections — `__name__` expands to one random phrase per run.
-  // `{a|b|c}` inline choices are resolved by expandChoices() before token expansion.
-  const WILDCARD_COLLECTIONS = {
-    weight: [
-      "hairline weight",
-      "light weight",
-      "regular weight",
-      "medium weight",
-      "semibold weight",
-      "bold weight",
-      "black weight",
-    ],
-    contrast: [
-      "low stroke contrast",
-      "moderate stroke contrast",
-      "high stroke contrast",
-      "extreme stroke modulation",
-    ],
-    serif: [
-      "old-style serif",
-      "transitional serif",
-      "didone serif",
-      "slab serif",
-      "wedge serif",
-      "humanist serif",
-      "geometric serif",
-    ],
-    sans: [
-      "grotesque sans-serif",
-      "neo-grotesque sans-serif",
-      "humanist sans-serif",
-      "geometric sans-serif",
-      "square sans-serif",
-    ],
-    mood: [
-      "calm and businesslike",
-      "confident and authoritative",
-      "playful and friendly",
-      "elegant and luxurious",
-      "technical and precise",
-      "warm and approachable",
-      "bold and expressive",
-      "minimal and neutral",
-    ],
-    texture: [
-      "smooth uniform strokes",
-      "subtle stroke modulation",
-      "ink-trap terminals",
-      "brushed stroke texture",
-      "calligraphic stroke contrast",
-    ],
-    era: [
-      "contemporary",
-      "modern",
-      "retro",
-      "vintage",
-      "futuristic",
-      "timeless classic",
-    ],
-    terminals: [
-      "flat terminals",
-      "rounded terminals",
-      "angled terminals",
-      "slab terminals",
-      "sheared terminals",
-    ],
-    proportions: [
-      "narrow proportions",
-      "normal proportions",
-      "wide proportions",
-      "condensed proportions",
-      "extended proportions",
-    ],
-    spacing: [
-      "tight spacing",
-      "normal spacing",
-      "generous spacing",
-      "open spacing",
-    ],
-    display: [
-      "display size",
-      "text size",
-      "headline",
-      "poster",
-      "caption",
-    ],
-    mono: ["monospace", "proportional"],
-  };
-
-  const WILDCARD_NAMES = Object.keys(WILDCARD_COLLECTIONS);
+  // Beginner-friendly guided font trait categories.
+  // "single" swaps any existing selection from the same category; "multi" toggles independently.
+  const TRAIT_CATEGORIES = [
+    {
+      id: "style",
+      label: "Font Style",
+      mode: "single",
+      hint: "Overall typeface family — pick one base style",
+      items: [
+        { label: "Humanist Sans", token: "humanist sans-serif", tip: "Clean, natural modern letters without feet — warm and readable" },
+        { label: "Geometric Sans", token: "geometric sans-serif", tip: "Built from crisp circles and straight lines — modern and minimal" },
+        { label: "Grotesque Sans", token: "grotesque sans-serif", tip: "Classic neo-grotesque UI and editorial sans like Helvetica or Inter" },
+        { label: "Classic Book Serif", token: "old-style serif", tip: "Traditional literary letters with organic angled serifs" },
+        { label: "Editorial Serif", token: "transitional serif", tip: "Crisp, balanced magazine and headline serif" },
+        { label: "High-Fashion Didone", token: "didone serif", tip: "Luxury editorial style with razor-thin hairlines and bold stems" },
+        { label: "Slab Serif", token: "slab serif", tip: "Sturdy, blocky rectangular serifs — bold and mechanical" },
+        { label: "Coding Monospace", token: "geometric monospace", tip: "Fixed-width technical letters for code and terminals" },
+        { label: "Calligraphic Script", token: "calligraphic script", tip: "Flowing pen- or brush-inspired letterforms" },
+        { label: "Industrial Stencil", token: "industrial stencil display", tip: "Cut-out stencil bridges across strokes" },
+      ],
+    },
+    {
+      id: "weight",
+      label: "Weight (Thickness)",
+      mode: "single",
+      hint: "How thin or heavy the strokes look — pick one",
+      items: [
+        { label: "Hairline (100)", token: "hairline 100 weight", tip: "Ultra-delicate needle-thin strokes" },
+        { label: "Light (300)", token: "light 300 weight", tip: "Airy, slender strokes" },
+        { label: "Regular (400)", token: "regular 400 weight", tip: "Balanced everyday reading thickness" },
+        { label: "Medium (500)", token: "medium 500 weight", tip: "Slightly firmer than Regular for crisp UI text" },
+        { label: "SemiBold (600)", token: "semibold 600 weight", tip: "Strong, confident subheadings" },
+        { label: "Bold (700)", token: "bold 700 weight", tip: "Thick, punchy headlines" },
+        { label: "Black / Heavy (900)", token: "black 900 weight", tip: "Massive, ultra-chunky poster weight" },
+      ],
+    },
+    {
+      id: "contrast",
+      label: "Stroke Contrast",
+      mode: "single",
+      hint: "Difference between thick stems and thin crossbars — pick one",
+      items: [
+        { label: "Monoline (Even)", token: "uniform monolinear strokes", tip: "Every part of the letter has the same even thickness" },
+        { label: "Low Contrast", token: "low stroke contrast", tip: "Subtle, smooth thickness transitions" },
+        { label: "Medium Contrast", token: "moderate stroke contrast", tip: "Classic balanced thick-and-thin strokes" },
+        { label: "High Contrast", token: "high stroke contrast", tip: "Dramatic thick verticals paired with delicate hairlines" },
+        { label: "Extreme Modulation", token: "extreme stroke modulation", tip: "Showpiece poster contrast between ultra-thick and hairline strokes" },
+      ],
+    },
+    {
+      id: "proportions",
+      label: "Width & Spacing",
+      mode: "single",
+      hint: "How narrow, wide, or tall letters sit — pick one",
+      items: [
+        { label: "Condensed (Narrow)", token: "condensed narrow proportions", tip: "Tall, space-saving narrow letters" },
+        { label: "Normal Width", token: "normal proportions", tip: "Balanced standard letter width" },
+        { label: "Wide / Extended", token: "wide extended proportions", tip: "Stretched, cinematic wide stance" },
+        { label: "Tall Lowercase", token: "tall x-height proportions", tip: "Large, open lowercase bowls for high legibility" },
+      ],
+    },
+    {
+      id: "terminals",
+      label: "Corners & Terminals",
+      mode: "multi",
+      hint: "How letter tips and corners are finished — click one or more",
+      items: [
+        { label: "Sharp Corners", token: "crisp sharp corners", tip: "Clean, crisp 90-degree edges" },
+        { label: "Rounded Ends", token: "soft rounded terminals", tip: "Friendly, pill-smooth stroke endings" },
+        { label: "Ink Traps", token: "ink-trap notched corners", tip: "Contemporary notched inner corners for crisp display type" },
+        { label: "Angled Cuts", token: "sheared angled terminals", tip: "Dynamic diagonal stroke endings" },
+        { label: "Ball Terminals", token: "teardrop ball terminals", tip: "Classic circular droplets on letter tips" },
+        { label: "Chamfered / Beveled", token: "chamfered beveled corners", tip: "Faceted 45-degree industrial cut corners" },
+      ],
+    },
+    {
+      id: "texture",
+      label: "Texture & Structure",
+      mode: "multi",
+      hint: "Surface feel and construction style — click one or more",
+      items: [
+        { label: "Clean & Smooth", token: "smooth clean vector curves", tip: "Polished, razor-clean studio outlines" },
+        { label: "Broad-Nib Pen", token: "calligraphic broad-nib modulation", tip: "Angled pen-ribbon stroke structure" },
+        { label: "Hand-Inked / Organic", token: "organic hand-inked texture", tip: "Warm, human hand-crafted edge character" },
+        { label: "Brutalist / Modular", token: "chunky brutalist geometric forms", tip: "Bold architectural blocks and stark geometry" },
+        { label: "Chiseled / Engraved", token: "chiseled flared capitals", tip: "Stone-carved monumental flair at stem ends" },
+      ],
+    },
+    {
+      id: "mood",
+      label: "Mood & Vibe",
+      mode: "multi",
+      hint: "Personality and use case — click one or more",
+      items: [
+        { label: "Calm & Business", token: "calm and businesslike", tip: "Trustworthy, clean UI or corporate voice" },
+        { label: "Luxury & Editorial", token: "elegant luxury editorial", tip: "Refined magazine, fashion, or boutique branding" },
+        { label: "Playful & Friendly", token: "playful warm and friendly", tip: "Approachable, upbeat, inviting personality" },
+        { label: "Tech & Futuristic", token: "technical futuristic precision", tip: "Engineered sci-fi and developer aesthetic" },
+        { label: "Bold Poster", token: "bold expressive headline", tip: "High-impact album cover or poster energy" },
+        { label: "Vintage / Retro", token: "vintage retro signage", tip: "Nostalgic 70s/80s print and signage charm" },
+      ],
+    },
+  ];
 
   const UPPER_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const LOWER_CHARS = "abcdefghijklmnopqrstuvwxyz";
@@ -281,102 +302,80 @@
   }
 
   // Style & conditioning
-  let stylePrompt = $state("humanist sans-serif, 600 weight, calm, clean, normal style");
+  let stylePrompt = $state(DEFAULT_STYLE_PROMPT);
   let selectedExemplarKeys = $state([]);
   let temperature = $state(0.0);
 
-  // Prompt wildcards & resolved preview
-  let promptEl = $state(null);
-  let wildOpen = $state(false);
-  let previewNonce = $state(0);
-  let copiedResolved = $state(false);
-  let resolvedCopyTimer = null;
+  // Guided Trait Picker & two-way prompt assembly
+  let traitsOpen = $state(true);
+  let activeCategoryFilter = $state("all");
 
-  function pickOption(options, rng) {
-    return options[Math.floor(rng() * options.length)];
+  function parsePromptPhrases(raw) {
+    return (raw || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
 
-  // Expands {a|b|c} choice groups inside-out so nested groups resolve correctly.
-  function expandChoices(text, rng) {
-    let out = text;
-    for (let guard = 0; guard < 64; guard++) {
-      const m = out.match(/\{([^{}]*)\}/);
-      if (!m) break;
-      const options = m[1].split("|").map((s) => s.trim()).filter(Boolean);
-      const repl = options.length ? pickOption(options, rng) : m[0];
-      out = out.slice(0, m.index) + repl + out.slice(m.index + m[0].length);
-    }
-    return out;
-  }
+  const activeTokenSet = $derived.by(() => {
+    return new Set(parsePromptPhrases(stylePrompt).map((p) => p.toLowerCase()));
+  });
 
-  // Resolves {a|b} choices then __collection__ tokens. Unknown tokens stay literal
-  // and are reported so the preview can flag them. Each call rolls independently —
-  // one roll per Generate keeps batch glyphs stylistically consistent.
-  function resolvePrompt(raw, rng = Math.random) {
-    const used = new Set();
-    const unknown = new Set();
-    let text = expandChoices(raw, rng);
-    text = text.replace(/__([A-Za-z0-9_-]+)__/g, (whole, name) => {
-      const coll = WILDCARD_COLLECTIONS[name.toLowerCase()];
-      if (!coll?.length) {
-        unknown.add(name);
-        return whole;
+  const selectedTraitCount = $derived.by(() => {
+    let count = 0;
+    for (const cat of TRAIT_CATEGORIES) {
+      for (const item of cat.items) {
+        if (activeTokenSet.has(item.token.toLowerCase())) count++;
       }
-      used.add(name.toLowerCase());
-      return pickOption(coll, rng);
-    });
-    text = text
-      .replace(/\s*,\s*/g, ", ")
-      .replace(/,\s*,+/g, ",")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-    return { text, used: [...used], unknown: [...unknown] };
-  }
-
-  const resolvedPreview = $derived.by(() => {
-    void previewNonce;
-    return resolvePrompt(stylePrompt || "");
-  });
-
-  const wildcardTokenCount = $derived.by(() => {
-    const m = (stylePrompt || "").match(/__[A-Za-z0-9_-]+__/g);
-    return m ? m.length : 0;
-  });
-
-  const choiceGroupCount = $derived.by(() => {
-    const m = (stylePrompt || "").match(/\{[^{}]*\|[^{}]*\}/g);
-    return m ? m.length : 0;
-  });
-
-  function insertWildcard(name) {
-    const token = `__${name}__`;
-    const el = promptEl;
-    const start = el?.selectionStart ?? (stylePrompt || "").length;
-    const end = el?.selectionEnd ?? start;
-    stylePrompt = (stylePrompt || "").slice(0, start) + token + (stylePrompt || "").slice(end);
-    previewNonce += 1;
-    requestAnimationFrame(() => {
-      el?.focus();
-      const pos = start + token.length;
-      el?.setSelectionRange(pos, pos);
-    });
-  }
-
-  function rerollPreview() {
-    previewNonce += 1;
-  }
-
-  async function copyResolvedPrompt() {
-    try {
-      await navigator.clipboard.writeText(resolvedPreview.text);
-      copiedResolved = true;
-      if (resolvedCopyTimer) clearTimeout(resolvedCopyTimer);
-      resolvedCopyTimer = setTimeout(() => {
-        copiedResolved = false;
-      }, 1600);
-    } catch {
-      // Clipboard unavailable — non-fatal
     }
+    return count;
+  });
+
+  const visibleTraitCategories = $derived.by(() => {
+    return activeCategoryFilter === "all"
+      ? TRAIT_CATEGORIES
+      : TRAIT_CATEGORIES.filter((c) => c.id === activeCategoryFilter);
+  });
+
+  function categorySelectedCount(cat) {
+    let n = 0;
+    for (const item of cat.items) {
+      if (activeTokenSet.has(item.token.toLowerCase())) n++;
+    }
+    return n;
+  }
+
+  function toggleTrait(category, item) {
+    const phrases = parsePromptPhrases(stylePrompt);
+    const targetLower = item.token.toLowerCase();
+    const already = phrases.some((p) => p.toLowerCase() === targetLower);
+    if (already) {
+      stylePrompt = phrases.filter((p) => p.toLowerCase() !== targetLower).join(", ");
+      return;
+    }
+    if (category.mode === "single") {
+      const siblingSet = new Set(category.items.map((x) => x.token.toLowerCase()));
+      let replaced = false;
+      const next = [];
+      for (const p of phrases) {
+        if (siblingSet.has(p.toLowerCase())) {
+          if (!replaced) {
+            next.push(item.token);
+            replaced = true;
+          }
+        } else {
+          next.push(p);
+        }
+      }
+      if (!replaced) next.push(item.token);
+      stylePrompt = next.join(", ");
+    } else {
+      stylePrompt = [...phrases, item.token].join(", ");
+    }
+  }
+
+  function clearAllTraits() {
+    stylePrompt = "";
   }
 
   // Scope & foundry post-processing
@@ -654,14 +653,10 @@
     if (isDisabled) return;
     const trimmedPrompt = stylePrompt.trim();
     if (!trimmedPrompt) {
-      errorMsg = "Enter a VecGlypher style prompt before generating.";
+      errorMsg = "Pick traits above or describe your font style before generating.";
       return;
     }
-    const resolvedPrompt = resolvePrompt(trimmedPrompt).text;
-    if (!resolvedPrompt) {
-      errorMsg = "Prompt resolves to empty after wildcard expansion.";
-      return;
-    }
+    const resolvedPrompt = trimmedPrompt;
     if (scope === "single" && !activeChar) {
       errorMsg = "Select an active glyph to generate.";
       return;
@@ -811,7 +806,6 @@
     unlistenProgress?.();
     unlistenPull?.();
     if (copyTimer) clearTimeout(copyTimer);
-    if (resolvedCopyTimer) clearTimeout(resolvedCopyTimer);
   });
 </script>
 
@@ -1181,30 +1175,41 @@
     {/if}
   </section>
 
-  <!-- 2. VecGlypher Style Prompt & Conditioning Mode -->
+  <!-- 2. Guided Trait Builder & Style Prompt -->
   <section class="panel-block" aria-label="Style prompt and conditioning">
     <div class="block-head">
       <span class="block-title">
         <Sparkles size={12} />
-        <span>VecGlypher Style Prompt</span>
+        <span>Style &amp; Trait Builder</span>
       </span>
 
       <div class="head-actions">
         <button
           type="button"
-          class="wild-toggle"
-          class:active={wildOpen}
-          class:has-tokens={wildcardTokenCount > 0}
-          aria-expanded={wildOpen}
-          title={"Wildcard collections and {a|b} inline choices — re-rolled on every Generate"}
-          onclick={() => (wildOpen = !wildOpen)}
+          class="trait-toggle"
+          class:active={traitsOpen}
+          aria-expanded={traitsOpen}
+          title="Show or hide beginner-friendly clickable font trait lists"
+          onclick={() => (traitsOpen = !traitsOpen)}
         >
-          <Braces size={11} />
-          <span>Wildcards</span>
-          {#if wildcardTokenCount > 0}
-            <span class="wild-count num">{wildcardTokenCount}</span>
+          <SlidersHorizontal size={11} />
+          <span>Trait Builder</span>
+          {#if selectedTraitCount > 0}
+            <span class="trait-count num">{selectedTraitCount}</span>
           {/if}
         </button>
+
+        {#if stylePrompt.trim()}
+          <button
+            type="button"
+            class="btn-inline compact"
+            title="Clear all style traits and prompt text"
+            disabled={isDisabled}
+            onclick={clearAllTraits}
+          >
+            Clear
+          </button>
+        {/if}
 
         <div class="temp-switch" role="radiogroup" aria-label="Sampling temperature">
           <button
@@ -1233,97 +1238,7 @@
       </div>
     </div>
 
-    <textarea
-      class="prompt-input"
-      rows="2"
-      bind:this={promptEl}
-      bind:value={stylePrompt}
-      disabled={isDisabled}
-      spellcheck="false"
-      placeholder={"Describe weight, contrast, mood, serif style, proportions… try __sans__ or {old-style|didone}"}
-      onkeydown={(e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-          e.preventDefault();
-          handleGenerate();
-        }
-      }}
-    ></textarea>
-
-    {#if wildOpen}
-      <div class="wild-panel">
-        <div class="wild-grid" role="group" aria-label="Wildcard collections">
-          {#each WILDCARD_NAMES as name (name)}
-            <button
-              type="button"
-              class="wild-chip"
-              title={`${name} → ${WILDCARD_COLLECTIONS[name].join(" / ")}`}
-              disabled={isDisabled}
-              onclick={() => insertWildcard(name)}
-            >
-              __{name}__
-            </button>
-          {/each}
-        </div>
-        <div class="wild-hint">
-          <code>{"{a|b|c}"}</code> inline choice · <code>__token__</code> collection · each Generate re-rolls all wildcards
-        </div>
-      </div>
-    {/if}
-
-    <div
-      class="resolve-panel"
-      class:active={resolvedPreview.used.length > 0 || resolvedPreview.unknown.length > 0}
-      aria-live="polite"
-    >
-      <div class="resolve-head">
-        <span class="resolve-lbl">Resolved</span>
-        <span class="resolve-count num" title="Characters in resolved prompt">{resolvedPreview.text.length}</span>
-        <div class="resolve-chips">
-          {#each resolvedPreview.used as u (u)}
-            <span class="resolve-chip">__{u}__</span>
-          {/each}
-          {#if choiceGroupCount > 0}
-            <span class="resolve-chip choice" title={"Inline {a|b} choice groups in prompt"}>
-              <Dices size={9} />{choiceGroupCount}
-            </span>
-          {/if}
-        </div>
-        <div class="resolve-actions">
-          <button
-            type="button"
-            class="resolve-btn"
-            title="Re-roll wildcard resolution"
-            disabled={isDisabled || (wildcardTokenCount === 0 && choiceGroupCount === 0)}
-            onclick={rerollPreview}
-          >
-            <Dices size={10} />
-          </button>
-          <button
-            type="button"
-            class="resolve-btn"
-            title="Copy resolved prompt"
-            disabled={!resolvedPreview.text}
-            onclick={copyResolvedPrompt}
-          >
-            {#if copiedResolved}
-              <Check size={10} />
-            {:else}
-              <Copy size={10} />
-            {/if}
-          </button>
-        </div>
-      </div>
-      <div class="resolve-text" class:muted={!resolvedPreview.text}>
-        {resolvedPreview.text || "Prompt resolves to empty."}
-      </div>
-      {#if resolvedPreview.unknown.length > 0}
-        <div class="resolve-warn">
-          Unknown token{resolvedPreview.unknown.length > 1 ? "s" : ""} left literal: {resolvedPreview.unknown.map((u) => `__${u}__`).join(", ")}
-        </div>
-      {/if}
-    </div>
-
-    <div class="preset-row">
+    <div class="preset-row" aria-label="Quick starter style presets">
       {#each STYLE_PRESETS as preset (preset.prompt)}
         <button
           type="button"
@@ -1337,6 +1252,95 @@
         </button>
       {/each}
     </div>
+
+    {#if traitsOpen}
+      <div class="trait-panel">
+        <div class="trait-filter-row" role="tablist" aria-label="Trait categories">
+          <button
+            type="button"
+            role="tab"
+            class="trait-tab"
+            class:active={activeCategoryFilter === "all"}
+            aria-selected={activeCategoryFilter === "all"}
+            onclick={() => (activeCategoryFilter = "all")}
+          >
+            <span>All Traits</span>
+            {#if selectedTraitCount > 0}
+              <span class="trait-tab-count num">{selectedTraitCount}</span>
+            {/if}
+          </button>
+          {#each TRAIT_CATEGORIES as cat (cat.id)}
+            {@const catCount = categorySelectedCount(cat)}
+            <button
+              type="button"
+              role="tab"
+              class="trait-tab"
+              class:active={activeCategoryFilter === cat.id}
+              aria-selected={activeCategoryFilter === cat.id}
+              onclick={() => (activeCategoryFilter = cat.id)}
+            >
+              <span>{cat.label}</span>
+              {#if catCount > 0}
+                <span class="trait-tab-count num">{catCount}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+
+        <div
+          class="trait-lists"
+          class:scroll-all={activeCategoryFilter === "all"}
+        >
+          {#each visibleTraitCategories as cat (cat.id)}
+            <div class="trait-group">
+              <div class="trait-group-head">
+                <span class="trait-group-title">{cat.label}</span>
+                <span class="trait-mode-badge">
+                  {cat.mode === "single" ? "Pick 1" : "Pick any"}
+                </span>
+                <span class="trait-hint">{cat.hint}</span>
+              </div>
+              <div class="trait-grid" role="group" aria-label={cat.label}>
+                {#each cat.items as item (item.token)}
+                  {@const isSelected = activeTokenSet.has(item.token.toLowerCase())}
+                  <button
+                    type="button"
+                    class="trait-chip"
+                    class:selected={isSelected}
+                    aria-pressed={isSelected}
+                    title={`${item.tip} (${item.token})`}
+                    disabled={isDisabled}
+                    onclick={() => toggleTrait(cat, item)}
+                  >
+                    {item.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    <div class="prompt-field-head">
+      <span>Assembled Style Prompt</span>
+      <span class="prompt-field-sub">Click traits above or type custom details</span>
+    </div>
+
+    <textarea
+      class="prompt-input"
+      rows="2"
+      bind:value={stylePrompt}
+      disabled={isDisabled}
+      spellcheck="false"
+      placeholder="Click traits above or describe weight, contrast, corners, texture, and mood…"
+      onkeydown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          handleGenerate();
+        }
+      }}
+    ></textarea>
 
     <!-- Few-Shot Image-to-Glyph Exemplars -->
     <div class="exemplar-box">
@@ -1530,8 +1534,8 @@
 
   <div class="drawer-footer">
     <span class="footer-hint">
-      {#if wildcardTokenCount > 0 || choiceGroupCount > 0}
-        {wildcardTokenCount + choiceGroupCount} wildcard{wildcardTokenCount + choiceGroupCount === 1 ? "" : "s"} re-roll per run ·
+      {#if selectedTraitCount > 0}
+        {selectedTraitCount} trait{selectedTraitCount === 1 ? "" : "s"} ·
       {/if}
       {#if selectedExemplarKeys.length > 0}
         {selectedExemplarKeys.length} exemplar(s)
@@ -1855,7 +1859,7 @@
     flex-wrap: wrap;
   }
 
-  .wild-toggle {
+  .trait-toggle {
     height: 22px;
     padding: 0 8px;
     border-radius: 999px;
@@ -1868,19 +1872,16 @@
     gap: 4px;
     transition: border-color 0.14s, background-color 0.14s, color 0.14s;
   }
-  .wild-toggle:hover {
+  .trait-toggle:hover {
     color: var(--ink);
     border-color: var(--accent-2);
   }
-  .wild-toggle.active {
+  .trait-toggle.active {
     background: var(--accent-soft);
     border-color: var(--accent);
     color: var(--accent-2);
   }
-  .wild-toggle.has-tokens {
-    border-color: var(--accent);
-  }
-  .wild-count {
+  .trait-count {
     min-width: 15px;
     height: 14px;
     padding: 0 4px;
@@ -1893,145 +1894,138 @@
     justify-content: center;
   }
 
-  .wild-panel {
+  .trait-panel {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    padding: 7px 8px;
+    gap: 7px;
+    padding: 8px;
     border-radius: 8px;
     background: var(--field);
-    border: 1px dashed var(--line2);
+    border: 1px solid var(--line2);
   }
-  .wild-grid {
+  .trait-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .trait-tab {
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--win, var(--side));
+    color: var(--ink2);
+    font: 600 10px var(--sans);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+  }
+  .trait-tab:hover {
+    color: var(--ink);
+    border-color: var(--accent-2);
+  }
+  .trait-tab.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .trait-tab-count {
+    padding: 0 4px;
+    height: 13px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22);
+    font: 700 9px var(--mono);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .trait-tab:not(.active) .trait-tab-count {
+    background: var(--accent-soft);
+    color: var(--accent-2);
+  }
+
+  .trait-lists {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .trait-lists.scroll-all {
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .trait-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .trait-group-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .trait-group-title {
+    font: 700 10.5px var(--sans);
+    color: var(--ink);
+  }
+  .trait-mode-badge {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--win, var(--side));
+    border: 1px solid var(--line);
+    color: var(--ink3);
+    font: 600 9px var(--mono);
+    text-transform: uppercase;
+  }
+  .trait-hint {
+    font: 500 10px var(--sans);
+    color: var(--ink3);
+  }
+  .trait-grid {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
   }
-  .wild-chip {
-    height: 21px;
-    padding: 0 7px;
+  .trait-chip {
+    height: 23px;
+    padding: 0 8px;
     border-radius: 6px;
     border: 1px solid var(--line);
     background: var(--win, var(--side));
     color: var(--ink2);
-    font: 600 10px var(--mono);
-    transition: border-color 0.12s, color 0.12s, background-color 0.12s;
+    font: 600 10.5px var(--sans);
+    transition: border-color 0.12s, background-color 0.12s, color 0.12s;
   }
-  .wild-chip:hover:not(:disabled) {
+  .trait-chip:hover:not(:disabled) {
+    border-color: var(--accent-2);
+    color: var(--ink);
+  }
+  .trait-chip.selected {
+    background: var(--accent);
     border-color: var(--accent);
-    color: var(--accent-2);
-    background: var(--accent-soft);
+    color: #fff;
   }
-  .wild-chip:disabled {
+  .trait-chip:disabled {
     opacity: 0.45;
     cursor: default;
   }
-  .wild-hint {
-    font: 500 10px var(--sans);
-    color: var(--ink3);
-  }
-  .wild-hint code {
-    font: 600 10px var(--mono);
-    color: var(--ink2);
-    background: var(--win, var(--side));
-    padding: 0 4px;
-    border-radius: 4px;
-    border: 1px solid var(--line);
-  }
 
-  .resolve-panel {
+  .prompt-field-head {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 6px 8px;
-    border-radius: 8px;
-    background: var(--field);
-    border: 1px solid var(--line);
-    transition: border-color 0.14s;
-  }
-  .resolve-panel.active {
-    border-color: var(--accent);
-  }
-  .resolve-head {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
     flex-wrap: wrap;
-  }
-  .resolve-lbl {
-    font: 700 9.5px var(--sans);
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--ink3);
-    flex: none;
-  }
-  .resolve-count {
-    font: 500 10px var(--mono);
-    color: var(--ink3);
-    flex: none;
-  }
-  .resolve-chips {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    flex-wrap: wrap;
-    flex: 1;
-    min-width: 0;
-  }
-  .resolve-chip {
-    height: 16px;
-    padding: 0 6px;
-    border-radius: 999px;
-    background: var(--accent-soft);
-    border: 1px solid var(--accent);
-    color: var(--accent-2);
-    font: 600 9.5px var(--mono);
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-  }
-  .resolve-chip.choice {
-    background: var(--field);
-    border-color: var(--line2);
+    font: 600 10.5px var(--sans);
     color: var(--ink2);
   }
-  .resolve-actions {
-    display: inline-flex;
-    gap: 3px;
-    flex: none;
-  }
-  .resolve-btn {
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    background: var(--win, var(--side));
-    color: var(--ink2);
-    display: inline-grid;
-    place-items: center;
-    transition: border-color 0.12s, color 0.12s;
-  }
-  .resolve-btn:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent-2);
-  }
-  .resolve-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .resolve-text {
-    font: 500 11px/1.45 var(--mono);
-    color: var(--ink);
-    word-break: break-word;
-    max-height: 54px;
-    overflow-y: auto;
-  }
-  .resolve-text.muted {
-    color: var(--ink3);
-  }
-  .resolve-warn {
+  .prompt-field-sub {
     font: 500 10px var(--sans);
-    color: var(--warn, #e5a50a);
+    color: var(--ink3);
   }
 
   .prompt-input {
