@@ -62,11 +62,19 @@ fn is_public_url(url: &reqwest::Url) -> bool {
 }
 
 pub(super) fn custom_http_client() -> Result<reqwest::Client, String> {
+    build_custom_client(25)
+}
+
+pub(super) fn custom_download_http_client() -> Result<reqwest::Client, String> {
+    build_custom_client(120)
+}
+
+fn build_custom_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::Client::builder()
         .user_agent("cosmic-font-foundry")
         .connect_timeout(Duration::from_secs(12))
-        .timeout(Duration::from_secs(25))
+        .timeout(Duration::from_secs(timeout_secs))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if is_public_url(attempt.url()) && attempt.previous().len() < 5 {
                 attempt.follow()
@@ -570,6 +578,7 @@ pub fn parse_rss_or_atom_feed(xml: &str, src_tag: &str, source_name: &str) -> Ve
             version_tag: extract_version_tag(&raw_title),
             preview_url,
             download_urls,
+            ..Default::default()
         });
         idx += 1;
     }
@@ -650,6 +659,10 @@ pub fn parse_custom_json_catalog(
                 name,
                 preview_url,
                 download_urls,
+                license: Some("Open Source".into()),
+                redistribution_allowed: Some(true),
+                download_mode: Some("direct".into()),
+                ..Default::default()
             });
             continue;
         }
@@ -749,6 +762,7 @@ pub fn parse_custom_json_catalog(
             name,
             preview_url,
             download_urls,
+            ..Default::default()
         });
     }
 
@@ -1569,6 +1583,10 @@ fn resolve_preset_entries(
             version_tag: None,
             preview_url: item.preview_url,
             download_urls: vec![item.download_url],
+            license: Some("Open Source".into()),
+            redistribution_allowed: Some(true),
+            download_mode: Some("direct".into()),
+            ..Default::default()
         })
         .collect()
 }

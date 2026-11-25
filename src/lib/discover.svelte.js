@@ -227,7 +227,15 @@ export function requestGooglePreviews(items, text) {
         ensureDirectFace(item);
         continue;
       }
-      if (item.source === "fontsquirrel" || item.source === "nerdfonts" || item.source?.startsWith("custom:")) continue;
+      if (
+        item.source === "fontsquirrel" ||
+        item.source === "nerdfonts" ||
+        item.source === "homebrew" ||
+        item.source === "scoop" ||
+        item.source === "open_foundries" ||
+        item.source === "fontesk" ||
+        item.source?.startsWith("custom:")
+      ) continue;
       const fam = item.name;
       const prev = requestedChars.get(fam) ?? new Set();
       if ([...chars].some((c) => !prev.has(c))) googleNames.push(fam);
@@ -274,7 +282,15 @@ export function loadGoogleFullSpecimen(entry) {
     ensureDirectFace(entry);
     return;
   }
-  if (entry.source === "fontsquirrel" || entry.source === "nerdfonts" || entry.source?.startsWith("custom:")) return;
+  if (
+    entry.source === "fontsquirrel" ||
+    entry.source === "nerdfonts" ||
+    entry.source === "homebrew" ||
+    entry.source === "scoop" ||
+    entry.source === "open_foundries" ||
+    entry.source === "fontesk" ||
+    entry.source?.startsWith("custom:")
+  ) return;
   let familyQuery = encodeURIComponent(entry.name).replace(/%20/g, "+");
   if (entry.is_variable && entry.axes?.length) {
     const sorted = [...entry.axes].sort((a, b) => a.tag.localeCompare(b.tag));
@@ -399,4 +415,24 @@ export async function searchGithubFonts(query = "") {
     return devSearchGithubFonts(trimmed);
   }
   return [];
+}
+
+export async function searchFonteskFonts(query = "") {
+  const trimmed = String(query || "").trim();
+  if (!trimmed) return [];
+  if (inTauri) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("discover_search_fontesk", { query: trimmed });
+  }
+  return [];
+}
+
+export async function openFontSourceUrl(url) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed.startsWith("https://")) return;
+  if (inTauri) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke("open_font_source_url", { url: trimmed });
+  }
+  window.open(trimmed, "_blank", "noopener,noreferrer");
 }

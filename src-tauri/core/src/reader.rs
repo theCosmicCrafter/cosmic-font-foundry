@@ -552,6 +552,11 @@ pub fn characters(path: &Path, limit: usize) -> Result<Vec<u32>, String> {
     Ok(set.into_iter().take(limit).collect())
 }
 
+/// Computes the lowercase hex SHA-256 digest of an in-memory byte slice.
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 /// Computes the lowercase hex SHA-256 digest of a file on disk.
 pub fn sha256_file(path: &Path) -> Result<String, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;

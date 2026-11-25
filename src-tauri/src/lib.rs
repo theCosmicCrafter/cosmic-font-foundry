@@ -1323,6 +1323,15 @@ fn open_web(target: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_font_source_url(url: String) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {e}"))?;
+    if parsed.scheme() != "https" {
+        return Err("Only HTTPS URLs can be opened from Discover.".into());
+    }
+    win::open_url(parsed.as_str())
+}
+
+#[tauri::command]
 fn show_in_explorer(path: String) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     let p = PathBuf::from(&path);
@@ -1486,6 +1495,7 @@ pub fn run() {
             commands::foundry::foundry_import_ufo,
             commands::foundry::foundry_subset_font,
             commands::foundry::discover_search_github_fonts,
+            commands::foundry::discover_search_fontesk,
             commands::sync_cmds::sync_choose_folder,
             commands::sync_cmds::sync_manifest_now,
             commands::sync_cmds::export_profile_bundle,
@@ -1499,6 +1509,7 @@ pub fn run() {
             set_global_shortcut,
             is_portable,
             open_web,
+            open_font_source_url,
             show_in_explorer,
             tray::update_tray,
             tray::get_tray_status,

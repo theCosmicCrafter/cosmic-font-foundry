@@ -3,15 +3,33 @@
   import { t } from "../lib/i18n.svelte.js";
   import { fitText } from "../lib/fitText.js";
 
-  let { g, pct, fav, onfav, oninstall, oninspect = null } = $props();
+  let { g, pct, fav, onfav, oninstall, onopen = null, oninspect = null } = $props();
   const family = $derived(`"${g.name}", var(--sans)`);
   const aa = $derived(g.category === "other" ? "あ" : "Aa");
   const srcKey = $derived(g.source ?? "google");
+  const isOriginLink = $derived(g.download_mode === "origin_link" && Boolean(g.homepage));
+  const metaTip = $derived(
+    [g.license, g.description, g.tags?.slice(0, 5).join(", ")].filter(Boolean).join(" · ") || g.name,
+  );
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="card" ondblclick={() => oninspect?.(g)}>
-  <span class="pill src" class:fontshare={srcKey === "fontshare"} class:fontsource={srcKey === "fontsource"} class:adobe={srcKey === "adobe_dev"} class:squirrel={srcKey === "fontsquirrel"} class:custom={srcKey.startsWith("custom:")}>{srcKey.startsWith("custom:") ? (g.source_label || t("src.custom")) : t("src." + srcKey)}</span>
+<div class="card" title={metaTip} ondblclick={() => oninspect?.(g)}>
+  <span
+    class="pill src"
+    class:fontshare={srcKey === "fontshare"}
+    class:fontsource={srcKey === "fontsource"}
+    class:adobe={srcKey === "adobe_dev"}
+    class:squirrel={srcKey === "fontsquirrel"}
+    class:homebrew={srcKey === "homebrew"}
+    class:scoop={srcKey === "scoop"}
+    class:foundries={srcKey === "open_foundries"}
+    class:fontesk={srcKey === "fontesk"}
+    class:nerdfonts={srcKey === "nerdfonts"}
+    class:custom={srcKey.startsWith("custom:")}
+  >
+    {srcKey.startsWith("custom:") ? (g.source_label || t("src.custom")) : (t("src." + srcKey) || g.source_label || srcKey)}
+  </span>
   {#if g.is_variable}<span class="pill vf">VF</span>{/if}
   <div class="aa" style:font-family={family} onclick={() => oninspect?.(g)}>
     <span use:fitText={{ text: aa, family, base: 64, margin: 12 }}>{aa}</span>
@@ -19,6 +37,8 @@
   <div class="foot">
     {#if pct != null}
       <span class="pct num">{Math.round(pct)} %</span>
+    {:else if isOriginLink}
+      <button type="button" class="install origin" onclick={() => onopen?.(g)} title={t("g.openOriginTip")}>{t("g.openOrigin")}</button>
     {:else}
       <button type="button" class="install" onclick={oninstall} title={t("g.notInstalled")}>{t("g.install")}</button>
     {/if}
@@ -61,6 +81,11 @@
   .pill.src.fontsource { background: rgba(45, 212, 191, 0.14); color: var(--ok); }
   .pill.src.adobe { background: rgba(251, 113, 133, 0.16); color: var(--danger); }
   .pill.src.squirrel { background: rgba(245, 158, 11, 0.16); color: var(--warn); }
+  .pill.src.homebrew { background: rgba(234, 88, 12, 0.16); color: #ea580c; }
+  .pill.src.scoop { background: rgba(56, 189, 248, 0.16); color: #0284c7; }
+  .pill.src.foundries { background: rgba(168, 85, 247, 0.15); color: #a855f7; }
+  .pill.src.fontesk { background: rgba(236, 72, 153, 0.15); color: #db2777; }
+  .pill.src.nerdfonts { background: rgba(132, 204, 22, 0.15); color: #65a30d; }
   .pill.src.custom { background: var(--accent-soft); color: var(--accent); }
   .aa {
     height: 92px;

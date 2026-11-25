@@ -1,10 +1,10 @@
 <script>
-  import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check, Sun, Moon, WandSparkles, Scissors, Eye, EyeOff } from "@lucide/svelte";
+  import { ChevronLeft, FolderOpen, Copy, RotateCcw, ShieldAlert, Plus, X, Download, Check, Sun, Moon, WandSparkles, Scissors, Eye, EyeOff, ExternalLink } from "@lucide/svelte";
   import HeartIcon from "../components/HeartIcon.svelte";
   import { fontStyle, fontCharacters, revealInExplorer, quarantineCorruptFont, installFamiliesToWindows, invokeCmd } from "../lib/fonts.svelte.js";
   import { inTauri, settings } from "../lib/settings.svelte.js";
   import { tagsForFamily, addTagToFamily, removeTagFromFamily } from "../lib/library.svelte.js";
-  import { loadGoogleFullSpecimen, discover, installGoogleFont } from "../lib/discover.svelte.js";
+  import { loadGoogleFullSpecimen, discover, installGoogleFont, openFontSourceUrl } from "../lib/discover.svelte.js";
   import { notify } from "../lib/toasts.svelte.js";
   import { t } from "../lib/i18n.svelte.js";
 
@@ -381,7 +381,7 @@
         style:font-feature-settings={featureCss}>{familyName}</span
       >
       {#if isGoogle}
-        <span class="google-note">{t("g.previewNote")}</span>
+        <span class="google-note">{googleFont?.description || t("g.previewNote")}</span>
       {/if}
     </div>
 
@@ -396,10 +396,19 @@
     {/if}
 
     {#if isGoogle}
+      {#if googleFont?.homepage}
+        <button type="button" class="chip" onclick={() => openFontSourceUrl(googleFont.homepage)} title={t("g.openOriginTip")}>
+          <ExternalLink size={13} strokeWidth={2} />{t("g.openOrigin")}
+        </button>
+      {/if}
       {#if googleDownloadPct != null}
         <span class="chip fixed num">{Math.round(googleDownloadPct)} %</span>
       {:else if installed}
         <span class="chip ok"><Check size={13} strokeWidth={2} />{t("g.installed")}</span>
+      {:else if googleFont?.download_mode === "origin_link" && googleFont?.homepage}
+        <button type="button" class="chip primary" onclick={() => openFontSourceUrl(googleFont.homepage)} title={t("g.openOriginTip")}>
+          <ExternalLink size={13} strokeWidth={2} />{t("g.openOrigin")}
+        </button>
       {:else}
         <button type="button" class="chip primary" onclick={() => onInstallGoogle?.(familyName)}>
           <Download size={13} strokeWidth={2} />{t("g.install")}
@@ -549,7 +558,7 @@
       </div>
     </div>
 
-    {#if (f && (f.foundry || f.designer || f.license || f.license_tier)) || (googleFont?.designers?.length)}
+    {#if (f && (f.foundry || f.designer || f.license || f.license_tier)) || (googleFont && (googleFont.designers?.length || googleFont.license || googleFont.homepage))}
       <div class="meta-box wide">
         <span class="label">
           {t("spec.credits")}
@@ -564,10 +573,10 @@
           {#if f?.designer || googleFont?.designers?.length}
             <span><b>{t("spec.designer")}:</b> {f?.designer || googleFont.designers.join(", ")}</span>
           {/if}
-          {#if f?.license}
+          {#if f?.license || googleFont?.license}
             <span>
-              <b>{t("spec.license")}:</b> {f.license}
-              {#if f.license_url}
+              <b>{t("spec.license")}:</b> {f?.license || googleFont.license}
+              {#if f?.license_url}
                 <button type="button" class="copy-url" onclick={() => copyText(f.license_url, f.license_url)}>({t("copy")} URL)</button>
               {/if}
             </span>

@@ -413,6 +413,13 @@ pub(crate) async fn discover_search_github_fonts(
     google::search_github_fonts(&query).await
 }
 
+#[tauri::command]
+pub(crate) async fn discover_search_fontesk(
+    query: String,
+) -> Result<Vec<google::GoogleFontEntry>, String> {
+    google::search_fontesk_fonts(&query).await
+}
+
 #[derive(serde::Serialize)]
 pub(crate) struct CompositesResult {
     project: cosmic_foundry::model::FoundryProject,

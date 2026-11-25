@@ -4,6 +4,7 @@
   import {
     Search, ScanSearch, List, LayoutGrid, Folder, FolderOpen, Trash2, X, Heart,
     WifiOff, Layers, Type, LoaderCircle, Pin, Archive, ShieldCheck, Sparkles, Rss, Code2, Check,
+    Globe, ExternalLink, Star,
   } from "@lucide/svelte";
 
   import Sidebar from "./components/Sidebar.svelte";
@@ -41,10 +42,14 @@
     tagsForFamily, addTagToFamily, autoCreateOsCollections, upsertCollectionWithFonts,
     createSmartCollection, deleteSmartCollection, matchesSmartCollection,
   } from "./lib/library.svelte.js";
-  import { discover, loadCatalog, requestGooglePreviews, preloadDiscover, installGoogleFont } from "./lib/discover.svelte.js";
+  import {
+    discover, loadCatalog, requestGooglePreviews, preloadDiscover, installGoogleFont,
+    searchFonteskFonts, searchGithubFonts, addCustomSource, openFontSourceUrl,
+  } from "./lib/discover.svelte.js";
   import { drag, startDrag } from "./lib/drag.svelte.js";
   import { shortcutCombo } from "./lib/shortcuts.js";
   import { parseSearchQuery, scoreFontMatch, QUICK_SEARCH_THEMES } from "./lib/smart-search.js";
+  import { FONT_DIRECTORY_GROUPS, FONT_DIRECTORIES, buildDirectoryUrl } from "./lib/font-directories.js";
 
   // section: installed | discover | favorites | diagnostics | col:<id> | dir:<path>
   let section = $state(settings.onOpen === "favorites" ? "favorites" : "installed");
@@ -71,6 +76,59 @@
   let outlineDupGroups = $state([]);
   let outlineDupBusy = $state(false);
   let outlineDupScanned = $state(false);
+
+  let webPanelOpen = $state(false);
+  let webDirGroup = $state("mega");
+  let fonteskResults = $state([]);
+  let fonteskLoading = $state(false);
+  let fonteskSearchedQuery = $state("");
+  let fonteskError = $state("");
+  let githubResults = $state([]);
+  let githubLoading = $state(false);
+  let githubSearchedQuery = $state("");
+  let githubError = $state("");
+
+  async function runFonteskSearch(raw = q) {
+    const query = String(raw || "").trim();
+    if (!query) return;
+    webPanelOpen = true;
+    fonteskLoading = true;
+    fonteskError = "";
+    fonteskSearchedQuery = query;
+    try {
+      fonteskResults = (await searchFonteskFonts(query)) ?? [];
+    } catch (e) {
+      fonteskError = String(e);
+      fonteskResults = [];
+    } finally {
+      fonteskLoading = false;
+    }
+  }
+
+  async function runGithubSearch(raw = q) {
+    const query = String(raw || "").trim();
+    webPanelOpen = true;
+    githubLoading = true;
+    githubError = "";
+    githubSearchedQuery = query;
+    try {
+      githubResults = (await searchGithubFonts(query)) ?? [];
+    } catch (e) {
+      githubError = String(e);
+      githubResults = [];
+    } finally {
+      githubLoading = false;
+    }
+  }
+
+  async function trackGithubRepo(repo) {
+    try {
+      await addCustomSource({ name: repo.name, url: repo.html_url, kind: "github" });
+      notify("ok", t("webSearch.tracked"), repo.full_name);
+    } catch (e) {
+      notify("err", t("err.download", { n: repo.name }), String(e));
+    }
+  }
 
   async function scanRenamedOutlineDuplicates() {
     if (!inTauri || outlineDupBusy) return;
@@ -273,6 +331,29 @@
     } else if (discoverSource === "custom" && !hasEnabledCustomSources) {
       discoverSource = "all";
     }
+  });
+
+  const discoverSourceCounts = $derived.by(() => {
+    const counts = { all: discover.list.length, custom: 0 };
+    for (const g of discover.list) {
+      const s = g.source ?? "google";
+      if (s.startsWith("custom:")) counts.custom++;
+      else counts[s] = (counts[s] ?? 0) + 1;
+    }
+    return counts;
+  });
+
+  const trackedSourceUrls = $derived(
+    new Set(discover.customSources.map((s) => String(s.url || "").toLowerCase())),
+  );
+
+  const onlineSearchMatchCount = $derived.by(() => {
+    if (inDiscover || ql.length < 2 || !discover.list.length) return 0;
+    let count = 0;
+    for (const g of discover.list) {
+      if (scoreFontMatch(g, parsedQuery) > 0) count++;
+    }
+    return count;
   });
 
   const googleList = $derived.by(() => {
@@ -832,6 +913,7 @@
     fav={favSet.has(g.name)}
     onfav={() => toggleFavorite(g.name)}
     oninstall={() => installGoogleFont(g.name, applyExternalList)}
+    onopen={(entry) => openFontSourceUrl(entry.homepage)}
     oninspect={(entry) => ((googleDetailName = entry.name), (detailName = null))}
   />
 {/snippet}
@@ -849,6 +931,7 @@
       fav={favSet.has(item.name)}
       onfav={() => toggleFavorite(item.name)}
       oninstall={() => installGoogleFont(item.name, applyExternalList)}
+      onopen={(entry) => openFontSourceUrl(entry.homepage)}
       oninspect={(entry) => ((googleDetailName = entry.name), (detailName = null))}
     />
   {:else}
@@ -864,6 +947,7 @@
       fav={favSet.has(item.name)}
       onfav={() => toggleFavorite(item.name)}
       oninstall={() => installGoogleFont(item.name, applyExternalList)}
+      onopen={(entry) => openFontSourceUrl(entry.homepage)}
       oninspect={(entry) => ((googleDetailName = entry.name), (detailName = null))}
     />
   {:else}
@@ -955,6 +1039,19 @@
         {#if searchingAllLocations}
           <span class="scope-badge" title="Searching Windows Fonts, User Fonts, Vault, Exports, and all Watched Folders">All locations</span>
         {/if}
+        {#if !inDiscover && onlineSearchMatchCount > 0}
+          <button
+            type="button"
+            class="bridge-pill"
+            onclick={() => {
+              const query = q;
+              goTo("discover");
+              q = query;
+            }}
+          >
+            {t("bridge.onlineMatches", { n: onlineSearchMatchCount.toLocaleString(locale()) })}
+          </button>
+        {/if}
       {/if}
       <div class="right">
         {#if isNormalView && !inDiagnostics}
@@ -1020,6 +1117,16 @@
           <button
             type="button"
             class="pill scan-btn"
+            class:accent={webPanelOpen}
+            title={t("webSearch.toggle")}
+            onclick={() => (webPanelOpen = !webPanelOpen)}
+          >
+            <Globe size={11} strokeWidth={2} />
+            <span>{t("webSearch.toggle")}</span>
+          </button>
+          <button
+            type="button"
+            class="pill scan-btn"
             title={t("cs.title")}
             onclick={() => (customSourcesOpen = true)}
           >
@@ -1034,18 +1141,23 @@
             options={[
               "all",
               "google",
-              "bunny",
-              "fontshare",
               "fontsource",
-              "adobe_dev",
               "fontsquirrel",
+              "homebrew",
+              "scoop",
+              "open_foundries",
+              "fontshare",
+              "bunny",
               "nerdfonts",
               ...(hasEnabledCustomSources ? ["custom"] : []),
-            ].map((v) => ({ value: v, label: t("src." + v) }))}
+            ].map((v) => ({
+              value: v,
+              label: discoverSourceCounts[v] && v !== "all" ? `${t("src." + v)} (${discoverSourceCounts[v]})` : t("src." + v),
+            }))}
             value={discoverSource.startsWith("custom:") ? "custom" : discoverSource}
             onselect={(v) => (discoverSource = v)}
             height={22}
-            paddingX={8}
+            paddingX={7}
             font="600 10.5px"
           />
           <SegmentedControl
@@ -1162,7 +1274,135 @@
             Smart match: {parsedQuery.themes.map((th) => th.label).join(" + ")}
           </span>
         {/if}
+        {#if inDiscover && ql.length >= 2}
+          <div class="live-web-btns">
+            <button type="button" class="theme-chip live-btn" disabled={fonteskLoading} onclick={() => runFonteskSearch(q)}>
+              {fonteskLoading ? t("webSearch.searching") : t("webSearch.fonteskBtn")}
+            </button>
+            <button type="button" class="theme-chip live-btn" disabled={githubLoading} onclick={() => runGithubSearch(q)}>
+              {githubLoading ? t("webSearch.searching") : t("webSearch.githubBtn")}
+            </button>
+          </div>
+        {/if}
       </div>
+    {/if}
+
+    {#if inDiscover && webPanelOpen && isNormalView}
+      <section class="web-hub" aria-label={t("webSearch.toggle")}>
+        <div class="web-hub-head">
+          <div class="web-hub-actions">
+            <Globe size={13} strokeWidth={2} />
+            <span class="web-hub-title">{q.trim() ? `Web Search: “${q.trim()}”` : t("webSearch.toggle")}</span>
+            {#if q.trim()}
+              <button type="button" class="pill scan-btn" disabled={fonteskLoading} onclick={() => runFonteskSearch(q)}>
+                {fonteskLoading ? t("webSearch.searching") : t("webSearch.fonteskBtn")}
+              </button>
+              <button type="button" class="pill scan-btn" disabled={githubLoading} onclick={() => runGithubSearch(q)}>
+                {githubLoading ? t("webSearch.searching") : t("webSearch.githubBtn")}
+              </button>
+            {/if}
+          </div>
+          <button type="button" class="reset" aria-label={t("close")} onclick={() => (webPanelOpen = false)}>
+            <X size={10} strokeWidth={2.5} />
+          </button>
+        </div>
+
+        {#if fonteskError}
+          <div class="web-err">{fonteskError}</div>
+        {:else if fonteskSearchedQuery && !fonteskLoading}
+          <div class="web-results">
+            <span class="web-subhead">Fontesk (13,000+) — “{fonteskSearchedQuery}” ({fonteskResults.length})</span>
+            {#if fonteskResults.length === 0}
+              <span class="web-empty">{t("webSearch.noResults")}</span>
+            {:else}
+              <div class="web-grid">
+                {#each fonteskResults as fk (fk.source_id)}
+                  <div class="web-card">
+                    <div class="web-card-top">
+                      <span class="web-name">{fk.name}</span>
+                      {#if fk.license}<span class="web-lic">{fk.license}</span>{/if}
+                    </div>
+                    {#if fk.description}<p class="web-desc">{fk.description}</p>{/if}
+                    <div class="web-card-foot">
+                      {#if fk.tags?.length}<span class="web-tags">#{fk.tags.slice(0, 3).join(" #")}</span>{/if}
+                      <button type="button" class="pill primary" onclick={() => openFontSourceUrl(fk.homepage)}>
+                        <ExternalLink size={10} />{t("g.openOrigin")}
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        {#if githubError}
+          <div class="web-err">{githubError}</div>
+        {:else if githubSearchedQuery && !githubLoading}
+          <div class="web-results">
+            <span class="web-subhead">GitHub Font Repos — “{githubSearchedQuery}” ({githubResults.length})</span>
+            {#if githubResults.length === 0}
+              <span class="web-empty">{t("webSearch.noResults")}</span>
+            {:else}
+              <div class="web-grid">
+                {#each githubResults as repo (repo.full_name)}
+                  {@const isTracked = trackedSourceUrls.has(repo.html_url.toLowerCase()) || trackedSourceUrls.has(repo.releases_url.toLowerCase())}
+                  <div class="web-card">
+                    <div class="web-card-top">
+                      <span class="web-name">{repo.full_name}</span>
+                      <span class="web-lic"><Star size={9} /> {repo.stars} · {repo.license}</span>
+                    </div>
+                    {#if repo.description}<p class="web-desc">{repo.description}</p>{/if}
+                    <div class="web-card-foot">
+                      <button type="button" class="pill" onclick={() => openFontSourceUrl(repo.html_url)}>
+                        <ExternalLink size={10} />GitHub
+                      </button>
+                      <button
+                        type="button"
+                        class="pill"
+                        class:primary={!isTracked}
+                        disabled={isTracked}
+                        onclick={() => trackGithubRepo(repo)}
+                      >
+                        {isTracked ? t("webSearch.tracked") : t("webSearch.track")}
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <div class="web-dirs">
+          <div class="web-dir-tabs">
+            {#each FONT_DIRECTORY_GROUPS as grp (grp.id)}
+              <button
+                type="button"
+                class="theme-chip"
+                class:active={webDirGroup === grp.id}
+                onclick={() => (webDirGroup = grp.id)}
+              >
+                {grp.label}
+              </button>
+            {/each}
+          </div>
+          <div class="web-dir-chips">
+            {#each FONT_DIRECTORIES.filter((d) => d.group === webDirGroup) as dir (dir.id)}
+              <button
+                type="button"
+                class="dir-chip"
+                title={`${dir.name} · ${dir.scale} · ${dir.licenseNote}`}
+                onclick={() => openFontSourceUrl(buildDirectoryUrl(dir, q))}
+              >
+                <span class="dir-name">{dir.name}</span>
+                <span class="dir-meta">{dir.scale}</span>
+                <ExternalLink size={10} />
+              </button>
+            {/each}
+          </div>
+        </div>
+      </section>
     {/if}
 
     {#if activeFolder && isNormalView}
@@ -1504,6 +1744,74 @@
     background: var(--cyan-soft);
     color: var(--accent-2);
   }
+  .bridge-pill {
+    height: 22px;
+    padding: 0 9px;
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font: 600 11px var(--sans);
+    transition: all 0.14s;
+  }
+  .bridge-pill:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .live-web-btns { margin-left: auto; display: flex; gap: 5px; flex: none; }
+  .live-btn { border-color: color-mix(in srgb, var(--accent-2) 45%, var(--line)); color: var(--accent-2); font-weight: 600; }
+  .live-btn:hover { background: var(--accent-2); color: #090b12; }
+  .web-hub {
+    flex: none;
+    margin: 0 24px 10px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--line2);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 255px;
+    overflow-y: auto;
+  }
+  .web-hub-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .web-hub-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .web-hub-title { font: 600 12px var(--sans); color: var(--ink); }
+  .web-results { display: flex; flex-direction: column; gap: 6px; }
+  .web-subhead { font: 700 10px var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink3); }
+  .web-empty { font-size: 11.5px; color: var(--ink3); }
+  .web-err { font-size: 11.5px; color: var(--danger); }
+  .web-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .web-card {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--field);
+    border: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .web-card-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .web-name { font: 600 12px var(--sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .web-lic { display: inline-flex; align-items: center; gap: 3px; font: 500 9.5px var(--mono); color: var(--ink3); flex: none; }
+  .web-desc { margin: 0; font-size: 11px; color: var(--ink2); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .web-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; }
+  .web-tags { font: 500 10px var(--mono); color: var(--ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .web-dirs { display: flex; flex-direction: column; gap: 6px; }
+  .web-dir-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
+  .web-dir-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dir-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 9px;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--field);
+    color: var(--ink);
+    font: 500 11px var(--sans);
+    transition: all 0.14s;
+  }
+  .dir-chip:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .dir-name { font-weight: 600; }
+  .dir-meta { font: 500 9.5px var(--mono); color: var(--ink3); }
   .theme-strip {
     flex: none;
     display: flex;

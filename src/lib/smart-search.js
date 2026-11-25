@@ -302,6 +302,18 @@ function matchNameToken(tok, nameNorm, nameWords) {
   return 0;
 }
 
+function extractDomainTokens(rawUrl) {
+  if (!rawUrl) return "";
+  try {
+    const u = new URL(String(rawUrl));
+    const host = u.hostname.replace(/^www\./, "");
+    const path = u.pathname.replace(/\/+/g, " ");
+    return normalizeText(`${host} ${host.split(".").join(" ")} ${path}`);
+  } catch {
+    return normalizeText(rawUrl);
+  }
+}
+
 /**
  * Scores a local or Discover font item against a parsed query.
  * Returns 0 if no match; > 0 ranked score (higher = stronger relevance).
@@ -315,7 +327,15 @@ export function scoreFontMatch(item, parsed, opts = {}) {
   const category = String(item.category || "").toLowerCase();
   const scripts = (item.scripts ?? []).map((s) => normalizeText(s));
   const designers = (item.designers ?? []).map((d) => normalizeText(d));
-  const tags = (opts.tags ?? []).map((tg) => normalizeText(tg));
+  const mergedTags = [
+    ...(Array.isArray(item.tags) ? item.tags : []),
+    ...(Array.isArray(opts.tags) ? opts.tags : []),
+  ];
+  const tags = mergedTags.map((tg) => normalizeText(tg)).filter(Boolean);
+  const descNorm = normalizeText(item.description || "");
+  const descWords = descNorm ? descNorm.split(" ") : [];
+  const licenseNorm = normalizeText(item.license || "");
+  const homepageNorm = extractDomainTokens(item.homepage);
   const sourceLabel = normalizeText(item.source_label || item.source || "");
   const filePaths = [
     item.file || "",
@@ -351,13 +371,15 @@ export function scoreFontMatch(item, parsed, opts = {}) {
     if (wholeSub >= 32) score += wholeSub;
   }
 
-  // 2. Per-token scoring across name, fuzzy words, metadata, tags, designers, scripts, styles, folders
+  // 2. Per-token scoring across name, fuzzy words, tags, description, license, foundry, scripts, styles, folders
   let matchedTokens = 0;
   for (const tok of parsed.tokens) {
     let tokBest = matchNameToken(tok, nameNorm, nameWords);
 
-    if (tags.some((tg) => tg === tok || tg.includes(tok))) {
-      tokBest = Math.max(tokBest, 72);
+    if (tags.some((tg) => tg === tok)) {
+      tokBest = Math.max(tokBest, 76);
+    } else if (tags.some((tg) => tg.includes(tok))) {
+      tokBest = Math.max(tokBest, 68);
     }
     if (designers.some((d) => d.includes(tok))) {
       tokBest = Math.max(tokBest, 66);
@@ -367,6 +389,19 @@ export function scoreFontMatch(item, parsed, opts = {}) {
     }
     if (sourceLabel && (sourceLabel === tok || sourceLabel.includes(tok))) {
       tokBest = Math.max(tokBest, 54);
+    }
+    if (licenseNorm && (licenseNorm.split(" ").includes(tok) || licenseNorm.includes(tok))) {
+      tokBest = Math.max(tokBest, 54);
+    }
+    if (descNorm) {
+      if (descWords.includes(tok)) {
+        tokBest = Math.max(tokBest, 52);
+      } else if (tok.length >= 4 && descNorm.includes(tok)) {
+        tokBest = Math.max(tokBest, 42);
+      }
+    }
+    if (homepageNorm && homepageNorm.includes(tok) && tok.length >= 3) {
+      tokBest = Math.max(tokBest, 50);
     }
     if (styleNames.some((sn) => sn.includes(tok))) {
       tokBest = Math.max(tokBest, 52);
@@ -386,7 +421,15 @@ export function scoreFontMatch(item, parsed, opts = {}) {
     if ((tok === "italic" || tok === "italics" || tok === "oblique") && hasItalic) {
       tokBest = Math.max(tokBest, 48);
     }
-    if (tok === "commercial" && item.license_tier === "free_commercial") {
+    if (
+      tok === "commercial" &&
+      (item.license_tier === "free_commercial" ||
+        licenseNorm.includes("commercial") ||
+        licenseNorm.includes("ofl") ||
+        licenseNorm.includes("apache") ||
+        licenseNorm.includes("mit") ||
+        licenseNorm.includes("itf"))
+    ) {
       tokBest = Math.max(tokBest, 48);
     }
     if ((tok === "vault" || tok === "forged" || tok === "exports" || tok === "export") && filePaths.some((fp) => fp.includes("vault") || fp.includes("exports") || fp.includes("cosmic font foundry"))) {
@@ -396,13 +439,18 @@ export function scoreFontMatch(item, parsed, opts = {}) {
       tokBest = Math.max(tokBest, 45);
     }
 
-    // Theme keyword match for this token
+    // Theme keyword match across name, tags, and repository description
     for (const theme of parsed.themes) {
       const trigMatch =
         theme.triggers.includes(tok) ||
         (tok.length >= 6 && theme.triggers.some((t) => t.length >= 6 && editDistance(tok, t, 1) <= 1));
       if (trigMatch) {
-        const hitKw = theme.keywords.some((kw) => nameNorm.includes(kw) || tags.some((tg) => tg.includes(kw)));
+        const hitKw = theme.keywords.some(
+          (kw) =>
+            nameNorm.includes(kw) ||
+            tags.some((tg) => tg.includes(kw)) ||
+            (descNorm && descNorm.includes(kw)),
+        );
         if (hitKw) {
           tokBest = Math.max(tokBest, 92);
         } else if (
@@ -434,7 +482,14 @@ export function scoreFontMatch(item, parsed, opts = {}) {
 
   // Subtle bonus for exact theme keyword hits so true theme fonts rank above generic category matches
   for (const theme of parsed.themes) {
-    if (theme.keywords.some((kw) => nameNorm.includes(kw) || tags.some((tg) => tg.includes(kw)))) {
+    if (
+      theme.keywords.some(
+        (kw) =>
+          nameNorm.includes(kw) ||
+          tags.some((tg) => tg.includes(kw)) ||
+          (descNorm && descNorm.includes(kw)),
+      )
+    ) {
       score += 45;
     }
   }
