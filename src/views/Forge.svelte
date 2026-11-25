@@ -167,10 +167,27 @@
     };
   }
 
+  const LICENSE_PRESETS = [
+    { value: "SIL Open Font License 1.1 (OFL-1.1)", label: "OFL 1.1 (Open)" },
+    { value: "MIT License", label: "MIT" },
+    { value: "Apache License 2.0", label: "Apache 2.0" },
+    { value: "CC0 1.0 Universal (Public Domain)", label: "CC0 Public Domain" },
+    { value: "Personal Use Only — Contact Designer for Commercial", label: "Personal Use Only" },
+    { value: "All Rights Reserved (Commercial)", label: "All Rights Reserved" },
+  ];
+
+  let licenseText = $state("SIL Open Font License 1.1 (OFL-1.1)");
+
   function syncedVectorProject(proj = vectorProject) {
     if (!proj) return null;
-    if (proj.family_name === familyName && proj.style_name === styleName) return proj;
-    return { ...proj, family_name: familyName, style_name: styleName };
+    if (
+      proj.family_name === familyName &&
+      proj.style_name === styleName &&
+      proj.license === licenseText
+    ) {
+      return proj;
+    }
+    return { ...proj, family_name: familyName, style_name: styleName, license: licenseText };
   }
 
   function applyLiveFontFace(bytes, seq) {
@@ -324,6 +341,7 @@
     vectorProject = proj;
     if (typeof proj.family_name === "string" && proj.family_name) familyName = proj.family_name;
     if (typeof proj.style_name === "string" && proj.style_name) styleName = proj.style_name;
+    if (typeof proj.license === "string" && proj.license.trim()) licenseText = proj.license.trim();
     activeVectorKey = pickInitialVectorKey(proj);
     vectorUndoStack = [];
     vectorRedoStack = [];
@@ -1384,6 +1402,15 @@
       <option value="Regular">Regular</option>
       <option value="Bold">Bold</option>
       <option value="Oblique">Oblique</option>
+    </select>
+
+    <select class="style-select" bind:value={licenseText} aria-label="Font license" title={`Embedded OpenType License: ${licenseText}`}>
+      {#each LICENSE_PRESETS as lic (lic.value)}
+        <option value={lic.value}>{lic.label}</option>
+      {/each}
+      {#if !LICENSE_PRESETS.some((l) => l.value === licenseText)}
+        <option value={licenseText}>{licenseText.slice(0, 22)}</option>
+      {/if}
     </select>
 
     <div class="bar-actions">

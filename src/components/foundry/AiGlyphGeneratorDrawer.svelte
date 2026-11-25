@@ -67,6 +67,36 @@
       prompt:
         "old-style serif, regular 400 weight, moderate stroke contrast, normal proportions, teardrop ball terminals, calligraphic broad-nib modulation",
     },
+    {
+      label: "Victorian Gothic Horror",
+      prompt:
+        "didone serif, bold 700 weight, high stroke contrast, condensed narrow proportions, crisp sharp corners, dramatic theatrical horror movie poster",
+    },
+    {
+      label: "Neo-Medieval Blackletter",
+      prompt:
+        "blackletter gothic, bold 700 weight, high stroke contrast, condensed narrow proportions, crisp sharp corners, ornate medieval dark fantasy",
+    },
+    {
+      label: "Y2K Cyber Display",
+      prompt:
+        "geometric sans-serif, bold 700 weight, low stroke contrast, wide extended proportions, ink-trap notched corners, technical futuristic precision",
+    },
+    {
+      label: "80s Synthwave Sci-Fi",
+      prompt:
+        "geometric sans-serif, semibold 600 weight, low stroke contrast, wide extended proportions, crisp sharp corners, retro-futuristic neon arcade",
+    },
+    {
+      label: "Art Nouveau Organic",
+      prompt:
+        "calligraphic script, regular 400 weight, high stroke contrast, condensed narrow proportions, flared organic terminals, vintage botanical poster",
+    },
+    {
+      label: "Pixel 8-Bit Arcade",
+      prompt:
+        "geometric monospace, bold 700 weight, uniform monolinear strokes, normal proportions, stepped pixel corners, retro video game title",
+    },
   ];
 
   // Beginner-friendly guided font trait categories.
