@@ -1070,8 +1070,17 @@
       {@const activeMode = backendStatus.compute_mode || "auto"}
       <div class="hw-bar">
         <div class="hw-summary-row">
+          {#if backendStatus.engine_backend}
+            <span class="hw-pill active">{backendStatus.engine_backend}</span>
+          {/if}
+          {#if backendStatus.active_tier}
+            <span class="hw-pill">{backendStatus.active_tier}</span>
+          {/if}
+          {#if backendStatus.gpu_hold}
+            <span class="hw-pill">GPU Hold Active</span>
+          {/if}
           <span class="hw-pill">
-            {backendStatus.gpu_summary || "Vulkan GPU / CPU Auto-Fit"}
+            {backendStatus.gpu_summary || "GPU / CPU Auto-Fit"}
           </span>
           {#if backendStatus.ram_total_bytes > 0}
             <span class="hw-pill num">

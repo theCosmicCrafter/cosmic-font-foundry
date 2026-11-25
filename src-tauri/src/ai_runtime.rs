@@ -8,13 +8,14 @@ use cosmic_core::inventory::write_json_atomic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, OnceLock,
     },
     time::Duration,
 };
@@ -52,6 +53,8 @@ pub struct AiRuntimeConfig {
     pub storage_dir: Option<String>,
     #[serde(default)]
     pub custom_gguf_path: Option<String>,
+    #[serde(default)]
+    pub custom_engine_path: Option<String>,
     #[serde(default = "default_idle_sleep_secs")]
     pub idle_sleep_secs: u32,
 }
@@ -62,6 +65,7 @@ impl Default for AiRuntimeConfig {
             compute_mode: default_compute_mode(),
             storage_dir: None,
             custom_gguf_path: None,
+            custom_engine_path: None,
             idle_sleep_secs: DEFAULT_IDLE_SLEEP_SECS,
         }
     }
@@ -73,6 +77,72 @@ pub struct HardwareProbe {
     pub ram_total_bytes: u64,
     pub ram_avail_bytes: u64,
     pub gpu_summary: Option<String>,
+    pub engine_backend: String,
+    pub active_tier: Option<String>,
+    pub gpu_hold: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct NvidiaGpuTelemetry {
+    pub name: String,
+    pub driver_major: u32,
+    pub free_mib: u64,
+    pub total_mib: u64,
+    pub util_pct: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerCliCaps {
+    pub has_no_ui: bool,
+    pub has_no_webui: bool,
+    pub has_n_gpu_layers: bool,
+    pub has_no_repack: bool,
+    pub has_flash_attn: bool,
+    pub has_cache_type: bool,
+    pub has_cache_reuse: bool,
+    pub has_slot_similarity: bool,
+    pub has_spec_type: bool,
+    pub has_sleep_idle: bool,
+    pub has_split_mode: bool,
+    pub has_main_gpu: bool,
+    pub has_fit: bool,
+    pub is_cuda_backend: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VramTier {
+    FullGpu,
+    HybridGpu {
+        layers: u32,
+        kv_type: &'static str,
+        batch_size: u32,
+        ubatch_size: u32,
+    },
+    VulkanAutoFit,
+    CpuOnly,
+}
+
+#[derive(Clone, Debug)]
+pub struct LaunchAttempt {
+    pub tier: VramTier,
+    pub label: String,
+}
+
+static CLI_CAPS_CACHE: OnceLock<Mutex<HashMap<PathBuf, ServerCliCaps>>> = OnceLock::new();
+static ACTIVE_TIER_LABEL: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+pub fn get_active_tier_label() -> Option<String> {
+    ACTIVE_TIER_LABEL
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+}
+
+fn set_active_tier_label(label: Option<String>) {
+    if let Ok(mut g) = ACTIVE_TIER_LABEL.get_or_init(|| Mutex::new(None)).lock() {
+        *g = label;
+    }
 }
 
 pub fn normalize_compute_mode(raw: &str) -> String {
@@ -101,6 +171,10 @@ pub fn load_config(data_dir: &Path) -> AiRuntimeConfig {
         .custom_gguf_path
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+    cfg.custom_engine_path = cfg
+        .custom_engine_path
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     cfg
 }
 
@@ -113,6 +187,10 @@ pub fn save_config(data_dir: &Path, cfg: &AiRuntimeConfig) -> Result<(), String>
         .filter(|s| !s.is_empty());
     clean.custom_gguf_path = clean
         .custom_gguf_path
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    clean.custom_engine_path = clean
+        .custom_engine_path
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     write_json_atomic(&config_path(data_dir), &clean)
@@ -147,10 +225,6 @@ pub fn effective_gguf_path(data_dir: &Path, cfg: &AiRuntimeConfig) -> PathBuf {
     effective_models_dir(data_dir, cfg).join(VECGLYPHER_GGUF_FILENAME)
 }
 
-pub fn llama_server_exe(data_dir: &Path) -> PathBuf {
-    runtime_dir(data_dir).join("llama-server.exe")
-}
-
 pub fn llama_server_log_path(data_dir: &Path) -> PathBuf {
     runtime_dir(data_dir).join("llama-server.log")
 }
@@ -169,8 +243,194 @@ fn is_valid_gguf_file(path: &Path, min_bytes: u64) -> bool {
     f.read_exact(&mut magic).is_ok() && &magic == b"GGUF"
 }
 
+fn parse_build_number(dir_name: &str) -> u64 {
+    dir_name
+        .split(['-', '_'])
+        .filter_map(|part| part.strip_prefix('b').or(Some(part)))
+        .filter_map(|digits| digits.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+fn find_system_cuda_llama_server() -> Option<(PathBuf, &'static str)> {
+    let mut roots: Vec<PathBuf> = vec![PathBuf::from(r"C:\tools")];
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        let p = PathBuf::from(profile);
+        roots.push(p.join("tools"));
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local));
+    }
+
+    let mut candidates: Vec<(u64, PathBuf)> = Vec::new();
+    for root in roots {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let dir_name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if !dir_name.contains("llama") {
+                continue;
+            }
+            let exe = dir.join("llama-server.exe");
+            let cuda_dll = dir.join("ggml-cuda.dll");
+            if exe.is_file() && cuda_dll.is_file() {
+                candidates.push((parse_build_number(&dir_name), exe));
+            }
+        }
+    }
+    candidates.sort_by_key(|a| std::cmp::Reverse(a.0));
+    candidates
+        .into_iter()
+        .next()
+        .map(|(_, exe)| (exe, "CUDA (Local System)"))
+}
+
+pub fn resolve_active_llama_server_exe(
+    data_dir: &Path,
+    cfg: &AiRuntimeConfig,
+    nvidia_present: bool,
+) -> Option<(PathBuf, &'static str)> {
+    if let Some(custom) = cfg.custom_engine_path.as_deref().map(PathBuf::from) {
+        if custom.is_file() {
+            let label = if custom
+                .parent()
+                .is_some_and(|p| p.join("ggml-cuda.dll").is_file())
+            {
+                "CUDA (Custom Engine)"
+            } else {
+                "Custom llama.cpp"
+            };
+            return Some((custom, label));
+        }
+    }
+    if let Ok(env_exe) = std::env::var("COSMIC_LLAMA_SERVER") {
+        let p = PathBuf::from(env_exe.trim());
+        if p.is_file() {
+            let label = if p
+                .parent()
+                .is_some_and(|d| d.join("ggml-cuda.dll").is_file())
+            {
+                "CUDA (Env)"
+            } else {
+                "Env llama.cpp"
+            };
+            return Some((p, label));
+        }
+    }
+
+    let rdir = runtime_dir(data_dir);
+    let builtin_exe = rdir.join("llama-server.exe");
+    let builtin_has_cuda = rdir.join("ggml-cuda.dll").is_file();
+    if builtin_exe.is_file() && builtin_has_cuda {
+        return Some((builtin_exe, "CUDA (Built-in)"));
+    }
+
+    if nvidia_present {
+        if let Some(found) = find_system_cuda_llama_server() {
+            return Some(found);
+        }
+    }
+
+    if builtin_exe.is_file() {
+        let label = if rdir.join("ggml-vulkan.dll").is_file() {
+            "Vulkan (Built-in)"
+        } else {
+            "CPU (Built-in)"
+        };
+        return Some((builtin_exe, label));
+    }
+
+    None
+}
+
+pub fn gpu_hold_active() -> bool {
+    if std::env::var("RESONANCE_NO_GPU").ok().as_deref() == Some("1") {
+        return true;
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        if PathBuf::from(profile)
+            .join("CascadeProjects")
+            .join("ResonanceStudio")
+            .join(".no-gpu")
+            .is_file()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn parse_help_caps(help_text: &str, is_cuda_backend: bool) -> ServerCliCaps {
+    ServerCliCaps {
+        has_no_ui: help_text.contains("--no-ui"),
+        has_no_webui: help_text.contains("--no-webui"),
+        has_n_gpu_layers: help_text.contains("--n-gpu-layers"),
+        has_no_repack: help_text.contains("--no-repack"),
+        has_flash_attn: help_text.contains("--flash-attn"),
+        has_cache_type: help_text.contains("--cache-type-k")
+            && help_text.contains("--cache-type-v"),
+        has_cache_reuse: help_text.contains("--cache-reuse"),
+        has_slot_similarity: help_text.contains("--slot-prompt-similarity"),
+        has_spec_type: help_text.contains("--spec-type"),
+        has_sleep_idle: help_text.contains("--sleep-idle-seconds"),
+        has_split_mode: help_text.contains("--split-mode"),
+        has_main_gpu: help_text.contains("--main-gpu"),
+        has_fit: help_text.contains("--fit") && help_text.contains("--fit-ctx"),
+        is_cuda_backend,
+    }
+}
+
+pub fn inspect_server_cli_caps(exe: &Path) -> ServerCliCaps {
+    let cache = CLI_CAPS_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(cached) = guard.get(exe) {
+            return cached.clone();
+        }
+    }
+
+    let is_cuda_backend = exe
+        .parent()
+        .is_some_and(|p| p.join("ggml-cuda.dll").is_file());
+    let mut cmd = Command::new(exe);
+    cmd.arg("--help")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let caps = match cmd.output() {
+        Ok(out) => {
+            let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
+            combined.push('\n');
+            combined.push_str(&String::from_utf8_lossy(&out.stderr));
+            parse_help_caps(&combined, is_cuda_backend)
+        }
+        Err(_) => ServerCliCaps {
+            has_n_gpu_layers: true,
+            is_cuda_backend,
+            ..Default::default()
+        },
+    };
+
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(exe.to_path_buf(), caps.clone());
+    }
+    caps
+}
+
 pub fn has_builtin_engine(data_dir: &Path) -> bool {
-    llama_server_exe(data_dir).is_file()
+    let cfg = load_config(data_dir);
+    let has_nv = detect_nvidia_gpu().is_some();
+    resolve_active_llama_server_exe(data_dir, &cfg, has_nv).is_some()
 }
 
 pub fn has_builtin_model(data_dir: &Path) -> bool {
@@ -246,10 +506,46 @@ fn system_memory_bytes() -> (u64, u64) {
     (0, 0)
 }
 
-fn detect_nvidia_gpu_summary() -> Option<String> {
+pub fn parse_nvidia_smi_line(line: &str) -> Option<NvidiaGpuTelemetry> {
+    let mut parts = line.split(',').map(str::trim);
+    let name = parts.next()?.to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let driver_raw = parts.next().unwrap_or("");
+    let driver_major = driver_raw
+        .split('.')
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    let free_mib = parts
+        .next()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0)
+        .max(0.0) as u64;
+    let total_mib = parts
+        .next()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0)
+        .max(0.0) as u64;
+    let util_pct = parts
+        .next()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0)
+        .clamp(0.0, 100.0) as u32;
+    Some(NvidiaGpuTelemetry {
+        name,
+        driver_major,
+        free_mib,
+        total_mib,
+        util_pct,
+    })
+}
+
+pub fn detect_nvidia_gpu() -> Option<NvidiaGpuTelemetry> {
     let mut cmd = Command::new("nvidia-smi");
     cmd.args([
-        "--query-gpu=name,memory.free,memory.total",
+        "--query-gpu=name,driver_version,memory.free,memory.total,utilization.gpu",
         "--format=csv,noheader,nounits",
     ])
     .stdin(Stdio::null())
@@ -268,34 +564,55 @@ fn detect_nvidia_gpu_summary() -> Option<String> {
         .lines()
         .find(|l| !l.trim().is_empty())?
         .to_string();
-    let mut parts = line.split(',').map(str::trim);
-    let name = parts.next()?.to_string();
-    let free_mib: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
-    let total_mib: f64 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
-    if total_mib > 0.0 {
-        Some(format!(
-            "{name} ({:.1} / {:.1} GB VRAM free)",
-            free_mib / 1024.0,
-            total_mib / 1024.0
-        ))
+    parse_nvidia_smi_line(&line)
+}
+
+fn format_nvidia_gpu_summary(nv: &NvidiaGpuTelemetry) -> String {
+    if nv.total_mib > 0 {
+        format!(
+            "{} ({:.1} / {:.1} GB VRAM free · {}% util)",
+            nv.name,
+            nv.free_mib as f64 / 1024.0,
+            nv.total_mib as f64 / 1024.0,
+            nv.util_pct
+        )
     } else {
-        Some(name)
+        nv.name.clone()
     }
 }
 
-pub fn inspect_hardware(target_dir: &Path) -> HardwareProbe {
+pub fn inspect_hardware_for_data_dir(data_dir: &Path, target_dir: &Path) -> HardwareProbe {
     let disk_free_bytes = disk_free_bytes_for_path(target_dir);
     let (ram_total_bytes, ram_avail_bytes) = system_memory_bytes();
-    let gpu_summary = detect_nvidia_gpu_summary();
+    let nv = detect_nvidia_gpu();
+    let gpu_summary = nv.as_ref().map(format_nvidia_gpu_summary);
+    let cfg = load_config(data_dir);
+    let engine_backend = resolve_active_llama_server_exe(data_dir, &cfg, nv.is_some())
+        .map(|(_, lbl)| lbl.to_string())
+        .unwrap_or_else(|| {
+            if nv.is_some() {
+                "CUDA / Vulkan (Not Installed)".into()
+            } else {
+                "Vulkan / CPU (Not Installed)".into()
+            }
+        });
     HardwareProbe {
         disk_free_bytes,
         ram_total_bytes,
         ram_avail_bytes,
         gpu_summary,
+        engine_backend,
+        active_tier: get_active_tier_label(),
+        gpu_hold: gpu_hold_active(),
     }
 }
 
+pub fn inspect_hardware(target_dir: &Path) -> HardwareProbe {
+    inspect_hardware_for_data_dir(target_dir, target_dir)
+}
+
 pub fn kill_managed_server(slot: &Mutex<Option<Child>>) {
+    set_active_tier_label(None);
     if let Ok(mut guard) = slot.lock() {
         if let Some(mut child) = guard.take() {
             let _ = child.kill();
@@ -344,8 +661,13 @@ fn emit_progress(
     }
 }
 
-/// Resolve the latest official Windows Vulkan (or CPU fallback) `llama.cpp` release zip URL.
-async fn resolve_llama_cpp_win_zip(client: &reqwest::Client) -> Result<(String, String), String> {
+/// Resolve the best official Windows `llama.cpp` release zip(s):
+/// on NVIDIA GPUs, prefers CUDA 13 (driver >= 570) or CUDA 12.4 (`cudart` + `llama-bin`),
+/// falling back cleanly to Vulkan x64 and CPU x64.
+async fn resolve_llama_cpp_win_assets(
+    client: &reqwest::Client,
+    nvidia: Option<&NvidiaGpuTelemetry>,
+) -> Result<Vec<(String, String)>, String> {
     let resp = client
         .get(LLAMA_CPP_RELEASES_API)
         .header("User-Agent", "Cosmic-Font-Foundry")
@@ -369,13 +691,19 @@ async fn resolve_llama_cpp_win_zip(client: &reqwest::Client) -> Result<(String, 
         .as_array()
         .ok_or_else(|| "Unexpected GitHub releases response shape".to_string())?;
 
-    // Prefer Vulkan x64 (universal NVIDIA/AMD/Intel GPU acceleration in a single ~37 MB zip),
-    // falling back to CPU x64 if Vulkan is absent.
+    let prefer_cuda13 = nvidia.is_some_and(|n| n.driver_major == 0 || n.driver_major >= 570);
+    let mut vulkan_fallback: Option<(String, String)> = None;
     let mut cpu_fallback: Option<(String, String)> = None;
+
     for rel in arr {
         let Some(assets) = rel["assets"].as_array() else {
             continue;
         };
+        let mut cuda13_bin = None;
+        let mut cuda13_rt = None;
+        let mut cuda12_bin = None;
+        let mut cuda12_rt = None;
+
         for asset in assets {
             let name = asset["name"].as_str().unwrap_or("");
             let url = asset["browser_download_url"].as_str().unwrap_or("");
@@ -383,8 +711,32 @@ async fn resolve_llama_cpp_win_zip(client: &reqwest::Client) -> Result<(String, 
                 continue;
             }
             let lower = name.to_ascii_lowercase();
-            if lower.starts_with("llama-") && lower.ends_with("-bin-win-vulkan-x64.zip") {
-                return Ok((name.to_string(), url.to_string()));
+            if nvidia.is_some() {
+                if lower.starts_with("llama-")
+                    && lower.contains("-bin-win-cuda-13.")
+                    && lower.ends_with("-x64.zip")
+                {
+                    cuda13_bin = Some((name.to_string(), url.to_string()));
+                } else if lower.starts_with("cudart-llama-bin-win-cuda-13.")
+                    && lower.ends_with("-x64.zip")
+                {
+                    cuda13_rt = Some((name.to_string(), url.to_string()));
+                } else if lower.starts_with("llama-")
+                    && lower.contains("-bin-win-cuda-12.")
+                    && lower.ends_with("-x64.zip")
+                {
+                    cuda12_bin = Some((name.to_string(), url.to_string()));
+                } else if lower.starts_with("cudart-llama-bin-win-cuda-12.")
+                    && lower.ends_with("-x64.zip")
+                {
+                    cuda12_rt = Some((name.to_string(), url.to_string()));
+                }
+            }
+            if vulkan_fallback.is_none()
+                && lower.starts_with("llama-")
+                && lower.ends_with("-bin-win-vulkan-x64.zip")
+            {
+                vulkan_fallback = Some((name.to_string(), url.to_string()));
             }
             if cpu_fallback.is_none()
                 && lower.starts_with("llama-")
@@ -393,9 +745,23 @@ async fn resolve_llama_cpp_win_zip(client: &reqwest::Client) -> Result<(String, 
                 cpu_fallback = Some((name.to_string(), url.to_string()));
             }
         }
+
+        if prefer_cuda13 {
+            if let (Some(rt), Some(bin)) = (cuda13_rt, cuda13_bin) {
+                return Ok(vec![rt, bin]);
+            }
+        }
+        if nvidia.is_some() {
+            if let (Some(rt), Some(bin)) = (cuda12_rt, cuda12_bin) {
+                return Ok(vec![rt, bin]);
+            }
+        }
     }
 
-    cpu_fallback.ok_or_else(|| {
+    if let Some(vk) = vulkan_fallback {
+        return Ok(vec![vk]);
+    }
+    cpu_fallback.map(|cpu| vec![cpu]).ok_or_else(|| {
         "Could not locate a Windows x64 llama.cpp release archive on GitHub.".to_string()
     })
 }
@@ -600,7 +966,7 @@ pub async fn provision_and_start_builtin(
         .build()
         .map_err(|e| e.to_string())?;
 
-    // Step 1: Download & extract portable llama.cpp Vulkan GPU engine (~37 MB)
+    // Step 1: Ensure portable llama.cpp GPU engine is present (reusing local CUDA if available)
     if !has_builtin_engine(data_dir) {
         emit_progress(
             app,
@@ -611,32 +977,43 @@ pub async fn provision_and_start_builtin(
             false,
             None,
         );
-        let (asset_name, zip_url) = resolve_llama_cpp_win_zip(&client).await?;
+        let nv = detect_nvidia_gpu();
+        let assets = resolve_llama_cpp_win_assets(&client, nv.as_ref()).await?;
         let rdir = runtime_dir(data_dir);
-        let zip_dest = rdir.join(&asset_name);
+        let total_zips = assets.len();
+        for (idx, (asset_name, zip_url)) in assets.into_iter().enumerate() {
+            let zip_dest = rdir.join(&asset_name);
+            download_streaming_file(
+                &client,
+                &zip_url,
+                &zip_dest,
+                &format!(
+                    "Step 1/3: Downloading GPU engine ({}/{}: {asset_name})…",
+                    idx + 1,
+                    total_zips
+                ),
+                false,
+                app,
+                cancel_flag,
+            )
+            .await?;
 
-        download_streaming_file(
-            &client,
-            &zip_url,
-            &zip_dest,
-            &format!("Step 1/3: Downloading built-in GPU engine ({asset_name})…"),
-            false,
-            app,
-            cancel_flag,
-        )
-        .await?;
-
-        emit_progress(
-            app,
-            "Step 1/3: Extracting built-in GPU engine…",
-            0,
-            0,
-            99.0,
-            false,
-            None,
-        );
-        extract_zip_to_dir(&zip_dest, &rdir)?;
-        let _ = fs::remove_file(&zip_dest);
+            emit_progress(
+                app,
+                format!(
+                    "Step 1/3: Extracting ({}/{}) {asset_name}…",
+                    idx + 1,
+                    total_zips
+                ),
+                0,
+                0,
+                99.0,
+                false,
+                None,
+            );
+            extract_zip_to_dir(&zip_dest, &rdir)?;
+            let _ = fs::remove_file(&zip_dest);
+        }
 
         if !has_builtin_engine(data_dir) {
             return Err(format!(
@@ -710,15 +1087,368 @@ fn read_log_tail(log_path: &Path, max_lines: usize) -> String {
     lines[start..].join(" | ")
 }
 
-fn spawn_llama_server(
+fn optimal_cpu_threads() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    (cores / 2).clamp(4, 16)
+}
+
+/// ComfyUI-style dynamic VRAM tiered execution planner: calculates safe GPU layer counts from
+/// live `nvidia-smi` headroom + model file size and builds a multi-stage fallback ladder.
+pub fn plan_vram_execution_ladder(
+    mode: &str,
+    model_bytes: u64,
+    nvidia: Option<&NvidiaGpuTelemetry>,
+    caps: &ServerCliCaps,
+    gpu_hold: bool,
+) -> Vec<LaunchAttempt> {
+    if mode == "cpu" || (mode == "auto" && gpu_hold) {
+        return vec![LaunchAttempt {
+            tier: VramTier::CpuOnly,
+            label: if gpu_hold && mode == "auto" {
+                "CPU + System RAM (GPU Hold Active)".into()
+            } else {
+                "CPU + System RAM (Zero-Copy)".into()
+            },
+        }];
+    }
+
+    let model_mib = (model_bytes / (1024 * 1024)).max(1024);
+    let per_layer_mib = (model_mib / 62).clamp(180, 340);
+    const BASE_OVERHEAD_MIB: u64 = 700;
+    const SAFETY_RESERVE_MIB: u64 = 1600;
+
+    if let Some(nv) = nvidia {
+        let free = nv.free_mib;
+        let full_threshold = model_mib + SAFETY_RESERVE_MIB + 400;
+        let usable = free.saturating_sub(SAFETY_RESERVE_MIB);
+        let safe_layers =
+            ((usable.saturating_sub(BASE_OVERHEAD_MIB)) / per_layer_mib).clamp(4, 58) as u32;
+
+        if mode == "gpu" {
+            let mut ladder = vec![LaunchAttempt {
+                tier: VramTier::FullGpu,
+                label: "Full GPU (99L, FlashAttn, Q8 KV)".into(),
+            }];
+            if free >= 4_500 && free < full_threshold {
+                ladder.push(LaunchAttempt {
+                    tier: VramTier::HybridGpu {
+                        layers: safe_layers,
+                        kv_type: "q4_0",
+                        batch_size: 1024,
+                        ubatch_size: 256,
+                    },
+                    label: format!("Hybrid GPU+RAM ({safe_layers}L GPU, Q4 KV)"),
+                });
+            }
+            return ladder;
+        }
+
+        // Auto mode with NVIDIA telemetry
+        if free >= full_threshold {
+            return vec![
+                LaunchAttempt {
+                    tier: VramTier::FullGpu,
+                    label: "Full GPU (99L, FlashAttn, Q8 KV)".into(),
+                },
+                LaunchAttempt {
+                    tier: VramTier::HybridGpu {
+                        layers: 32,
+                        kv_type: "q4_0",
+                        batch_size: 1024,
+                        ubatch_size: 256,
+                    },
+                    label: "Hybrid GPU+RAM Fallback (32L GPU, Q4 KV)".into(),
+                },
+                LaunchAttempt {
+                    tier: VramTier::CpuOnly,
+                    label: "CPU + System RAM Fallback".into(),
+                },
+            ];
+        } else if free >= 4_500 {
+            let half_layers = (safe_layers / 2).max(4);
+            return vec![
+                LaunchAttempt {
+                    tier: VramTier::HybridGpu {
+                        layers: safe_layers,
+                        kv_type: "q4_0",
+                        batch_size: 1024,
+                        ubatch_size: 256,
+                    },
+                    label: format!("Hybrid GPU+RAM ({safe_layers}L GPU, Q4 KV)"),
+                },
+                LaunchAttempt {
+                    tier: VramTier::HybridGpu {
+                        layers: half_layers,
+                        kv_type: "q4_0",
+                        batch_size: 512,
+                        ubatch_size: 128,
+                    },
+                    label: format!("Conservative Hybrid ({half_layers}L GPU, Q4 KV)"),
+                },
+                LaunchAttempt {
+                    tier: VramTier::CpuOnly,
+                    label: "CPU + System RAM Fallback".into(),
+                },
+            ];
+        } else {
+            return vec![LaunchAttempt {
+                tier: VramTier::CpuOnly,
+                label: format!(
+                    "CPU + System RAM ({:.1} GB VRAM free)",
+                    free as f64 / 1024.0
+                ),
+            }];
+        }
+    }
+
+    // No NVIDIA GPU detected (AMD/Intel Vulkan or CPU-only machine)
+    if mode == "gpu" {
+        return vec![LaunchAttempt {
+            tier: VramTier::FullGpu,
+            label: "Full GPU (99L)".into(),
+        }];
+    }
+    if caps.has_fit {
+        vec![
+            LaunchAttempt {
+                tier: VramTier::VulkanAutoFit,
+                label: "Vulkan Auto-Fit GPU + RAM".into(),
+            },
+            LaunchAttempt {
+                tier: VramTier::CpuOnly,
+                label: "CPU + System RAM Fallback".into(),
+            },
+        ]
+    } else {
+        vec![LaunchAttempt {
+            tier: VramTier::CpuOnly,
+            label: "CPU + System RAM".into(),
+        }]
+    }
+}
+
+/// Constructs verified CLI arguments from inspected `ServerCliCaps` and chosen `LaunchAttempt`.
+/// Guarantees canonical `--n-gpu-layers` (never invalid `--ngl`) and isolates discrete GPUs.
+pub fn build_llama_server_args(
+    model: &Path,
+    caps: &ServerCliCaps,
+    attempt: &LaunchAttempt,
+    idle_sleep_secs: u32,
+    has_nvidia: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "--model".to_string(),
+        model.to_string_lossy().into_owned(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        BUILTIN_PORT.to_string(),
+        "--alias".to_string(),
+        cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF.to_string(),
+        "--ctx-size".to_string(),
+        "2048".to_string(),
+        "--parallel".to_string(),
+        "1".to_string(),
+    ];
+
+    if caps.has_no_ui {
+        args.push("--no-ui".into());
+    } else if caps.has_no_webui {
+        args.push("--no-webui".into());
+    }
+
+    if idle_sleep_secs > 0 && caps.has_sleep_idle {
+        args.push("--sleep-idle-seconds".into());
+        args.push(idle_sleep_secs.to_string());
+    }
+
+    if caps.has_cache_reuse {
+        args.push("--cache-reuse".into());
+        args.push("64".into());
+    }
+    if caps.has_slot_similarity {
+        args.push("--slot-prompt-similarity".into());
+        args.push("0.50".into());
+    }
+
+    let threads = optimal_cpu_threads();
+
+    match &attempt.tier {
+        VramTier::FullGpu => {
+            if caps.has_n_gpu_layers {
+                args.push("--n-gpu-layers".into());
+                args.push("99".into());
+            }
+            if !caps.is_cuda_backend && has_nvidia {
+                args.push("--device".into());
+                args.push("Vulkan0".into());
+            }
+            if caps.has_split_mode {
+                args.push("--split-mode".into());
+                args.push("none".into());
+            }
+            if caps.has_main_gpu {
+                args.push("--main-gpu".into());
+                args.push("0".into());
+            }
+            if caps.has_flash_attn {
+                args.push("--flash-attn".into());
+                args.push(if caps.is_cuda_backend { "on" } else { "auto" }.into());
+            }
+            if caps.has_cache_type {
+                args.extend([
+                    "--cache-type-k".into(),
+                    "q8_0".into(),
+                    "--cache-type-v".into(),
+                    "q8_0".into(),
+                ]);
+            }
+            args.extend([
+                "--batch-size".into(),
+                "2048".into(),
+                "--ubatch-size".into(),
+                "512".into(),
+            ]);
+            if caps.has_spec_type {
+                args.push("--spec-type".into());
+                args.push("ngram-simple".into());
+            }
+        }
+        VramTier::HybridGpu {
+            layers,
+            kv_type,
+            batch_size,
+            ubatch_size,
+        } => {
+            if caps.has_n_gpu_layers {
+                args.push("--n-gpu-layers".into());
+                args.push(layers.to_string());
+            }
+            if caps.has_no_repack {
+                args.push("--no-repack".into());
+            }
+            if !caps.is_cuda_backend && has_nvidia {
+                args.push("--device".into());
+                args.push("Vulkan0".into());
+            }
+            if caps.has_split_mode {
+                args.push("--split-mode".into());
+                args.push("none".into());
+            }
+            if caps.has_main_gpu {
+                args.push("--main-gpu".into());
+                args.push("0".into());
+            }
+            if caps.has_flash_attn {
+                args.push("--flash-attn".into());
+                args.push(if caps.is_cuda_backend { "on" } else { "auto" }.into());
+            }
+            if caps.has_cache_type {
+                args.extend([
+                    "--cache-type-k".into(),
+                    (*kv_type).into(),
+                    "--cache-type-v".into(),
+                    (*kv_type).into(),
+                ]);
+            }
+            args.extend([
+                "--batch-size".into(),
+                batch_size.to_string(),
+                "--ubatch-size".into(),
+                ubatch_size.to_string(),
+                "--threads".into(),
+                threads.to_string(),
+                "--threads-batch".into(),
+                threads.to_string(),
+            ]);
+        }
+        VramTier::VulkanAutoFit => {
+            if caps.has_no_repack {
+                args.push("--no-repack".into());
+            }
+            if !caps.is_cuda_backend && has_nvidia {
+                args.push("--device".into());
+                args.push("Vulkan0".into());
+            }
+            if caps.has_split_mode {
+                args.push("--split-mode".into());
+                args.push("none".into());
+            }
+            if caps.has_main_gpu {
+                args.push("--main-gpu".into());
+                args.push("0".into());
+            }
+            if caps.has_flash_attn {
+                args.push("--flash-attn".into());
+                args.push("auto".into());
+            }
+            if caps.has_cache_type {
+                args.extend([
+                    "--cache-type-k".into(),
+                    "q8_0".into(),
+                    "--cache-type-v".into(),
+                    "q8_0".into(),
+                ]);
+            }
+            if caps.has_fit {
+                args.extend([
+                    "--fit".into(),
+                    "on".into(),
+                    "--fit-ctx".into(),
+                    "2048".into(),
+                    "--fit-target".into(),
+                    "1536".into(),
+                ]);
+            }
+        }
+        VramTier::CpuOnly => {
+            args.push("--device".into());
+            args.push("none".into());
+            if caps.has_n_gpu_layers {
+                args.push("--n-gpu-layers".into());
+                args.push("0".into());
+            }
+            if caps.has_no_repack {
+                args.push("--no-repack".into());
+            }
+            if caps.has_flash_attn {
+                args.push("--flash-attn".into());
+                args.push("auto".into());
+            }
+            if caps.has_cache_type {
+                args.extend([
+                    "--cache-type-k".into(),
+                    "q8_0".into(),
+                    "--cache-type-v".into(),
+                    "q8_0".into(),
+                ]);
+            }
+            args.extend([
+                "--threads".into(),
+                threads.to_string(),
+                "--threads-batch".into(),
+                threads.to_string(),
+                "--batch-size".into(),
+                "512".into(),
+                "--ubatch-size".into(),
+                "128".into(),
+            ]);
+        }
+    }
+
+    args
+}
+
+fn spawn_llama_server_attempt(
     data_dir: &Path,
     exe: &Path,
-    model: &Path,
-    mode: &str,
-    idle_sleep_secs: u32,
+    args: &[String],
 ) -> Result<Child, String> {
     let rdir = runtime_dir(data_dir);
     let _ = fs::create_dir_all(&rdir);
+    let exe_dir = exe.parent().unwrap_or(&rdir);
     let log_path = llama_server_log_path(data_dir);
     let (stdout_cfg, stderr_cfg) = match OpenOptions::new()
         .create(true)
@@ -737,52 +1467,9 @@ fn spawn_llama_server(
     };
 
     let mut cmd = Command::new(exe);
-    cmd.current_dir(&rdir)
-        .arg("--model")
-        .arg(model)
-        .arg("--host")
-        .arg("127.0.0.1")
-        .arg("--port")
-        .arg(BUILTIN_PORT.to_string())
-        .arg("--alias")
-        .arg(cosmic_foundry::vecglypher::VECGLYPHER_RECOMMENDED_GGUF)
-        .arg("--ctx-size")
-        .arg("2048")
-        .arg("--parallel")
-        .arg("1")
-        .arg("--flash-attn")
-        .arg("auto")
-        .arg("--cache-type-k")
-        .arg("q8_0")
-        .arg("--cache-type-v")
-        .arg("q8_0")
-        .arg("--no-webui");
-
-    if idle_sleep_secs > 0 {
-        cmd.arg("--sleep-idle-seconds")
-            .arg(idle_sleep_secs.to_string());
-    }
-
-    match mode {
-        "gpu" => {
-            cmd.arg("--ngl").arg("99");
-        }
-        "cpu" => {
-            cmd.arg("--device").arg("none").arg("--ngl").arg("0");
-        }
-        _ => {
-            // Auto-fit leaves --ngl unset while capping --ctx-size at 2048 (instead of the
-            // model's 131K training context) so KV cache stays ~120 MB and layers fit in VRAM.
-            cmd.arg("--fit")
-                .arg("on")
-                .arg("--fit-ctx")
-                .arg("2048")
-                .arg("--fit-target")
-                .arg("1024");
-        }
-    }
-
-    cmd.stdin(Stdio::null())
+    cmd.current_dir(exe_dir)
+        .args(args)
+        .stdin(Stdio::null())
         .stdout(stdout_cfg)
         .stderr(stderr_cfg);
 
@@ -793,7 +1480,7 @@ fn spawn_llama_server(
     }
 
     cmd.spawn()
-        .map_err(|e| format!("Failed to start built-in llama-server.exe: {e}"))
+        .map_err(|e| format!("Failed to start llama-server.exe ({}): {e}", exe.display()))
 }
 
 async fn wait_for_server_ready(llama_child: &Mutex<Option<Child>>) -> Result<(), Option<String>> {
@@ -818,7 +1505,7 @@ async fn wait_for_server_ready(llama_child: &Mutex<Option<Child>>) -> Result<(),
     Err(None)
 }
 
-/// Start `llama-server.exe` in the background (hidden console) if not already listening on `:17421`.
+/// Start `llama-server.exe` using dynamic VRAM orchestration and multi-stage fallback.
 pub async fn ensure_builtin_server_running(
     data_dir: &Path,
     llama_child: &Mutex<Option<Child>>,
@@ -829,72 +1516,224 @@ pub async fn ensure_builtin_server_running(
     }
 
     let cfg = load_config(data_dir);
-    let exe = llama_server_exe(data_dir);
-    let model = effective_gguf_path(data_dir, &cfg);
-    if !exe.is_file() {
+    let nvidia = detect_nvidia_gpu();
+    let Some((exe, backend_label)) =
+        resolve_active_llama_server_exe(data_dir, &cfg, nvidia.is_some())
+    else {
         return Err("Built-in llama-server.exe is not installed yet.".into());
-    }
+    };
+    let model = effective_gguf_path(data_dir, &cfg);
     if !has_builtin_model(data_dir) {
         return Err("VecGlypher-27b-it GGUF model is not downloaded or valid yet.".into());
     }
 
-    let mode = cfg.compute_mode.as_str();
-    let stage_msg = match mode {
-        "cpu" => "Step 3/3: Loading VecGlypher-27b-it in universal CPU + System RAM mode…",
-        "gpu" => "Step 3/3: Loading VecGlypher-27b-it onto GPU VRAM…",
-        _ => "Step 3/3: Auto-fitting VecGlypher-27b-it across available GPU + System RAM…",
-    };
-    emit_progress(app, stage_msg, 0, 0, 98.0, false, None);
+    let model_bytes = fs::metadata(&model).map(|m| m.len()).unwrap_or(0);
+    let caps = inspect_server_cli_caps(&exe);
+    let hold = gpu_hold_active();
+    let ladder = plan_vram_execution_ladder(
+        cfg.compute_mode.as_str(),
+        model_bytes,
+        nvidia.as_ref(),
+        &caps,
+        hold,
+    );
 
-    // Clear any dead previous handle before spawning
-    kill_managed_server(llama_child);
+    let log_path = llama_server_log_path(data_dir);
+    let mut attempt_errors: Vec<String> = Vec::new();
 
-    let child = spawn_llama_server(data_dir, &exe, &model, mode, cfg.idle_sleep_secs)?;
-    if let Ok(mut guard) = llama_child.lock() {
-        *guard = Some(child);
+    for (idx, attempt) in ladder.iter().enumerate() {
+        let stage_msg = format!(
+            "Step 3/3: Starting {backend_label} — {} ({}/{})…",
+            attempt.label,
+            idx + 1,
+            ladder.len()
+        );
+        emit_progress(app, stage_msg, 0, 0, 98.0, false, None);
+
+        kill_managed_server(llama_child);
+        let args = build_llama_server_args(
+            &model,
+            &caps,
+            attempt,
+            cfg.idle_sleep_secs,
+            nvidia.is_some(),
+        );
+
+        let child = spawn_llama_server_attempt(data_dir, &exe, &args)?;
+        if let Ok(mut guard) = llama_child.lock() {
+            *guard = Some(child);
+        }
+
+        match wait_for_server_ready(llama_child).await {
+            Ok(()) => {
+                set_active_tier_label(Some(format!("{backend_label} · {}", attempt.label)));
+                return Ok(());
+            }
+            Err(exit_opt) => {
+                let tail = read_log_tail(&log_path, 6);
+                let reason = exit_opt
+                    .map(|s| format!("exited ({s})"))
+                    .unwrap_or_else(|| "timed out".into());
+                let detail = if tail.is_empty() {
+                    format!("[{}: {reason}]", attempt.label)
+                } else {
+                    format!("[{}: {reason}] {tail}", attempt.label)
+                };
+                attempt_errors.push(detail);
+                kill_managed_server(llama_child);
+            }
+        }
     }
 
-    match wait_for_server_ready(llama_child).await {
-        Ok(()) => Ok(()),
-        Err(Some(exit_status)) if mode == "auto" => {
-            emit_progress(
-                app,
-                "GPU initialization failed — falling back to universal CPU + System RAM mode…",
-                0,
-                0,
-                98.0,
-                false,
-                None,
+    Err(format!(
+        "llama-server.exe ({backend_label}) failed across all {} orchestration tier(s): {}",
+        attempt_errors.len(),
+        attempt_errors.join(" || ")
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_caps(is_cuda: bool) -> ServerCliCaps {
+        ServerCliCaps {
+            has_no_ui: true,
+            has_no_webui: true,
+            has_n_gpu_layers: true,
+            has_no_repack: true,
+            has_flash_attn: true,
+            has_cache_type: true,
+            has_cache_reuse: true,
+            has_slot_similarity: true,
+            has_spec_type: true,
+            has_sleep_idle: true,
+            has_split_mode: true,
+            has_main_gpu: true,
+            has_fit: true,
+            is_cuda_backend: is_cuda,
+        }
+    }
+
+    #[test]
+    fn build_args_never_emits_invalid_ngl_or_deprecated_webui() {
+        let caps = sample_caps(true);
+        let model = Path::new("vecglypher-27b-it-q4_k_m.gguf");
+        for attempt in [
+            LaunchAttempt {
+                tier: VramTier::FullGpu,
+                label: "Full".into(),
+            },
+            LaunchAttempt {
+                tier: VramTier::HybridGpu {
+                    layers: 12,
+                    kv_type: "q4_0",
+                    batch_size: 1024,
+                    ubatch_size: 256,
+                },
+                label: "Hybrid".into(),
+            },
+            LaunchAttempt {
+                tier: VramTier::VulkanAutoFit,
+                label: "AutoFit".into(),
+            },
+            LaunchAttempt {
+                tier: VramTier::CpuOnly,
+                label: "CPU".into(),
+            },
+        ] {
+            let args = build_llama_server_args(model, &caps, &attempt, 900, true);
+            assert!(
+                !args.iter().any(|a| a == "--ngl"),
+                "Invalid double-dash --ngl must never be emitted (got {:?})",
+                args
             );
-            kill_managed_server(llama_child);
-            let cpu_child = spawn_llama_server(data_dir, &exe, &model, "cpu", cfg.idle_sleep_secs)?;
-            if let Ok(mut guard) = llama_child.lock() {
-                *guard = Some(cpu_child);
-            }
-            match wait_for_server_ready(llama_child).await {
-                Ok(()) => Ok(()),
-                Err(cpu_exit) => {
-                    let tail = read_log_tail(&llama_server_log_path(data_dir), 12);
-                    let reason = cpu_exit
-                        .map(|s| format!("exited ({s})"))
-                        .unwrap_or_else(|| "timed out".into());
-                    Err(format!(
-                        "Built-in llama-server.exe failed in both Auto-Fit GPU ({exit_status}) and CPU fallback ({reason}). Log: {tail}"
-                    ))
-                }
-            }
+            assert!(
+                !args.iter().any(|a| a == "--no-webui"),
+                "Prefer --no-ui over deprecated --no-webui (got {:?})",
+                args
+            );
+            assert!(args.iter().any(|a| a == "--no-ui"));
         }
-        Err(Some(exit_status)) => {
-            let tail = read_log_tail(&llama_server_log_path(data_dir), 12);
-            Err(format!(
-                "Built-in llama-server.exe exited prematurely ({exit_status}) in {mode} mode. Log: {tail}"
-            ))
-        }
-        Err(None) => {
-            let tail = read_log_tail(&llama_server_log_path(data_dir), 12);
-            Err(format!(
-                "Timed out waiting for built-in llama-server.exe to load VecGlypher-27b-it. Log: {tail}"
-            ))
-        }
+        let cpu_args = build_llama_server_args(
+            model,
+            &caps,
+            &LaunchAttempt {
+                tier: VramTier::CpuOnly,
+                label: "CPU".into(),
+            },
+            900,
+            true,
+        );
+        let ngl_pos = cpu_args.iter().position(|a| a == "--n-gpu-layers").unwrap();
+        assert_eq!(cpu_args[ngl_pos + 1], "0");
+        assert!(cpu_args.iter().any(|a| a == "--no-repack"));
+    }
+
+    #[test]
+    fn vram_ladder_selects_full_hybrid_or_cpu_by_headroom_and_gpu_hold() {
+        let caps = sample_caps(true);
+        let model_bytes = 16_546_600_000u64;
+
+        let high_vram = NvidiaGpuTelemetry {
+            name: "RTX 5090".into(),
+            driver_major: 621,
+            free_mib: 26_000,
+            total_mib: 32_607,
+            util_pct: 2,
+        };
+        let high_ladder =
+            plan_vram_execution_ladder("auto", model_bytes, Some(&high_vram), &caps, false);
+        assert_eq!(high_ladder.len(), 3);
+        assert_eq!(high_ladder[0].tier, VramTier::FullGpu);
+        assert_eq!(high_ladder[2].tier, VramTier::CpuOnly);
+
+        let shared_vram = NvidiaGpuTelemetry {
+            name: "RTX 5090".into(),
+            driver_major: 621,
+            free_mib: 5_124,
+            total_mib: 32_607,
+            util_pct: 10,
+        };
+        let shared_ladder =
+            plan_vram_execution_ladder("auto", model_bytes, Some(&shared_vram), &caps, false);
+        assert!(matches!(shared_ladder[0].tier, VramTier::HybridGpu { .. }));
+        assert_eq!(shared_ladder.last().unwrap().tier, VramTier::CpuOnly);
+
+        let low_vram = NvidiaGpuTelemetry {
+            name: "RTX 5090".into(),
+            driver_major: 621,
+            free_mib: 1_800,
+            total_mib: 32_607,
+            util_pct: 95,
+        };
+        let low_ladder =
+            plan_vram_execution_ladder("auto", model_bytes, Some(&low_vram), &caps, false);
+        assert_eq!(low_ladder.len(), 1);
+        assert_eq!(low_ladder[0].tier, VramTier::CpuOnly);
+
+        let hold_ladder =
+            plan_vram_execution_ladder("auto", model_bytes, Some(&high_vram), &caps, true);
+        assert_eq!(hold_ladder.len(), 1);
+        assert_eq!(hold_ladder[0].tier, VramTier::CpuOnly);
+    }
+
+    #[test]
+    fn vulkan_discrete_gpu_isolation_excludes_igpu() {
+        let vulkan_caps = sample_caps(false);
+        let args = build_llama_server_args(
+            Path::new("m.gguf"),
+            &vulkan_caps,
+            &LaunchAttempt {
+                tier: VramTier::FullGpu,
+                label: "Full".into(),
+            },
+            900,
+            true,
+        );
+        let dev_pos = args.iter().position(|a| a == "--device").unwrap();
+        assert_eq!(args[dev_pos + 1], "Vulkan0");
+        assert!(args.windows(2).any(|w| w == ["--split-mode", "none"]));
+        assert!(args.windows(2).any(|w| w == ["--main-gpu", "0"]));
     }
 }

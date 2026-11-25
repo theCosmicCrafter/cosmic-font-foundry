@@ -27,6 +27,9 @@ pub(crate) struct AiBackendStatus {
     ram_total_bytes: u64,
     ram_avail_bytes: u64,
     gpu_summary: Option<String>,
+    engine_backend: String,
+    active_tier: Option<String>,
+    gpu_hold: bool,
 }
 
 #[derive(Deserialize)]
@@ -234,7 +237,7 @@ fn builtin_status_fields(
 ) -> (String, String, Option<String>, ai_runtime::HardwareProbe) {
     let cfg = ai_runtime::load_config(data_dir);
     let models_dir = ai_runtime::effective_models_dir(data_dir, &cfg);
-    let hw = ai_runtime::inspect_hardware(&models_dir);
+    let hw = ai_runtime::inspect_hardware_for_data_dir(data_dir, &models_dir);
     (
         cfg.compute_mode,
         models_dir.to_string_lossy().into_owned(),
@@ -253,6 +256,9 @@ fn enrich_remote_status(data_dir: &Path, mut status: AiBackendStatus) -> AiBacke
     status.ram_total_bytes = hw.ram_total_bytes;
     status.ram_avail_bytes = hw.ram_avail_bytes;
     status.gpu_summary = hw.gpu_summary;
+    status.engine_backend = hw.engine_backend;
+    status.active_tier = hw.active_tier;
+    status.gpu_hold = hw.gpu_hold;
     status
 }
 
@@ -279,20 +285,27 @@ pub(crate) async fn foundry_ai_check_backend(
             "gpu" => "GPU Only",
             _ => "Auto-Fit GPU + RAM",
         };
+        let active_note = hw.active_tier.as_deref().unwrap_or(mode_label);
         let message = if ready && healthy {
             format!(
-                "Built-in llama.cpp running on 127.0.0.1:17421 ({mode_label} · VecGlypher ready)."
+                "{} running on 127.0.0.1:17421 ({active_note} · VecGlypher ready).",
+                hw.engine_backend
             )
         } else if ready {
-            format!("Built-in llama.cpp & VecGlypher-27b-it installed ({mode_label} · auto-starts on Generate).")
+            format!(
+                "{} & VecGlypher-27b-it ready ({mode_label} · auto-starts with dynamic VRAM orchestration).",
+                hw.engine_backend
+            )
         } else if has_engine && custom_gguf_path.is_some() {
             "Built-in llama.cpp installed, but selected custom .gguf file is missing or invalid."
                 .into()
         } else if has_engine {
-            "Built-in llama.cpp engine installed. Click Download to fetch VecGlypher-27b-it (~16.6 GB)."
-                .into()
+            format!(
+                "{} ready. Click Download to fetch VecGlypher-27b-it (~16.6 GB).",
+                hw.engine_backend
+            )
         } else {
-            "Zero-setup Built-in Engine — 1-click downloads portable llama.cpp (~37 MB) + VecGlypher-27b-it (~16.6 GB, Auto GPU+RAM / CPU)."
+            "Zero-setup Built-in Engine — 1-click configures llama.cpp GPU engine + VecGlypher-27b-it (~16.6 GB, Auto VRAM/CPU)."
                 .into()
         };
         return Ok(AiBackendStatus {
@@ -309,6 +322,9 @@ pub(crate) async fn foundry_ai_check_backend(
             ram_total_bytes: hw.ram_total_bytes,
             ram_avail_bytes: hw.ram_avail_bytes,
             gpu_summary: hw.gpu_summary,
+            engine_backend: hw.engine_backend,
+            active_tier: hw.active_tier,
+            gpu_hold: hw.gpu_hold,
         });
     }
     let remote = probe_remote_ai_backend(&endpoint, &provider).await?;
@@ -405,6 +421,9 @@ pub(crate) async fn probe_remote_ai_backend(
         ram_total_bytes: 0,
         ram_avail_bytes: 0,
         gpu_summary: None,
+        engine_backend: String::new(),
+        active_tier: None,
+        gpu_hold: false,
     };
     let base = endpoint.trim().trim_end_matches('/');
     if base.is_empty() {
@@ -495,6 +514,9 @@ pub(crate) async fn probe_remote_ai_backend(
         ram_total_bytes: 0,
         ram_avail_bytes: 0,
         gpu_summary: None,
+        engine_backend: String::new(),
+        active_tier: None,
+        gpu_hold: false,
     })
 }
 
@@ -602,6 +624,69 @@ async fn infer_glyph_resilient(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn infer_glyph_with_self_heal(
+    app: &AppHandle,
+    state: &AppState,
+    client: &reqwest::Client,
+    endpoint: &str,
+    provider: &str,
+    model: &str,
+    style_prompt: &str,
+    ch: char,
+    upm: u16,
+    temp: f32,
+    images_b64: &[String],
+    svg_exemplars: &[(char, String)],
+) -> Result<Vec<cosmic_foundry::model::Contour>, String> {
+    match infer_glyph_resilient(
+        client,
+        endpoint,
+        provider,
+        model,
+        style_prompt,
+        ch,
+        upm,
+        temp,
+        images_b64,
+        svg_exemplars,
+    )
+    .await
+    {
+        Ok(c) => Ok(c),
+        Err(first_err) if provider.eq_ignore_ascii_case("builtin") => {
+            let needs_restart = !ai_runtime::builtin_server_healthy().await
+                || first_err.contains("refused or dropped connection")
+                || first_err.contains("request failed")
+                || first_err.contains("error:");
+            if !needs_restart {
+                return Err(first_err);
+            }
+            ai_runtime::kill_managed_server(&state.llama_child);
+            ai_runtime::ensure_builtin_server_running(
+                &state.env.data_dir,
+                &state.llama_child,
+                Some(app),
+            )
+            .await?;
+            infer_glyph_resilient(
+                client,
+                endpoint,
+                provider,
+                model,
+                style_prompt,
+                ch,
+                upm,
+                temp,
+                images_b64,
+                svg_exemplars,
+            )
+            .await
+        }
+        Err(e) => Err(e),
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn foundry_ai_generate_glyph(
     app: AppHandle,
@@ -638,7 +723,9 @@ pub(crate) async fn foundry_ai_generate_glyph(
         .build()
         .map_err(err)?;
 
-    let contours = infer_glyph_resilient(
+    let contours = infer_glyph_with_self_heal(
+        &app,
+        &state,
         &client,
         &effective_endpoint,
         &req.provider,
@@ -747,7 +834,9 @@ pub(crate) async fn foundry_ai_generate_font_batch(
             },
         );
 
-        match infer_glyph_resilient(
+        match infer_glyph_with_self_heal(
+            &app,
+            &state,
             &client,
             &effective_endpoint,
             &req.provider,
