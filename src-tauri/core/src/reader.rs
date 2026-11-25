@@ -15,6 +15,8 @@ use super::category::{self, CategoryData};
 /// Safety limit per table (32 MiB) to guard against malformed or malicious font files.
 const MAX_TABLE_BYTES: u32 = 32 * 1024 * 1024;
 const MAX_FACES: u32 = 64;
+const MAX_FONT_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_NAME_RECORDS: usize = 256;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct VariableAxis {
@@ -272,7 +274,7 @@ fn face_offsets(f: &mut File) -> Result<Vec<u64>, String> {
 
 fn pick_name(t: &ttf_parser::name::Table, id: u16) -> Option<String> {
     let mut best: Option<(u8, String)> = None;
-    for n in t.names {
+    for n in t.names.into_iter().take(MAX_NAME_RECORDS) {
         if n.name_id != id {
             continue;
         }
@@ -441,8 +443,17 @@ pub fn read_file(path: &Path) -> Result<FileReadResult, String> {
     Ok(FileReadResult { faces, sha256 })
 }
 
+fn check_font_file_size(f: &File) -> Result<(), String> {
+    let meta = f.metadata().map_err(|e| e.to_string())?;
+    if meta.len() > MAX_FONT_BYTES {
+        return Err("font file exceeds 100 MiB safety limit".into());
+    }
+    Ok(())
+}
+
 pub fn read_faces(path: &Path) -> Result<Vec<FontFace>, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
+    check_font_file_size(&f)?;
     let mut out = Vec::new();
     for offset in face_offsets(&mut f)? {
         let t = read_tables(&mut f, offset, &[b"name", b"OS/2", b"fvar", b"GSUB"])?;
@@ -521,6 +532,7 @@ pub fn read_faces(path: &Path) -> Result<Vec<FontFace>, String> {
 /// Returns true Unicode codepoints mapped in the first face's cmap table (up to `limit`).
 pub fn characters(path: &Path, limit: usize) -> Result<Vec<u32>, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
+    check_font_file_size(&f)?;
     let start = *face_offsets(&mut f)?.first().ok_or("empty font")?;
     let t = read_tables(&mut f, start, &[b"cmap"])?;
     let cmap = t[0]
@@ -570,4 +582,22 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
         hasher.update(&buf[..n]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_font_files_exceeding_max_font_bytes() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.as_file().set_len(MAX_FONT_BYTES + 1).unwrap();
+        let err = read_faces(tmp.path()).unwrap_err();
+        assert!(err.contains("100 MiB"), "unexpected error: {err}");
+        let char_err = characters(tmp.path(), 64).unwrap_err();
+        assert!(
+            char_err.contains("100 MiB"),
+            "unexpected char error: {char_err}"
+        );
+    }
 }

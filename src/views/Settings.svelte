@@ -92,6 +92,8 @@
   let vaultBusy = $state(false);
   let cleanupScan = $state(null);
   let cleanupSelected = $state(new Set());
+  let artCraftStatus = $state(null);
+  let artCraftBusy = $state(false);
   let syncTabLoaded = false;
 
   $effect(() => {
@@ -99,8 +101,25 @@
       syncTabLoaded = true;
       invokeCmd("detect_tuna_migration").then((s) => (tunaStatus = s)).catch(() => {});
       invokeCmd("vault_stats").then((s) => (vaultStats = s)).catch(() => {});
+      invokeCmd("artcraft_store_status").then((s) => (artCraftStatus = s)).catch(() => {});
     }
   });
+
+  async function watchArtCraftStore() {
+    if (!inTauri || artCraftBusy) return;
+    artCraftBusy = true;
+    try {
+      const res = await invokeCmd("watch_artcraft_store");
+      if (res?.families) applyExternalList(res.families, res.diagnostics);
+      artCraftStatus = await invokeCmd("artcraft_store_status");
+      onMigrated?.();
+      notify("ok", "ArtCraft Store Linked", res?.store_path || "Watching Craft Fonts folder.");
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      artCraftBusy = false;
+    }
+  }
 
   function formatBytes(bytes) {
     if (!bytes) return "0 B";
@@ -515,6 +534,40 @@
                 <span>{unresolvedSync.slice(0, 6).join(", ")}{unresolvedSync.length > 6 ? "…" : ""}</span>
               </div>
             {/if}
+          </div>
+
+          <div class="card-block">
+            <div class="card-top">
+              <div>
+                <div class="lbl row-title"><Sparkles size={14} />ArtCraft Suite Font Bridge</div>
+                <p class="hint">
+                  Sync fonts directly with ArtCraft Launcher &amp; Craft apps ({artCraftStatus?.artcraft_installed ? "ArtCraft detected" : "shared Craft Fonts folder"}).
+                </p>
+              </div>
+            </div>
+            <div class="sync-path num">{artCraftStatus?.path || "—"}</div>
+            {#if artCraftStatus}
+              <div class="vault-metrics num">
+                <span>{artCraftStatus.font_files} font file(s)</span>
+                <span>·</span>
+                <span>{artCraftStatus.watched ? "Watched by Foundry" : "Not watched yet"}</span>
+              </div>
+            {/if}
+            <div class="btn-row">
+              <button
+                type="button"
+                class="btn accent"
+                disabled={artCraftBusy || artCraftStatus?.watched}
+                onclick={watchArtCraftStore}
+              >
+                <FolderOpen size={12} />{artCraftStatus?.watched ? "Watching Craft Fonts" : "Watch Craft Fonts"}
+              </button>
+              {#if artCraftStatus?.exists}
+                <button type="button" class="btn ghost" onclick={() => revealInExplorer(artCraftStatus.path)}>
+                  <FolderOpen size={12} />{t("vault.open")}
+                </button>
+              {/if}
+            </div>
           </div>
 
           <div class="card-block">

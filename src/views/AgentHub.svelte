@@ -45,8 +45,52 @@
   let running = $state(false);
   let savingConfig = $state(false);
   let copiedMcp = $state(false);
+  let mcpFormat = $state("claude");
   let lastResult = $state(null);
   let cmdError = $state("");
+
+  const MCP_FORMATS = [
+    { id: "claude", label: "Claude / Cursor" },
+    { id: "vscode", label: "VS Code" },
+    { id: "codex", label: "Codex TOML" },
+    { id: "curl", label: "cURL" },
+  ];
+
+  const mcpSnippet = $derived.by(() => {
+    const mcpUrl = snap.mcp_url || "http://127.0.0.1:17420/mcp";
+    const apiBase = snap.api_base || "http://127.0.0.1:17420";
+    if (mcpFormat === "vscode") {
+      return JSON.stringify(
+        {
+          servers: {
+            "cosmic-font-foundry": {
+              type: "http",
+              url: mcpUrl,
+            },
+          },
+        },
+        null,
+        2,
+      );
+    }
+    if (mcpFormat === "codex") {
+      return `[mcp_servers.cosmic_font_foundry]\nurl = "${mcpUrl}"`;
+    }
+    if (mcpFormat === "curl") {
+      return `curl -s ${apiBase}/api/status`;
+    }
+    return JSON.stringify(
+      {
+        mcpServers: {
+          "cosmic-font-foundry": {
+            url: mcpUrl,
+          },
+        },
+      },
+      null,
+      2,
+    );
+  });
 
   const PRESETS = [
     { key: "audit", labelKey: "agent.presetAudit", prompt: "Audit Font Health" },
@@ -206,22 +250,11 @@
   }
 
   async function copyMcpConfig() {
-    const snippet = JSON.stringify(
-      {
-        mcpServers: {
-          "cosmic-font-foundry": {
-            url: snap.mcp_url,
-          },
-        },
-      },
-      null,
-      2,
-    );
     try {
-      await navigator.clipboard.writeText(snippet);
+      await navigator.clipboard.writeText(mcpSnippet);
       copiedMcp = true;
       setTimeout(() => (copiedMcp = false), 1800);
-      notify("ok", t("agent.copiedTitle"), snap.mcp_url);
+      notify("ok", t("agent.copiedTitle"), mcpFormat.toUpperCase());
     } catch {
       notify("err", t("agent.copyFail"), snap.mcp_url);
     }
@@ -294,6 +327,24 @@
           {t("agent.copyMcp")}
         {/if}
       </button>
+    </div>
+
+    <div class="mcp-config-box">
+      <div class="mcp-fmt-row" role="tablist" aria-label="MCP config format">
+        {#each MCP_FORMATS as fmt (fmt.id)}
+          <button
+            type="button"
+            role="tab"
+            class="mcp-fmt-btn"
+            class:active={mcpFormat === fmt.id}
+            aria-selected={mcpFormat === fmt.id}
+            onclick={() => (mcpFormat = fmt.id)}
+          >
+            {fmt.label}
+          </button>
+        {/each}
+      </div>
+      <pre class="mcp-snippet"><code>{mcpSnippet}</code></pre>
     </div>
   </section>
 
@@ -644,6 +695,48 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 10px;
+  }
+
+  .mcp-config-box {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+  .mcp-fmt-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .mcp-fmt-btn {
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--line2);
+    background: var(--win);
+    color: var(--ink2);
+    font: 600 10.5px var(--sans);
+    cursor: pointer;
+    transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+  }
+  .mcp-fmt-btn:hover {
+    color: var(--ink);
+    border-color: var(--accent);
+  }
+  .mcp-fmt-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .mcp-snippet {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--field);
+    border: 1px solid var(--line);
+    overflow-x: auto;
+    line-height: 1.4;
   }
 
   .switch-row {

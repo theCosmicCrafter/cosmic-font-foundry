@@ -33,6 +33,7 @@
   let specSmallCaps = $state(false);
   let surface = $state("auto");
   let installingWin = $state(false);
+  let sendingArtCraft = $state(false);
   let similarFonts = $state([]);
 
   $effect(() => {
@@ -53,6 +54,25 @@
       await installFamiliesToWindows([f.name], settings.installFor === "all");
     } finally {
       installingWin = false;
+    }
+  }
+
+  async function sendToArtCraft() {
+    if (!f || !inTauri || sendingArtCraft) return;
+    sendingArtCraft = true;
+    try {
+      const res = await invokeCmd("send_families_to_artcraft_store", { families: [f.name] });
+      const copied = res?.copied ?? 0;
+      const skipped = res?.skipped ?? 0;
+      const detail =
+        copied > 0
+          ? `Copied ${copied} file(s) to Craft Fonts${skipped ? ` (${skipped} already synced)` : ""}.`
+          : `Already synced in Craft Fonts (${skipped} file(s)).`;
+      notify("ok", "Sent to ArtCraft Suite", detail);
+    } catch (e) {
+      notify("err", t("err.one"), String(e));
+    } finally {
+      sendingArtCraft = false;
     }
   }
 
@@ -392,6 +412,11 @@
     {#if f && f.file && onfork}
       <button type="button" class="chip fork-btn" onclick={handleFork}>
         <WandSparkles size={13} strokeWidth={2} />{t("spec.forkFoundry")}
+      </button>
+    {/if}
+    {#if f && f.file && inTauri}
+      <button type="button" class="chip" disabled={sendingArtCraft} onclick={sendToArtCraft} title="Copy this font family into ArtCraft's shared Craft Fonts store">
+        <ExternalLink size={13} strokeWidth={2} />{sendingArtCraft ? "Sending…" : "Send to ArtCraft"}
       </button>
     {/if}
 

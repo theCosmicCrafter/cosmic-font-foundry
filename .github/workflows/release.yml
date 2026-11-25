@@ -101,7 +101,7 @@ jobs:
           }
 
           Push-Location out
-          $sums = Get-ChildItem -File | Where-Object { $_.Extension -in ".exe", ".zip" } | Sort-Object Name | ForEach-Object {
+          $sums = Get-ChildItem -File | Where-Object { $_.Extension -in ".exe", ".msi", ".zip" } | Sort-Object Name | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           }
           $sums | Set-Content SHA256SUMS.txt -Encoding ascii
